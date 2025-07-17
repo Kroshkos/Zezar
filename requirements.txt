@@ -125,7 +125,7 @@ pydub==0.25.1
 pyee==11.1.0
 pyflakes==3.4.0
 Pygments==2.19.2
-pylatexenc==2.10
+pylatexenc
 pyparsing==3.2.3
 pypdf==5.8.0
 PyPDF2==3.0.1

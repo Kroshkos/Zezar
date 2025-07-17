@@ -7,7 +7,7 @@ WORKDIR /app
 COPY . .
 
 # 安装依赖（放在复制代码前，提高缓存利用率）
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # 暴露端口
 EXPOSE 8000
