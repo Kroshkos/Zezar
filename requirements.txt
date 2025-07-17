@@ -1,4 +1,4 @@
-aiohappyeyeballs==2.6.1
+aiohappyeyeballs
 aiohttp
 aiolimiter==1.2.1
 aiosignal==1.4.0
