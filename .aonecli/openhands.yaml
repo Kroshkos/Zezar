@@ -1,0 +1,23 @@
+name: 构建并向ACR镜像仓推送镜像
+#
+#triggers:
+#  push:
+#    branches:
+#      - 'init'
+
+jobs:
+  build-and-push-image-to-shanghai:
+    name: 构建并向ACR镜像仓推送镜像
+    steps:
+      - uses: checkout
+      - uses: build-image
+        id: buildImage
+        name: 构建镜像，推送到上海仓库
+#        continue-on-error: true
+        inputs:
+          image-name: qwen-webui-registry.ap-southeast-1.cr.aliyuncs.com/qwen/runtime
+          context-dir: .
+          verbose: true
+          dockerfile-path: ./Dockerfile
+          registry-username: songran.zsr@1075933310383523
+          registry-password: 1075933310383523qwenchatmcp
