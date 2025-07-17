@@ -1,6 +1,5 @@
 FROM hub.docker.alibaba-inc.com/aone-base-global/python:312
 
-RUN pip install --upgrade pip
 # 设置工作目录
 WORKDIR /app
 
