@@ -11,13 +11,19 @@ ENV POETRY_VIRTUALENVS_PATH=./openhands/poetry \
     OPENVSCODE_SERVER_ROOT=./openhands/.openvscode-server
 
 # 安装依赖
-RUN apt-get update && \
-apt-get install -y --no-install-recommends \
-    wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
-    libgl1-mesa-glx \
-    libasound2-plugins libatomic1 && \
-apt-get clean && \
-rm -rf /var/lib/apt/lists/*
+# 替换为国内源
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    # 确保https支持
+    apt-get update && apt-get install -y apt-transport-https && \
+    # 安装依赖
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
+        libgl1-mesa-glx \
+        libasound2-plugins libatomic1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
@@ -27,28 +33,28 @@ COPY . .
 
 
 # 安装uv工具
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
-
-# 安装micromamba
-RUN mkdir -p ./openhands/micromamba/bin && \
-    /bin/bash -c "PREFIX_LOCATION=./openhands/micromamba BIN_FOLDER=./openhands/micromamba/bin INIT_YES=no CONDA_FORGE_YES=yes $(curl -L https://micro.mamba.pm/install.sh)" && \
-    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
-    ./openhands/micromamba/bin/micromamba config list
-
-# 安装playwright
-RUN apt-get update && \
-    ./openhands/micromamba/bin/micromamba run -n openhands poetry run pip install playwright && \
-    ./openhands/micromamba/bin/micromamba run -n openhands poetry run playwright install --with-deps chromium
+#RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
+#
+## 安装micromamba
+#RUN mkdir -p ./openhands/micromamba/bin && \
+#    /bin/bash -c "PREFIX_LOCATION=./openhands/micromamba BIN_FOLDER=./openhands/micromamba/bin INIT_YES=no CONDA_FORGE_YES=yes $(curl -L https://micro.mamba.pm/install.sh)" && \
+#    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
+#    ./openhands/micromamba/bin/micromamba config list
+#
+## 安装playwright
+#RUN apt-get update && \
+#    ./openhands/micromamba/bin/micromamba run -n openhands poetry run pip install playwright && \
+#    ./openhands/micromamba/bin/micromamba run -n openhands poetry run playwright install --with-deps chromium
 
 # 安装openvscode-server
-ARG RELEASE_TAG="openvscode-server-v1.98.2"
-ARG RELEASE_ORG="gitpod-io"
-RUN arch=$(uname -m) && \
-    wget https://github.com/${RELEASE_ORG}/openvscode-server/releases/download/${RELEASE_TAG}/${RELEASE_TAG}-linux-${arch}.tar.gz && \
-    tar -xzf ${RELEASE_TAG}-linux-${arch}.tar.gz && \
-    mv ${RELEASE_TAG}-linux-${arch} ${OPENVSCODE_SERVER_ROOT} && \
-    cp ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/openvscode-server ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/code && \
-    rm -f ${RELEASE_TAG}-linux-${arch}.tar.gz
+#ARG RELEASE_TAG="openvscode-server-v1.98.2"
+#ARG RELEASE_ORG="gitpod-io"
+#RUN arch=$(uname -m) && \
+#    wget https://github.com/${RELEASE_ORG}/openvscode-server/releases/download/${RELEASE_TAG}/${RELEASE_TAG}-linux-${arch}.tar.gz && \
+#    tar -xzf ${RELEASE_TAG}-linux-${arch}.tar.gz && \
+#    mv ${RELEASE_TAG}-linux-${arch} ${OPENVSCODE_SERVER_ROOT} && \
+#    cp ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/openvscode-server ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/code && \
+#    rm -f ${RELEASE_TAG}-linux-${arch}.tar.gz
 
 # 安装依赖（放在复制代码前，提高缓存利用率）
 RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
