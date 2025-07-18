@@ -11,17 +11,16 @@ ENV POETRY_VIRTUALENVS_PATH=./openhands/poetry \
     OPENVSCODE_SERVER_ROOT=./openhands/.openvscode-server
 
 # 安装依赖
-# 替换为国内源
-RUN sed -i 's/http:\/\/deb.debian.org\/debian\//https:\/\/mirrors.aliyun.com\/debian\//' /etc/apt/sources.list && \
-   sed -i 's/http:\/\/security.debian.org\//https:\/\/mirrors.aliyun.com\/debian-security\//' /etc/apt/sources.list && \
-   apt-get update && \
-   apt-get install -y --no-install-recommends \
-       wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
-       libgl1-mesa-glx \
-       libasound2-plugins libatomic1 && \
-   apt-get clean && \
-   rm -rf /var/lib/apt/lists/*
-
+# 使用国内源更新和安装依赖
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
+        libgl1-mesa-glx \
+        libasound2-plugins libatomic1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
