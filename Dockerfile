@@ -13,7 +13,9 @@ ENV POETRY_VIRTUALENVS_PATH=./openhands/poetry \
 # 安装依赖
 # 使用国内源更新和安装依赖
 # 替换为国内源并安装系统依赖
+# 替换为国内源并安装系统依赖
 RUN rm -rf /etc/apt/sources.list && \
+    rm -rf /etc/apt/sources.list.d/* && \
     echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free" > /etc/apt/sources.list && \
     echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list && \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
@@ -24,6 +26,7 @@ RUN rm -rf /etc/apt/sources.list && \
         libasound2-plugins libatomic1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
 
 
 
