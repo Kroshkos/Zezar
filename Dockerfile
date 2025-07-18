@@ -62,7 +62,7 @@ COPY . .
 #    rm -f ${RELEASE_TAG}-linux-${arch}.tar.gz
 
 # 安装依赖（放在复制代码前，提高缓存利用率）
-RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 暴露端口
 EXPOSE 8000
