@@ -12,18 +12,15 @@ ENV POETRY_VIRTUALENVS_PATH=./openhands/poetry \
 
 # 安装依赖
 # 替换为国内源
-RUN set -eux; \
-    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list && \
-    apt-get clean && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends apt-transport-https ca-certificates && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        wget curl sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
-        libgl1-mesa-glx \
-        libasound2-plugins libatomic1 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+RUN sed -i 's/http:\/\/deb.debian.org\/debian\//https:\/\/mirrors.aliyun.com\/debian\//' /etc/apt/sources.list && \
+   sed -i 's/http:\/\/security.debian.org\//https:\/\/mirrors.aliyun.com\/debian-security\//' /etc/apt/sources.list && \
+   apt-get update && \
+   apt-get install -y --no-install-recommends \
+       wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
+       libgl1-mesa-glx \
+       libasound2-plugins libatomic1 && \
+   apt-get clean && \
+   rm -rf /var/lib/apt/lists/*
 
 
 # 设置工作目录
