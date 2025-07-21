@@ -38,28 +38,28 @@ COPY . .
 
 
 # 安装uv工具
-#RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
-#
-## 安装micromamba
-#RUN mkdir -p ./openhands/micromamba/bin && \
-#    /bin/bash -c "PREFIX_LOCATION=./openhands/micromamba BIN_FOLDER=./openhands/micromamba/bin INIT_YES=no CONDA_FORGE_YES=yes $(curl -L https://micro.mamba.pm/install.sh)" && \
-#    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
-#    ./openhands/micromamba/bin/micromamba config list
-#
-## 安装playwright
-#RUN apt-get update && \
-#    ./openhands/micromamba/bin/micromamba run -n openhands poetry run pip install playwright && \
-#    ./openhands/micromamba/bin/micromamba run -n openhands poetry run playwright install --with-deps chromium
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
+
+# 安装micromamba
+RUN mkdir -p ./openhands/micromamba/bin && \
+    /bin/bash -c "PREFIX_LOCATION=./openhands/micromamba BIN_FOLDER=./openhands/micromamba/bin INIT_YES=no CONDA_FORGE_YES=yes $(curl -L https://micro.mamba.pm/install.sh)" && \
+    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
+    ./openhands/micromamba/bin/micromamba config list
+
+# 安装playwright
+RUN apt-get update && \
+    ./openhands/micromamba/bin/micromamba run -n openhands poetry run pip install playwright && \
+    ./openhands/micromamba/bin/micromamba run -n openhands poetry run playwright install --with-deps chromium
 
 # 安装openvscode-server
-#ARG RELEASE_TAG="openvscode-server-v1.98.2"
-#ARG RELEASE_ORG="gitpod-io"
-#RUN arch=$(uname -m) && \
-#    wget https://github.com/${RELEASE_ORG}/openvscode-server/releases/download/${RELEASE_TAG}/${RELEASE_TAG}-linux-${arch}.tar.gz && \
-#    tar -xzf ${RELEASE_TAG}-linux-${arch}.tar.gz && \
-#    mv ${RELEASE_TAG}-linux-${arch} ${OPENVSCODE_SERVER_ROOT} && \
-#    cp ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/openvscode-server ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/code && \
-#    rm -f ${RELEASE_TAG}-linux-${arch}.tar.gz
+ARG RELEASE_TAG="openvscode-server-v1.98.2"
+ARG RELEASE_ORG="gitpod-io"
+RUN arch=$(uname -m) && \
+    wget https://github.com/${RELEASE_ORG}/openvscode-server/releases/download/${RELEASE_TAG}/${RELEASE_TAG}-linux-${arch}.tar.gz && \
+    tar -xzf ${RELEASE_TAG}-linux-${arch}.tar.gz && \
+    mv ${RELEASE_TAG}-linux-${arch} ${OPENVSCODE_SERVER_ROOT} && \
+    cp ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/openvscode-server ${OPENVSCODE_SERVER_ROOT}/bin/remote-cli/code && \
+    rm -f ${RELEASE_TAG}-linux-${arch}.tar.gz
 
 # 安装依赖（放在复制代码前，提高缓存利用率）
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
