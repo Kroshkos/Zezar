@@ -37,10 +37,10 @@ WORKDIR /app
 COPY . .
 
 
-# 安装 uv 并切换到国内源
-RUN mkdir -p ./openhands/bin && \
-    # 使用国内源加速下载
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
+## 安装 uv 并切换到国内源
+#RUN mkdir -p ./openhands/bin && \
+#    # 使用国内源加速下载
+#    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
 
 # 安装 micromamba 并配置国内源
 # 安装 micromamba 到本地目录
