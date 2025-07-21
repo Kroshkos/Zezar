@@ -65,7 +65,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 暴露端口
-EXPOSE 8000
+EXPOSE 35123
 
 # 启动命令（调整路径，直接使用工作目录）
-CMD ["python", "openhands/action_execution_server.py", "8000", "--working-dir", "/workspace"]
+CMD ["python", "openhands/action_execution_server.py", "35123", "--working-dir", "/workspace"]
