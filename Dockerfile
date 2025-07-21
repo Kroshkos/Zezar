@@ -59,15 +59,15 @@ COPY . .
 #    ./openhands/micromamba/bin/micromamba clean -ay
 
 # 安装 playwright 并使用国内源
-RUN #apt-get update && \
+# RUN #apt-get update && \
 #    # 使用国内 PyPI 镜像加速 pip 安装
 #    ./openhands/micromamba/bin/micromamba run -n openhands pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
 #    # 使用国内镜像安装 playwright 浏览器
 #    ./openhands/micromamba/bin/micromamba run -n openhands playwright install --with-deps chromium && \
 #    rm -rf /var/lib/apt/lists/*
 
-RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
-    playwright install --with-deps chromium
+#RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
+#    playwright install --with-deps chromium
 
 # 安装 openvscode-server 并使用国内源
 #ARG RELEASE_TAG="openvscode-server-v1.98.2"

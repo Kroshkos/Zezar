@@ -110,7 +110,6 @@ pandas==2.3.1
 pathspec==0.12.1
 pdfminer.six==20250506
 pillow==11.3.0
-playwright
 portalocker==3.2.0
 propcache==0.3.2
 psutil==7.0.0
