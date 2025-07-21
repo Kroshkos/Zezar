@@ -43,22 +43,15 @@ RUN mkdir -p ./openhands/bin && \
     curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="./openhands/bin" sh
 
 # 安装 micromamba 并配置国内源
-# 安装 micromamba 并配置国内源
-RUN mkdir -p ./openhands/micromamba/bin && \
-    # 使用国内镜像下载 micromamba 安装脚本
-    curl -LsSf https://mirrors.aliyun.com/conda/cmamba/install.sh | \
-    PREFIX_LOCATION=./openhands/micromamba \
-    BIN_FOLDER=./openhands/micromamba/bin \
-    INIT_YES=no \
-    CONDA_FORGE_YES=yes \
-    /bin/bash && \
-    # 配置 conda 源为清华大学镜像
+# 安装 micromamba 到本地目录
+RUN curl -Ls https://micro.mamba.pm/install.sh | bash -s -- -b -p ./openhands/micromamba && \
     ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
     ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free && \
     ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge && \
     ./openhands/micromamba/bin/micromamba config set show_channel_urls yes && \
     ./openhands/micromamba/bin/micromamba config remove channels defaults && \
     ./openhands/micromamba/bin/micromamba config list
+
 
 
 # 创建环境并安装依赖
