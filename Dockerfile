@@ -21,7 +21,7 @@ RUN rm -rf /etc/apt/sources.list && \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg \
+        wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg procps\
         libgl1-mesa-glx \
         libasound2-plugins libatomic1 && \
     apt-get clean && \
