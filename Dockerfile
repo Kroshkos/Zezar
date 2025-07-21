@@ -44,8 +44,7 @@ COPY . .
 
 # 安装 micromamba 并配置国内源
 # 安装 micromamba 到本地目录
-RUN curl -Ls https://micro.mamba.pm/install.sh | bash -s -- -b -p ./openhands/micromamba && \
-    ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
+RUN ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
     ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free && \
     ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge && \
     ./openhands/micromamba/bin/micromamba config set show_channel_urls yes && \
@@ -55,8 +54,8 @@ RUN curl -Ls https://micro.mamba.pm/install.sh | bash -s -- -b -p ./openhands/mi
 
 
 # 创建环境并安装依赖
-RUN ./openhands/micromamba/bin/micromamba create -n openhands python=3.9 -y && \
-    ./openhands/micromamba/bin/micromamba clean -ay
+RUN #./openhands/micromamba/bin/micromamba create -n openhands python=3.9 -y && \
+#    ./openhands/micromamba/bin/micromamba clean -ay
 
 # 安装 playwright 并使用国内源
 RUN apt-get update && \
