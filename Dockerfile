@@ -88,4 +88,4 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 EXPOSE 35123
 
 # 启动命令（调整路径，直接使用工作目录）
-CMD ["sudo", "python", "openhands/action_execution_server.py", "--no-enable-browser", "30234"]
+CMD ["sudo", "python", "openhands/action_execution_server.py", "--no-enable-browser", "--working-dir", "/workspace", "30234"]
