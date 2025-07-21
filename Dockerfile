@@ -44,13 +44,13 @@ COPY . .
 
 # 安装 micromamba 并配置国内源
 # 安装 micromamba 到本地目录
-RUN chmod +x ./openhands/micromamba/bin/micromamba
-RUN ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
-    ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free && \
-    ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge && \
-    ./openhands/micromamba/bin/micromamba config set show_channel_urls yes && \
-    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
-    ./openhands/micromamba/bin/micromamba config list
+#RUN chmod +x ./openhands/micromamba/bin/micromamba
+#RUN ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
+#    ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free && \
+#    ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge && \
+#    ./openhands/micromamba/bin/micromamba config set show_channel_urls yes && \
+#    ./openhands/micromamba/bin/micromamba config remove channels defaults && \
+#    ./openhands/micromamba/bin/micromamba config list
 
 
 
@@ -59,12 +59,15 @@ RUN ./openhands/micromamba/bin/micromamba config add channels https://mirrors.tu
 #    ./openhands/micromamba/bin/micromamba clean -ay
 
 # 安装 playwright 并使用国内源
-RUN apt-get update && \
-    # 使用国内 PyPI 镜像加速 pip 安装
-    ./openhands/micromamba/bin/micromamba run -n openhands pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
-    # 使用国内镜像安装 playwright 浏览器
-    ./openhands/micromamba/bin/micromamba run -n openhands playwright install --with-deps chromium && \
-    rm -rf /var/lib/apt/lists/*
+RUN #apt-get update && \
+#    # 使用国内 PyPI 镜像加速 pip 安装
+#    ./openhands/micromamba/bin/micromamba run -n openhands pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
+#    # 使用国内镜像安装 playwright 浏览器
+#    ./openhands/micromamba/bin/micromamba run -n openhands playwright install --with-deps chromium && \
+#    rm -rf /var/lib/apt/lists/*
+
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
+    playwright install --with-deps chromium
 
 # 安装 openvscode-server 并使用国内源
 #ARG RELEASE_TAG="openvscode-server-v1.98.2"
