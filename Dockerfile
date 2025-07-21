@@ -66,8 +66,8 @@ COPY . .
 #    ./openhands/micromamba/bin/micromamba run -n openhands playwright install --with-deps chromium && \
 #    rm -rf /var/lib/apt/lists/*
 
-#RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
-#    playwright install --with-deps chromium
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
+    playwright install --with-deps chromium
 
 # 安装 openvscode-server 并使用国内源
 #ARG RELEASE_TAG="openvscode-server-v1.98.2"
@@ -88,4 +88,4 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 EXPOSE 35123
 
 # 启动命令（调整路径，直接使用工作目录）
-CMD ["python", "openhands/action_execution_server.py", "35123", "--working-dir", "/workspace"]
+CMD ["sudo", "python", "openhands/action_execution_server.py", "--no-enable-browser", "30234"]
