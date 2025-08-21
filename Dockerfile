@@ -11,8 +11,6 @@ ENV POETRY_VIRTUALENVS_PATH=./openhands/poetry \
     OPENVSCODE_SERVER_ROOT=./openhands/.openvscode-server
 
 # 安装依赖
-# 使用国内源更新和安装依赖
-# 替换为国内源并安装系统依赖
 # 替换为国内源并安装系统依赖
 RUN rm -rf /etc/apt/sources.list && \
     rm -rf /etc/apt/sources.list.d/* && \
@@ -23,7 +21,8 @@ RUN rm -rf /etc/apt/sources.list && \
     apt-get install -y --no-install-recommends \
         wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg procps\
         libgl1-mesa-glx \
-        libasound2-plugins libatomic1 && \
+        libasound2-plugins libatomic1 \
+        openjdk-17-jre nodejs npm golang g++ cmake && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
