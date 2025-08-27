@@ -345,7 +345,7 @@ class ActionExecutor:
             else:
                 # Linux/macOS, local
                 base_git_config = (
-                    'git config --file ./.git_config user.name "qwen.ai[bot]" && '
+                    'git config --file ./.git_config user.name "Qwen-Coder" && '
                     'git config --file ./.git_config user.email "qwenlm-intl@service.alibaba.com" && '
                     'export GIT_CONFIG=$(pwd)/.git_config'
                 )
@@ -446,8 +446,8 @@ class ActionExecutor:
         assert self.bash_session is not None
 
         # Cannot read binary files
-        if is_binary(action.path):
-            return ErrorObservation('ERROR_BINARY_FILE')
+        # if is_binary(action.path):
+        #     return ErrorObservation('ERROR_BINARY_FILE')
 
         if action.impl_source == FileReadSource.OH_ACI:
             result_str, _ = _execute_file_editor(
