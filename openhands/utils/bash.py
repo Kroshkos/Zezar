@@ -182,7 +182,7 @@ class BashSession:
         self,
         work_dir: str,
         username: str | None = None,
-        no_change_timeout_seconds: int = 30,
+        no_change_timeout_seconds: int = 80,
         max_memory_mb: int | None = None,
     ):
         self.NO_CHANGE_TIMEOUT_SECONDS = no_change_timeout_seconds

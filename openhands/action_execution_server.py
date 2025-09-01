@@ -266,7 +266,7 @@ class ActionExecutor:
             work_dir=cwd or self._initial_cwd,
             username=self.username,
             no_change_timeout_seconds=int(
-                os.environ.get('NO_CHANGE_TIMEOUT_SECONDS', 10)
+                os.environ.get('NO_CHANGE_TIMEOUT_SECONDS', 80)
             ),
             max_memory_mb=self.max_memory_gb * 1024 if self.max_memory_gb else None,
         )
