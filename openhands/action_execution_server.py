@@ -389,13 +389,13 @@ class ActionExecutor:
         self, action: CmdRunAction
     ) -> CmdOutputObservation | ErrorObservation:
         try:
-            bash_session = self.bash_session
             if action.is_static:
                 bash_session = self._create_bash_session(action.cwd)
                 assert bash_session is not None
                 obs = await call_sync_from_async(bash_session.execute, action)
                 bash_session.close()
             else:
+                bash_session = self.bash_session
                 assert bash_session is not None
                 obs = await call_sync_from_async(bash_session.execute, action)
             return obs
