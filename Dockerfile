@@ -22,7 +22,7 @@ RUN rm -rf /etc/apt/sources.list && \
         wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg procps\
         libgl1-mesa-glx \
         libasound2-plugins libatomic1 \
-        openjdk-17-jre nodejs npm golang g++ cmake && \
+        openjdk-17 nodejs npm golang g++ cmake && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

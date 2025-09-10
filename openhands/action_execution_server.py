@@ -392,8 +392,12 @@ class ActionExecutor:
             bash_session = self.bash_session
             if action.is_static:
                 bash_session = self._create_bash_session(action.cwd)
-            assert bash_session is not None
-            obs = await call_sync_from_async(bash_session.execute, action)
+                assert bash_session is not None
+                obs = await call_sync_from_async(bash_session.execute, action)
+                bash_session.close()
+            else:
+                assert bash_session is not None
+                obs = await call_sync_from_async(bash_session.execute, action)
             return obs
         except Exception as e:
             logger.error(f'Error running command: {e}')
