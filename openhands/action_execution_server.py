@@ -448,10 +448,13 @@ class ActionExecutor:
 
     async def read(self, action: FileReadAction) -> Observation:
         assert self.bash_session is not None
+        unsupported_OH_file_suffix = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.mp4', '.webm', '.ogg', '.pdf')
 
         # Cannot read binary files
-        # if is_binary(action.path):
-        #     return ErrorObservation('ERROR_BINARY_FILE')
+        if action.path.lower() not in unsupported_OH_file_suffix and is_binary(action.path):
+            working_dir = self.bash_session.cwd
+            filepath = self._resolve_path(action.path, working_dir)
+            return FileReadObservation(path=filepath, content="Binary File")
 
         if action.impl_source == FileReadSource.OH_ACI:
             result_str, _ = _execute_file_editor(
