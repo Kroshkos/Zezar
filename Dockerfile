@@ -22,7 +22,13 @@ RUN rm -rf /etc/apt/sources.list && \
         wget curl ca-certificates sudo apt-utils git jq tmux build-essential ripgrep ffmpeg procps\
         libgl1-mesa-glx \
         libasound2-plugins libatomic1 \
-        openjdk-17-jdk nodejs npm golang g++ cmake && \
+        openjdk-17-jdk golang g++ cmake && \
+    # === 安装 Node.js 20.x (>=20.19.0) ===
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    # 可选：验证版本
+    node -v && npm -v && \
+    # 清理
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
