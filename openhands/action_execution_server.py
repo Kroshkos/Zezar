@@ -451,7 +451,7 @@ class ActionExecutor:
         unsupported_OH_file_suffix = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.mp4', '.webm', '.ogg', '.pdf')
 
         # Cannot read binary files
-        if action.path.lower() not in unsupported_OH_file_suffix and is_binary(action.path):
+        if not action.path.lower().endswith(unsupported_OH_file_suffix) and is_binary(action.path):
             working_dir = self.bash_session.cwd
             filepath = self._resolve_path(action.path, working_dir)
             return FileReadObservation(path=filepath, content="Binary File")
