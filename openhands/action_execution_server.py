@@ -20,9 +20,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from zipfile import ZipFile
 
+import httpx
 import puremagic
 from binaryornot.check import is_binary
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
@@ -929,6 +931,72 @@ if __name__ == '__main__':
         if client is None or not client.initialized:
             return {'status': 'not initialized'}
         return {'status': 'ok'}
+
+    # ================================
+    # Sandbox Preview Proxy (server3)
+    # ================================
+
+    # Sandbox preview service URL (Node.js service on port 4000)
+    SANDBOX_SERVICE_URL = os.environ.get('SANDBOX_SERVICE_URL', 'http://localhost:4000')
+
+    @app.api_route('/sandbox/{path:path}', methods=['GET', 'POST', 'PUT', 'DELETE'])
+    async def sandbox_proxy(path: str, request: Request):
+        """Proxy requests to the sandbox preview service (server3).
+
+        Routes:
+        - GET  /sandbox/health         → GET  /health
+        - POST /sandbox/session        → POST /session
+        - GET  /sandbox/session        → GET  /session
+        - PUT  /sandbox/session/files  → PUT  /session/files
+        - DELETE /sandbox/session      → DELETE /session
+        """
+        # Build target URL
+        target_url = f"{SANDBOX_SERVICE_URL}/{path}"
+
+        # Get request body for POST/PUT
+        body = None
+        if request.method in ['POST', 'PUT']:
+            body = await request.body()
+
+        # Forward headers (exclude host)
+        headers = dict(request.headers)
+        headers.pop('host', None)
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                response = await http_client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body,
+                )
+
+                # Return response
+                return JSONResponse(
+                    content=response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text,
+                    status_code=response.status_code,
+                    media_type=response.headers.get('content-type', 'application/json'),
+                )
+        except httpx.ConnectError:
+            logger.error(f"Sandbox service not reachable at {SANDBOX_SERVICE_URL}")
+            return JSONResponse(
+                content={'status': 'error', 'message': 'Sandbox preview service not available'},
+                status_code=503,
+            )
+        except Exception as e:
+            logger.error(f"Error proxying to sandbox service: {e}")
+            return JSONResponse(
+                content={'status': 'error', 'message': str(e)},
+                status_code=500,
+            )
+
+    @app.get('/sandbox_preview_url')
+    async def get_sandbox_preview_url():
+        """Get the sandbox preview service URL for frontend."""
+        return {
+            'api_url': f'{SANDBOX_SERVICE_URL}',
+            'preview_url': f'http://localhost:{os.environ.get("PREVIEW_HOST_PORT", "4001")}',
+        }
 
     # ================================
     # VSCode-specific operations

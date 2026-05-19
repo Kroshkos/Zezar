@@ -89,8 +89,23 @@ RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple playwright && \
 # 安装依赖（放在复制代码前，提高缓存利用率）
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
-# 暴露端口
-EXPOSE 35123
+# 安装 Sandbox Preview Service 依赖
+RUN cd openhands/runtime/sandbox_preview && npm install --no-audit --no-fund
 
-# 启动命令（调整路径，直接使用工作目录）
-CMD ["sudo", "python", "openhands/action_execution_server.py", "--no-enable-browser", "--working-dir", "/workspace", "35123"]
+# 预安装模板依赖，加速 session 启动
+RUN cd openhands/runtime/sandbox_preview/sandbox-image/templates/react && npm install --no-audit --no-fund
+RUN cd openhands/runtime/sandbox_preview/sandbox-image/templates/vue && npm install --no-audit --no-fund
+
+# 环境变量
+ENV SANDBOX_API_PORT=4000 \
+    PREVIEW_HOST_PORT=4001 \
+    SANDBOX_MODE=host \
+    WORKSPACE_DIR=/workspace
+
+# 暴露端口: Python API + Sandbox API + Preview
+EXPOSE 35123 4000 4001
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
