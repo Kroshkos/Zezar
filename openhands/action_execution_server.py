@@ -958,6 +958,8 @@ if __name__ == '__main__':
         if request.method in ['POST', 'PUT']:
             body = await request.body()
 
+        logger.info(f"[sandbox_proxy] {request.method} /sandbox/{path} -> {target_url}, body: {body}")
+
         # Forward headers (exclude host)
         headers = dict(request.headers)
         headers.pop('host', None)

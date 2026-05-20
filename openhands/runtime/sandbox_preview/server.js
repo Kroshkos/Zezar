@@ -59,10 +59,12 @@ app.delete("/session", async (_, res) => {
 });
 
 app.put("/session/files", async (req, res) => {
+  console.log("[PUT /session/files] req.body:", JSON.stringify(req.body));
   const result = await handleFileSync({
     sessionRef,
     files: req.body.files,
   });
+  console.log("[PUT /session/files] result:", JSON.stringify(result));
   res.status(result.statusCode).json(result.body);
 });
 
