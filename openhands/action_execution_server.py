@@ -1017,6 +1017,12 @@ if __name__ == '__main__':
             'preview_url': f'{preview_protocol}://{sandbox_id}{PREVIEW_DOMAIN_SUFFIX}',
         }
 
+    INTERNAL_API_PREFIXES = (
+        '/alive', '/server_info', '/execute_action', '/sandbox/',
+        '/upload_file', '/download_files', '/list_files', '/vscode/',
+        '/sandbox_preview_url',
+    )
+
     @app.middleware('http')
     async def preview_subdomain_proxy(request: Request, call_next):
         host = request.headers.get('host', '')
@@ -1024,6 +1030,9 @@ if __name__ == '__main__':
             host = host.split(':')[0]
 
         if not host.endswith(PREVIEW_DOMAIN_SUFFIX):
+            return await call_next(request)
+
+        if request.url.path.startswith(INTERNAL_API_PREFIXES):
             return await call_next(request)
 
         path = request.url.path.lstrip('/')
