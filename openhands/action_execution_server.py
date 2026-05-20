@@ -965,7 +965,8 @@ if __name__ == '__main__':
         headers.pop('host', None)
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
+            timeout = 180.0 if request.method == 'POST' and path == 'session' else 60.0
+            async with httpx.AsyncClient(timeout=timeout) as http_client:
                 response = await http_client.request(
                     method=request.method,
                     url=target_url,
@@ -985,6 +986,12 @@ if __name__ == '__main__':
                 content={'status': 'error', 'message': 'Sandbox preview service not available'},
                 status_code=503,
             )
+        except httpx.TimeoutException:
+            logger.error(f"Sandbox service request timed out: {request.method} /{path}")
+            return JSONResponse(
+                content={'status': 'error', 'message': 'Sandbox preview service request timed out'},
+                status_code=504,
+            )
         except Exception as e:
             logger.error(f"Error proxying to sandbox service: {e}")
             return JSONResponse(
@@ -992,13 +999,80 @@ if __name__ == '__main__':
                 status_code=500,
             )
 
+    # ================================
+    # Subdomain-based Preview Proxy
+    # ================================
+    # {sessionId}.ap-southeast-1.fcapp.run -> localhost:4001
+
+    PREVIEW_DOMAIN_SUFFIX = os.environ.get('PREVIEW_DOMAIN_SUFFIX', '.ap-southeast-1.fcapp.run')
+    PREVIEW_PORT = int(os.environ.get('PREVIEW_HOST_PORT', '4001'))
+
     @app.get('/sandbox_preview_url')
     async def get_sandbox_preview_url():
         """Get the sandbox preview service URL for frontend."""
+        sandbox_id = os.environ.get('SANDBOX_ID', 'default')
+        preview_protocol = 'https' if os.environ.get('PREVIEW_USE_HTTPS') else 'http'
         return {
             'api_url': f'{SANDBOX_SERVICE_URL}',
-            'preview_url': f'http://localhost:{os.environ.get("PREVIEW_HOST_PORT", "4001")}',
+            'preview_url': f'{preview_protocol}://{sandbox_id}{PREVIEW_DOMAIN_SUFFIX}',
         }
+
+    @app.middleware('http')
+    async def preview_subdomain_proxy(request: Request, call_next):
+        host = request.headers.get('host', '')
+        if ':' in host:
+            host = host.split(':')[0]
+
+        if not host.endswith(PREVIEW_DOMAIN_SUFFIX):
+            return await call_next(request)
+
+        path = request.url.path.lstrip('/')
+        target_url = f'http://localhost:{PREVIEW_PORT}/{path}'
+        if request.url.query:
+            target_url = f'{target_url}?{request.url.query}'
+
+        body = None
+        if request.method in ('POST', 'PUT', 'PATCH'):
+            body = await request.body()
+
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ('host', 'content-length')}
+        headers['host'] = f'localhost:{PREVIEW_PORT}'
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as http_client:
+                response = await http_client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body,
+                )
+
+                resp_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in ('content-encoding', 'transfer-encoding', 'content-length')
+                }
+                return StreamingResponse(
+                    content=iter([response.content]),
+                    status_code=response.status_code,
+                    media_type=response.headers.get('content-type', 'application/octet-stream'),
+                    headers=resp_headers,
+                )
+        except httpx.ConnectError:
+            return JSONResponse(
+                content={'status': 'error', 'message': 'Preview service not available'},
+                status_code=503,
+            )
+        except httpx.TimeoutException:
+            return JSONResponse(
+                content={'status': 'error', 'message': 'Preview service timed out'},
+                status_code=504,
+            )
+        except Exception as e:
+            logger.error(f"Error proxying to preview service: {e}")
+            return JSONResponse(
+                content={'status': 'error', 'message': str(e)},
+                status_code=500,
+            )
 
     # ================================
     # VSCode-specific operations
