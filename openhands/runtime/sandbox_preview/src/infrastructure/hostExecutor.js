@@ -17,11 +17,18 @@ function createHostExecutor(template = "react") {
 
   async function initTemplate() {
     const templateDir = path.join(__dirname, `../../sandbox-image/templates/${template}`);
-    const files = ["package.json", "vite.config.js", "index.html"];
-    for (const file of files) {
-      await fs.copyFile(path.join(templateDir, file), path.join(WORKSPACE_DIR, file));
+    const SKIP = new Set(["node_modules", "pnpm-lock.yaml", ".git"]);
+    const entries = await fs.readdir(templateDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (SKIP.has(entry.name)) continue;
+      const src = path.join(templateDir, entry.name);
+      const dest = path.join(WORKSPACE_DIR, entry.name);
+      if (entry.isDirectory()) {
+        await fs.cp(src, dest, { recursive: true });
+      } else {
+        await fs.copyFile(src, dest);
+      }
     }
-    await fs.cp(path.join(templateDir, "src"), path.join(WORKSPACE_DIR, "src"), { recursive: true });
   }
 
   async function installDeps() {

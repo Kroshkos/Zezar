@@ -141,6 +141,73 @@ curl http://localhost:35123/sandbox/session
 curl -X DELETE http://localhost:35123/sandbox/session
 ```
 
+## Vue 模板使用示例
+
+创建 Session 时指定 `template: "vue"` 即可使用 Vue 模板（内置 Vue 3 + Vite + TypeScript + Pinia + Vue Router + TailwindCSS）：
+
+```bash
+# 1. 创建 Vue Session（指定 template 为 vue）
+curl -X POST http://localhost:35123/sandbox/session \
+  -H "Content-Type: application/json" \
+  -d '{"template": "vue"}'
+# 返回: {"sessionId":"xxx","status":"running","previewUrl":"http://localhost:4001"}
+
+# 2. 推送 Vue 组件代码
+curl -X PUT http://localhost:35123/sandbox/session/files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": {
+      "src/App.vue": "<template>\n  <div class=\"p-6\">\n    <h1 class=\"text-2xl font-bold\">{{ message }}</h1>\n    <button class=\"mt-4 px-4 py-2 bg-blue-500 text-white rounded\" @click=\"count++\">\n      Count: {{ count }}\n    </button>\n  </div>\n</template>\n\n<script setup lang=\"ts\">\nimport { ref } from \"vue\";\n\nconst message = ref(\"Hello Vue!\");\nconst count = ref(0);\n</script>"
+    }
+  }'
+# 预期: {"sessionId":"...","status":"success","filesWritten":["src/App.vue"],"install":null}
+
+# 3. 浏览器打开预览
+open http://localhost:4001
+
+# 4. 推送含新依赖的代码（触发自动安装）
+curl -X PUT http://localhost:35123/sandbox/session/files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": {
+      "package.json": "{\"name\":\"vue-app\",\"version\":\"1.0.0\",\"type\":\"module\",\"scripts\":{\"dev\":\"vite --port 3015 --host 0.0.0.0 --strictPort\"},\"dependencies\":{\"vue\":\"^3.4.0\",\"vue-router\":\"^4.3.0\",\"pinia\":\"^2.1.7\",\"axios\":\"^1.6.0\"},\"devDependencies\":{\"@vitejs/plugin-vue\":\"^5.0.0\",\"vite\":\"^5.2.0\",\"typescript\":\"^5.3.3\",\"tailwindcss\":\"^3.4.0\",\"autoprefixer\":\"^10.4.16\",\"postcss\":\"^8.4.31\"}}",
+      "src/App.vue": "<template>\n  <div class=\"p-6\">\n    <h1 class=\"text-2xl font-bold\">{{ title }}</h1>\n    <ul class=\"mt-4 space-y-2\">\n      <li v-for=\"item in items\" :key=\"item.id\" class=\"p-2 bg-gray-100 rounded\">\n        {{ item.name }}\n      </li>\n    </ul>\n  </div>\n</template>\n\n<script setup lang=\"ts\">\nimport { ref } from \"vue\";\nimport axios from \"axios\";\n\nconst title = ref(\"Vue + Axios Demo\");\nconst items = ref([{ id: 1, name: \"Item A\" }, { id: 2, name: \"Item B\" }]);\n</script>"
+    }
+  }'
+# 预期: {"sessionId":"...","status":"success","filesWritten":["package.json","src/App.vue"],"install":{"success":true,"output":"..."}}
+
+# 5. 使用 Vue Router 的多页面示例
+curl -X PUT http://localhost:35123/sandbox/session/files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": {
+      "src/main.ts": "import { createApp } from \"vue\";\nimport { createPinia } from \"pinia\";\nimport { createRouter, createWebHistory } from \"vue-router\";\nimport App from \"./App.vue\";\n\nconst router = createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: \"/\", component: () => import(\"./views/Home.vue\") },\n    { path: \"/about\", component: () => import(\"./views/About.vue\") }\n  ]\n});\n\nconst app = createApp(App);\napp.use(createPinia());\napp.use(router);\napp.mount(\"#app\");",
+      "src/App.vue": "<template>\n  <nav class=\"p-4 bg-gray-800 text-white flex gap-4\">\n    <router-link to=\"/\">Home</router-link>\n    <router-link to=\"/about\">About</router-link>\n  </nav>\n  <router-view />\n</template>",
+      "src/views/Home.vue": "<template>\n  <div class=\"p-6\">\n    <h1 class=\"text-3xl font-bold\">Home Page</h1>\n    <p class=\"mt-2 text-gray-600\">Welcome to the Vue sandbox!</p>\n  </div>\n</template>",
+      "src/views/About.vue": "<template>\n  <div class=\"p-6\">\n    <h1 class=\"text-3xl font-bold\">About Page</h1>\n    <p class=\"mt-2 text-gray-600\">Built with Vue 3 + Vite + TailwindCSS</p>\n  </div>\n</template>"
+    }
+  }'
+# 预期: 浏览器展示带导航栏的多页面应用
+
+# 6. 销毁 Session
+curl -X DELETE http://localhost:35123/sandbox/session
+```
+
+### Vue 模板内置依赖
+
+
+| 依赖                   | 版本     | 说明            |
+| -------------------- | ------ | ------------- |
+| `vue`                | ^3.4.0 | Vue 3 核心      |
+| `vue-router`         | ^4.3.0 | 路由管理          |
+| `pinia`              | ^2.1.7 | 状态管理          |
+| `tailwindcss`        | ^3.4.0 | 原子化 CSS       |
+| `typescript`         | ^5.3.3 | TypeScript 支持 |
+| `@vitejs/plugin-vue` | ^5.0.0 | Vite Vue 插件   |
+
+
+> **注意**：Vue 模板使用端口 3015 作为 Vite dev server 端口，通过沙箱代理层统一暴露为 4001 端口。模板默认关闭 HMR 以保证预览稳定性，代码更新后需手动刷新页面。
+
 ## 实时日志
 
 通过 WebSocket 监听编译日志：
