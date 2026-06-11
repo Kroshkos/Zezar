@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from zipfile import ZipFile
@@ -952,13 +953,19 @@ if __name__ == '__main__':
         """
         # Build target URL
         target_url = f"{SANDBOX_SERVICE_URL}/{path}"
+        req_id = uuid.uuid4().hex[:8]
+        t0 = time.monotonic()
 
         # Get request body for POST/PUT
         body = None
         if request.method in ['POST', 'PUT']:
             body = await request.body()
 
-        logger.info(f"[sandbox_proxy] {request.method} /sandbox/{path} -> {target_url}, body: {body}")
+        body_preview = (body[:512] + b'...') if body and len(body) > 512 else body
+        logger.info(
+            f"[sandbox_proxy][{req_id}] >>> {request.method} /sandbox/{path} -> {target_url} "
+            f"body_len={len(body) if body else 0} body_preview={body_preview!r}"
+        )
 
         # Forward headers (exclude host)
         headers = dict(request.headers)
@@ -974,6 +981,14 @@ if __name__ == '__main__':
                     content=body,
                 )
 
+                cost_ms = int((time.monotonic() - t0) * 1000)
+                resp_text = response.text
+                resp_preview = resp_text[:512] + '...' if len(resp_text) > 512 else resp_text
+                logger.info(
+                    f"[sandbox_proxy][{req_id}] <<< {request.method} /sandbox/{path} "
+                    f"status={response.status_code} cost={cost_ms}ms resp_len={len(resp_text)} resp_preview={resp_preview!r}"
+                )
+
                 # Return response
                 return JSONResponse(
                     content=response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text,
@@ -981,19 +996,30 @@ if __name__ == '__main__':
                     media_type=response.headers.get('content-type', 'application/json'),
                 )
         except httpx.ConnectError:
-            logger.error(f"Sandbox service not reachable at {SANDBOX_SERVICE_URL}")
+            cost_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                f"[sandbox_proxy][{req_id}] !!! ConnectError after {cost_ms}ms, "
+                f"sandbox service not reachable at {SANDBOX_SERVICE_URL}"
+            )
             return JSONResponse(
                 content={'status': 'error', 'message': 'Sandbox preview service not available'},
                 status_code=503,
             )
         except httpx.TimeoutException:
-            logger.error(f"Sandbox service request timed out: {request.method} /{path}")
+            cost_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                f"[sandbox_proxy][{req_id}] !!! Timeout after {cost_ms}ms: {request.method} /{path}"
+            )
             return JSONResponse(
                 content={'status': 'error', 'message': 'Sandbox preview service request timed out'},
                 status_code=504,
             )
         except Exception as e:
-            logger.error(f"Error proxying to sandbox service: {e}")
+            cost_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                f"[sandbox_proxy][{req_id}] !!! Exception after {cost_ms}ms: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             return JSONResponse(
                 content={'status': 'error', 'message': str(e)},
                 status_code=500,

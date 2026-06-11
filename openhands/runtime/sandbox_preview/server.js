@@ -41,30 +41,39 @@ app.get("/", (_, res) => {
 app.get("/health", (_, res) => res.send("OK"));
 
 app.post("/session", async (req, res) => {
+  console.log("[POST /session] req.body:", JSON.stringify(req.body));
+  const t0 = Date.now();
   const result = await handleCreateSession({
     sessionRef,
     template: req.body?.template,
   });
+  console.log(`[POST /session] result status=${result.statusCode} cost=${Date.now() - t0}ms body=${JSON.stringify(result.body)}`);
   res.status(result.statusCode).json(result.body);
 });
 
 app.get("/session", async (_, res) => {
+  console.log("[GET /session] called");
   const result = await handleGetSession({ sessionRef });
+  console.log(`[GET /session] result status=${result.statusCode} body=${JSON.stringify(result.body)}`);
   res.status(result.statusCode).json(result.body);
 });
 
 app.delete("/session", async (_, res) => {
+  console.log("[DELETE /session] called");
   const result = await handleDestroySession({ sessionRef });
+  console.log(`[DELETE /session] result status=${result.statusCode} body=${JSON.stringify(result.body)}`);
   res.status(result.statusCode).json(result.body);
 });
 
 app.put("/session/files", async (req, res) => {
-  console.log("[PUT /session/files] req.body:", JSON.stringify(req.body));
+  const fileKeys = req.body?.files ? Object.keys(req.body.files) : [];
+  console.log(`[PUT /session/files] file count=${fileKeys.length} keys=${JSON.stringify(fileKeys)}`);
+  const t0 = Date.now();
   const result = await handleFileSync({
     sessionRef,
     files: req.body.files,
   });
-  console.log("[PUT /session/files] result:", JSON.stringify(result));
+  console.log(`[PUT /session/files] result status=${result.statusCode} cost=${Date.now() - t0}ms body=${JSON.stringify(result.body)}`);
   res.status(result.statusCode).json(result.body);
 });
 
