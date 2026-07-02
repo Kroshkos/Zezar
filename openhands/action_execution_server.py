@@ -1055,7 +1055,8 @@ if __name__ == '__main__':
         if ':' in host:
             host = host.split(':')[0]
 
-        if not host.endswith(PREVIEW_DOMAIN_SUFFIX):
+        # Only forward GET requests to preview service, others go through normal routing
+        if request.method != 'GET':
             return await call_next(request)
 
         if request.url.path.startswith(INTERNAL_API_PREFIXES):
