@@ -101,7 +101,15 @@ async function handleGetSession({ sessionRef }) {
   const session = sessionRef.current;
   if (!session) {
     console.log(`[handleGetSession] no active session`);
-    return { statusCode: 404, body: { status: "error", message: "No active session" } };
+    return {
+      statusCode: 200,
+      body: {
+        sessionId: null,
+        status: "inactive",
+        previewUrl: null,
+        createdAt: null,
+      },
+    };
   }
   console.log(`[handleGetSession] id=${session.id} status=${session.status}`);
   return {
