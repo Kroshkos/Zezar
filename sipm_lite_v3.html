@@ -1,0 +1,2615 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Цезарь — Управление стратегических инициатив и проектов</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/inter@5/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/manrope@5/index.css">
+<style>
+:root{
+  --bg:#f4f6fb; --panel:#fff; --ink:#0f172a; --muted:#64748b; --line:#e6eaf2;
+  --brand:#4f46e5; --brand2:#7c3aed; --gold:#f0b429;
+  --rad:16px;
+  --shadow:0 1px 2px rgba(15,23,42,.05),0 14px 34px -14px rgba(15,23,42,.16);
+  --grad:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+h1,h2,h3,.brand b{font-family:'Manrope','Inter',sans-serif}
+button{font-family:inherit;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{font-family:inherit;font-size:14px;width:100%;padding:10px 13px;border:1px solid #dbe2ee;border-radius:11px;background:#fff;color:var(--ink);outline:none;transition:.15s}
+input:focus,select:focus,textarea:focus{border-color:#818cf8;box-shadow:0 0 0 3px rgba(99,102,241,.16)}
+textarea{resize:vertical}
+label{display:block;font-size:11.5px;font-weight:700;color:var(--muted);margin:13px 0 5px;text-transform:uppercase;letter-spacing:.6px}
+.app{display:flex;min-height:100vh}
+.sidebar{width:272px;min-width:272px;background:radial-gradient(900px 500px at -20% -10%,#26344f 0%,transparent 55%),linear-gradient(180deg,#0f172a,#0b1120);color:#cfd6e6;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{display:flex;gap:13px;align-items:center;padding:24px 20px;border-bottom:1px solid rgba(255,255,255,.07)}
+.brand .tile{width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,#f5c542,#d98e04);display:flex;align-items:center;justify-content:center;font-size:23px;box-shadow:0 10px 22px -8px rgba(240,180,41,.6);flex-shrink:0}
+.brand b{font-size:19px;letter-spacing:3px;color:#fff;display:block}
+.brand span{font-size:10.5px;color:#8ea0bf;letter-spacing:.3px;display:block;margin-top:2px}
+nav{flex:1;padding:16px 13px;overflow:auto}
+.nv{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:0;color:#93a3bd;padding:10px 14px;border-radius:12px;font-size:13.5px;font-weight:600;margin-bottom:3px;transition:.16s}
+.nv:hover{background:rgba(255,255,255,.06);color:#e2e8f0}
+.nv.on{background:linear-gradient(90deg,rgba(99,102,241,.28),rgba(99,102,241,.06));color:#fff;box-shadow:inset 3px 0 0 #818cf8}
+.nv .cnt{margin-left:auto;background:rgba(255,255,255,.1);font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px}
+.side-foot{padding:15px;border-top:1px solid rgba(255,255,255,.07);display:grid;gap:8px}
+.side-foot button{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:#c3cee0;padding:9px;border-radius:11px;font-size:12.5px;font-weight:600;transition:.15s}
+.side-foot button:hover{background:rgba(255,255,255,.12);color:#fff}
+.hint{font-size:10.5px;color:#5c6b88;text-align:center;margin-top:2px}
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding:26px 32px 14px;flex-wrap:wrap}
+.topbar h1{font-size:26px;font-weight:800;letter-spacing:-.4px}
+.topbar .sub{color:var(--muted);font-size:13px;margin-top:4px}
+.content{padding:8px 32px 56px;flex:1}
+.anim{animation:fadeUp .28s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(9px)}}
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:9px 16px;border-radius:12px;font-size:13.5px;font-weight:700;transition:.18s}
+.btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px rgba(15,23,42,.25)}
+.btn.primary{background:var(--grad);border:0;color:#fff;box-shadow:0 10px 20px -9px rgba(79,70,229,.6)}
+.btn.gold{background:linear-gradient(135deg,#f5c542,#e09c0b);border:0;color:#3d2c00;box-shadow:0 8px 18px -8px rgba(224,156,11,.55)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.danger{color:var(--red);border-color:#fecaca;background:#fff5f5}
+.btn.sm{padding:6px 12px;font-size:12.5px;border-radius:10px}
+.badge{display:inline-block;padding:4px 11px;border-radius:99px;font-size:11.5px;font-weight:800;white-space:nowrap}
+.b-green{background:#e5f7ec;color:#15803d}.b-blue{background:#e7efff;color:#1d4ed8}
+.b-red{background:#feecec;color:#b91c1c}.b-amber{background:#fef3dd;color:#b45309}
+.b-purple{background:#f1eafe;color:#6d28d9}.b-gray{background:#eef1f6;color:#5b6474}
+.b-cyan{background:#e0f5f9;color:#0e7490}.b-gold{background:#fbf3d7;color:#92700c}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rad);box-shadow:var(--shadow)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+.pad{padding:20px}
+.empty{padding:56px 20px;text-align:center;color:var(--muted)}
+.empty div{font-size:44px;margin-bottom:10px;opacity:.55}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 14px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--muted);transition:.16s}
+.chip:hover{border-color:#c3cee0}
+.chip.on{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 6px 14px -7px rgba(79,70,229,.55)}
+table.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:#94a3b8;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:800}
+.tbl th.srt{cursor:pointer;user-select:none;white-space:nowrap}
+.tbl th.srt:hover{color:#4f46e5}
+.tbl td{padding:12px 14px;border-bottom:1px solid #eef2f8;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr:hover td{background:#f8faff}
+.tbl .nm{font-weight:700}
+.tbl .sub{font-size:12px;color:var(--muted);margin-top:3px}
+.icobtn{border:0;background:none;font-size:15px;padding:5px 6px;border-radius:8px;opacity:.75}
+.icobtn:hover{background:#eef2f9;opacity:1}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;margin-bottom:20px}
+.stat{padding:20px;position:relative;overflow:hidden}
+.sic{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:13px}
+.stat .v{font-size:26px;font-weight:800;letter-spacing:-.6px;font-family:'Manrope',sans-serif}
+.stat .l{font-size:12px;color:var(--muted);margin-top:3px;font-weight:600}
+.pbar{height:8px;background:#edf1f8;border-radius:99px;overflow:hidden}
+.pbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#f0b429,#f5c542)}
+.pbar.blue i{background:linear-gradient(90deg,#6366f1,#4f46e5)}
+.pbar.green i{background:linear-gradient(90deg,#34d399,#16a34a)}
+.link-chips{display:flex;flex-wrap:wrap;gap:6px}
+.lchip{font-size:11.5px;background:#f3f6fc;border:1px solid #e4eaf5;border-radius:8px;padding:4px 9px;color:#3d4a63;font-weight:600}
+.lchip b{color:#312e81}
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.52);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:90;animation:fade .18s}
+.modal{background:#fff;border-radius:20px;width:min(680px,94vw);max-height:92vh;overflow:auto;box-shadow:0 30px 80px -20px rgba(10,18,38,.5);animation:pop .22s}
+.modal.wide{width:min(960px,96vw)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:20px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);z-index:2}
+.modal-head h3{font-size:17px}
+.modal-body{padding:8px 24px 24px}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
+.x{border:0;background:#f1f4f9;width:34px;height:34px;border-radius:10px;font-size:15px}
+.x:hover{background:#e4e9f2}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.frow3{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+.radio-row{display:flex;gap:20px;margin-top:6px}
+.radio-row label{display:flex;gap:7px;align-items:center;margin:0;text-transform:none;font-size:13.5px;color:var(--ink);cursor:pointer;font-weight:600}
+.radio-row input{width:auto}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:7px 12px;font-size:13.5px;margin:12px 0}
+.kv b{color:var(--muted);font-weight:600}
+.mini-add{background:#f7f9fd;border:1px dashed #cfd8e8;border-radius:14px;padding:16px;margin-top:14px}
+.row-item{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid var(--line);border-radius:13px;margin-bottom:8px;background:#fff}
+.row-item .ri-body{flex:1;min-width:0}
+.row-item .ri-t{font-weight:700}
+.row-item .ri-s{font-size:12px;color:var(--muted);margin-top:3px}
+.row-item.overdue{border-color:#fecaca;background:#fffafa}
+.grp-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#312e81;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px;padding:7px 10px;background:#f1f4ff;border-radius:9px}
+.ed2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.msteps{display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.mstep{flex:1;min-width:210px;display:flex;gap:11px;align-items:center;padding:13px 16px}
+.mstep .n{width:32px;height:32px;border-radius:50%;background:#eef1f6;color:#5b6474;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.mstep.done .n{background:linear-gradient(135deg,#34d399,#16a34a);color:#fff}
+.mstep .t{font-weight:800;font-size:13px}
+.mstep .s{font-size:11.5px;color:var(--muted)}
+/* workflow canvas */
+.wfbox{position:relative;border:1px solid var(--line);border-radius:14px;background:radial-gradient(#d9dfec 1px,transparent 1px);background-size:22px 22px;background-color:#fbfcfe;overflow:auto;margin-top:12px}
+.wfnode{position:absolute;min-width:150px;max-width:200px;background:#fff;border:2px solid #c9d2e3;border-radius:11px;padding:8px 10px;font-size:12px;cursor:grab;box-shadow:0 4px 10px rgba(15,23,42,.08);user-select:none}
+.wfnode.active{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+.wfnode.done{border-color:#22c55e;background:#f2fdf6}
+.wfnode.rejected{border-color:#ef4444;background:#fef5f5}
+.wfnode.branch{border-style:dashed}
+.wfnode.sel{outline:3px solid #f0b429}
+.wfnode .t{font-weight:700;line-height:1.25}
+.wfnode .s{font-size:10.5px;color:var(--muted);margin-top:2px}
+/* ===== Приоритет-2030: рабочая таблица (стиль референса) ===== */
+.p30{--s-bg:#f5f7f7;--s-surface:#fff;--s-text:#24322d;--s-muted:#64716b;--s-line:#dce3df;--s-accent:#237454;--s-pale:#eaf4ee;--s-head:#f0f5f2;
+  background:var(--s-bg);border:1px solid var(--s-line);border-radius:14px;overflow:hidden;color:var(--s-text);font-size:13.5px}
+.p30-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;background:var(--s-surface);flex-wrap:wrap}
+.p30-brand{display:flex;align-items:center;gap:12px}
+.p30-ico{width:38px;height:38px;border-radius:10px;background:var(--s-pale);border:1px solid var(--s-line);display:flex;align-items:center;justify-content:center;font-size:19px}
+.p30-brand strong{font-size:16px;font-weight:800}
+.p30-brand strong span{font-weight:500;color:var(--s-muted)}
+.p30-brand small{display:block;color:var(--s-muted);font-size:12px;margin-top:2px}
+.p30-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.p30 .pbtn{border:1px solid var(--s-line);background:var(--s-surface);color:var(--s-text);border-radius:7px;padding:8px 13px;min-height:36px;font-size:13px;font-weight:600;transition:.12s}
+.p30 .pbtn:hover{background:var(--s-pale);border-color:var(--s-accent)}
+.p30 .pbtn.primary{background:#237454;color:#fff;border-color:#237454}
+.p30 .pbtn.primary:hover{background:#185b40}
+.p30-note{background:var(--s-pale);border-left:3px solid var(--s-accent);padding:10px 16px;margin:12px 24px;color:var(--s-text);font-size:12.5px;border-radius:0 6px 6px 0}
+.p30-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:0 24px 14px}
+.p30-tools input,.p30-tools select{width:auto;border:1px solid var(--s-line);border-radius:7px;padding:8px 12px;font-size:13px;background:var(--s-surface);color:var(--s-text)}
+.p30-chips{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.p30-chip{border:1px solid var(--s-line);background:var(--s-surface);border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:600;color:var(--s-muted)}
+.p30-chip:hover{border-color:var(--s-accent)}
+.p30-chip.on{background:var(--s-accent);border-color:var(--s-accent);color:#fff}
+.p30-scroll{overflow:auto;max-height:68vh;border-top:1px solid var(--s-line)}
+.p30-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}
+.p30-table th,.p30-table td{border-right:1px solid var(--s-line);border-bottom:1px solid var(--s-line);padding:10px 12px;vertical-align:top;text-align:left;background:var(--s-surface);font-weight:400}
+.p30-table th{position:sticky;top:0;z-index:3;background:var(--s-head);height:64px;vertical-align:middle;font-weight:700;white-space:nowrap;font-size:12px}
+.p30-table th small{display:block;font-size:10.5px;font-weight:500;color:var(--s-muted);line-height:1.3;margin-top:4px}
+.p30-table th.srt{cursor:pointer;user-select:none}
+.p30-table th.srt:hover{color:var(--s-accent)}
+.p30-table td{white-space:pre-line;overflow-wrap:anywhere}
+.p30-table tbody tr:hover td{background:var(--s-bg)}
+.p30-idx{position:sticky;left:0;width:46px;min-width:46px;z-index:2;text-align:center!important;font-size:12px;color:var(--s-muted);background:var(--s-head)!important}
+.p30-table th.p30-idx{z-index:5}
+.p30-name{position:sticky;left:46px;z-index:2;box-shadow:2px 0 0 var(--s-line);min-width:250px;max-width:330px}
+.p30-table th.p30-name{z-index:5;background:var(--s-head)}
+.p30-name .nm{font-weight:700;cursor:pointer;line-height:1.35}
+.p30-name .nm:hover{color:var(--s-accent)}
+.p30-money{font-variant-numeric:tabular-nums;text-align:right!important;white-space:nowrap!important}
+.p30-mark{display:inline-block;font-size:12px;border:1px solid var(--s-line);padding:3px 9px;line-height:1.4;border-radius:5px;color:var(--s-muted);background:var(--s-bg);white-space:nowrap;cursor:pointer}
+.p30-mark.yes{background:var(--s-pale);color:var(--s-accent);border-color:var(--s-line)}
+.p30-mark.mid{background:#eef4ff;color:#2b6cb0;border-color:#d7e3f8}
+.p30-mark.no{color:#9a553e;background:#fcf3ed;border-color:#eddfd5}
+.p30-mark.plain{cursor:default}
+.p30-link{border:0;background:none;padding:0;color:var(--s-accent);font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;font-family:inherit}
+.p30-link:hover{text-decoration:underline}
+.p30-mini{height:5px;background:#e5ebe7;border-radius:99px;overflow:hidden;margin-top:5px;width:110px}
+.p30-mini i{display:block;height:100%;background:var(--s-accent)}
+.p30-foot{display:flex;gap:14px;align-items:center;padding:9px 16px;border-top:1px solid var(--s-line);background:var(--s-surface);color:var(--s-muted);font-size:12px;flex-wrap:wrap}
+.p30-foot .right{margin-left:auto}
+.p30-save{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--s-accent);margin-right:5px}
+/* ===== печать ===== */
+#printWrap{display:none}
+#printWrap.on{display:block;position:fixed;inset:0;background:#e8ebf1;z-index:150;overflow:auto}
+.pv-bar{position:sticky;top:0;z-index:5;background:#0f172a;color:#fff;display:flex;align-items:center;gap:12px;padding:12px 22px}
+.pv-bar .sp{flex:1}
+.paper{background:#fff;max-width:840px;margin:26px auto;padding:46px 54px;box-shadow:0 10px 40px rgba(15,23,42,.2);font-size:12.5px;color:#0f172a;line-height:1.55;font-family:'Inter',sans-serif}
+.paper.min{padding:10mm 11mm}
+.paper .phead{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px double #1e293b;padding-bottom:12px;margin-bottom:18px;gap:16px}
+.paper .porg{font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1.4px}
+.paper .pdep{font-size:12px;color:#334155;margin-top:3px}
+.paper .pnum{text-align:right;font-size:11px;color:#475569;white-space:nowrap}
+.paper h1{font-size:18px;text-align:center;margin:16px 0 4px;text-transform:uppercase;letter-spacing:3px;font-weight:800}
+.paper .ph2{border-left:4px solid var(--brand);padding-left:10px;font-weight:800;text-transform:uppercase;font-size:12.5px;margin:20px 0 9px;letter-spacing:.6px;color:#1e1b4b}
+.paper table{width:100%;border-collapse:collapse;margin:9px 0;font-size:12px}
+.paper th{background:#eef2ff;color:#312e81;font-size:10px;text-transform:uppercase;letter-spacing:.5px;border:1px solid #c7d2fe;padding:6px 8px;text-align:left}
+.paper td{border:1px solid #cbd5e1;padding:6px 8px;vertical-align:top}
+.paper .note{font-size:11px;color:#64748b}
+.ag{font-size:9.3pt;line-height:1.4;color:#111}
+.ag-org{font-size:8.5pt;color:#444;border-bottom:.6mm solid #222;padding-bottom:1.5mm;margin-bottom:3mm;display:flex;justify-content:space-between;gap:10px}
+.ag-title{text-align:center;font-size:15pt;font-weight:800;letter-spacing:2.5px;text-transform:uppercase;margin:1mm 0 .5mm;font-family:'Manrope','Inter',sans-serif}
+.ag-sub{text-align:center;font-size:8.5pt;color:#555;margin-bottom:3mm}
+.ag-meta{display:grid;grid-template-columns:1fr 1fr 1fr 1.3fr;gap:2.5mm;border:1.6px solid #222;border-radius:2mm;padding:2.6mm;margin-bottom:3mm}
+.ag-meta div b{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:1px;color:#666;margin-bottom:.8mm}
+.ag-sec{font-weight:800;font-size:10pt;text-transform:uppercase;letter-spacing:1.1px;margin:3.6mm 0 1.6mm;padding:1mm 0 1mm 2.5mm;border-left:2.2mm solid #222;page-break-after:avoid}
+.ag-grp{font-weight:800;font-size:9pt;margin:2.6mm 0 1.2mm;padding:1.4mm 2mm;background:#f1f4ff;border-radius:1.5mm;page-break-after:avoid}
+.ag-lbl{font-size:7.5pt;text-transform:uppercase;letter-spacing:.8px;color:#555;font-weight:800;margin:2mm 0 1mm}
+.ag-line{border-bottom:.35mm solid #888;min-height:6.4mm;margin-top:1.4mm}
+.ag-row{display:flex;gap:4mm}
+.ag-cell{flex:1}
+.ag-tbl{width:100%;border-collapse:collapse;font-size:8pt;margin:1mm 0}
+.ag-tbl th,.ag-tbl td{border:.32mm solid #666;padding:1.4mm 1.8mm;text-align:left;vertical-align:top}
+.ag-tbl th{background:#efefef;font-size:7.3pt;text-transform:uppercase;letter-spacing:.5px}
+.ag-tbl .empty-row td{height:6.6mm}
+.ag-tbl tr{page-break-inside:avoid}
+.ag-dec{display:flex;gap:2.5mm;margin-bottom:4mm;page-break-inside:avoid}
+.ag-dec-h{font-weight:800;font-size:9.5pt;min-width:7mm}
+.ag-flow{display:flex;margin:2mm 0 3mm}
+.ag-flow .af{flex:1;text-align:center;position:relative;padding:0 1mm}
+.ag-flow .af::before{content:"";position:absolute;top:3.2mm;left:-50%;width:100%;border-top:.4mm solid #999}
+.ag-flow .af:first-child::before{display:none}
+.ag-flow .af .n{width:6.4mm;height:6.4mm;border:.5mm solid #333;border-radius:50%;margin:0 auto 1.2mm;background:#fff;font-weight:800;font-size:8.5pt;display:flex;align-items:center;justify-content:center;position:relative;z-index:1}
+.ag-flow .af .c{font-size:7.6pt;font-weight:800}
+.ag-flow .af .s{font-size:6.8pt;color:#555}
+.ag-sign{display:flex;justify-content:space-between;margin-top:7mm;font-size:9pt;page-break-inside:avoid}
+.ag-sign div{width:46%}
+.ag-sign .ln{border-bottom:.4mm solid #333;height:8mm;margin-top:5mm}
+.ag-sign .cap{font-size:7.5pt;color:#666;text-align:center;margin-top:1mm}
+.ag-note{font-size:7.3pt;color:#777;margin-top:4mm;border-top:.3mm solid #ccc;padding-top:1.5mm}
+@media print{
+  @page{size:A4 portrait;margin:10mm}
+  html,body{height:auto !important;overflow:visible !important}
+  body *{visibility:hidden}
+  #printWrap,#printWrap *{visibility:visible}
+  #printWrap{position:absolute !important;left:0;top:0;width:100%;height:auto !important;overflow:visible !important;background:#fff;display:block;margin:0;padding:0}
+  #printWrap .paper{position:static !important;width:100%;max-width:none;margin:0;padding:0;box-shadow:none}
+  .pv-bar{display:none !important}
+  .ag-dec,.ag-grp,.ag-sign,.ag-flow{page-break-inside:avoid;break-inside:avoid}
+  .ag-sec{page-break-after:avoid;break-after:avoid}
+}
+@media (max-width:960px){
+  .app{flex-direction:column}
+  .sidebar{width:100%;min-width:0;height:auto;position:static}
+  nav{display:flex;overflow-x:auto;gap:4px}
+  .nv{white-space:nowrap;width:auto}
+  .nv .cnt{display:none}
+  .frow,.frow3,.ed2{grid-template-columns:1fr}
+  .topbar,.content{padding-left:16px;padding-right:16px}
+  .paper{padding:26px}
+}
+</style>
+</head>
+<body>
+<div id="splash"><div class="sp-inner">
+  <div class="sp-tile">🏛️</div><div class="sp-t">ЦЕЗАРЬ</div>
+  <div class="sp-s">Управление стратегических инициатив и проектов · Загрузка автономной системы…</div>
+  <div class="sp-bar"><i></i></div>
+</div></div>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="tile">🏛️</span><div><b>ЦЕЗАРЬ</b><span>Управление стратегических инициатив и проектов</span></div></div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <button onclick="exportJSON()">💾 Экспорт JSON</button>
+      <button onclick="importJSON()">📂 Импорт JSON</button>
+      <button onclick="resetAll()">♻️ Сброс данных</button>
+      <div class="hint">данные хранятся локально в браузере</div>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div><h1 id="vt"></h1><div class="sub" id="vs"></div></div>
+      <div id="ta" style="display:flex;gap:9px;flex-wrap:wrap"></div>
+    </header>
+    <div id="content" class="content"></div>
+  </main>
+</div>
+<div id="printWrap"></div>
+<datalist id="peopleList"></datalist>
+<input type="file" id="fileInput" accept=".json" hidden>
+<script>
+"use strict";
+/* ================= UTILS ================= */
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const todayISO=()=>new Date().toISOString().slice(0,10);
+const dPlus=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)};
+const fmt=d=>d?new Date(d).toLocaleDateString('ru-RU'):'—';
+const fmtFull=iso=>{if(!iso)return '«___» __________ 20___ г.';const p=iso.split('-');return p[2]+'.'+p[1]+'.'+p[0]+' г.'};
+const money=n=>(n||0).toLocaleString('ru-RU')+' ₽';
+const numF=n=>(+n||0).toLocaleString('ru-RU');
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cut=(s,n)=>String(s||'').length>n?String(s).slice(0,n)+'…':String(s||'');
+const splitPeople=str=>String(str||'').split(',').map(x=>x.trim()).filter(Boolean);
+/* ================= DB ================= */
+const KEY='caesar_usip_v3';
+let db={docs:[],softs:[],wfTemplates:[],tasks:[],projects:[],grants:[],schols:[],priority:[],meetings:[],people:[],docTypes:[],softTypes:[],scholTypes:[],prioSet:[],statusSets:{},taskGroups:[]};
+const FDEF={
+  docs:{q:'',wf:[],type:[],projectId:[]},
+  softs:{q:'',wf:[],type:[],projectId:[]},
+  tasks:{q:'',status:[],priority:[],projectId:[],overdue:false},
+  projects:{q:'',status:[]},
+  grants:{q:'',status:[]},
+  schols:{q:'',status:[],type:[]},
+  priority:{q:'',dir:[],pc:[]},
+  meetings:{q:'',status:[]}
+};
+let state={view:'dash',adminTab:'people',meetEditId:null,meetGroup:'all',meetQ:'',meetSel:[],grpEdit:null,wfKind:null,wfEntId:null,wfSel:null,wfOff:{},
+  filters:JSON.parse(JSON.stringify(FDEF)),sort:{},_focus:null};
+function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
+function defaults(){
+  return {
+    docs:[],softs:[],tasks:[],projects:[],grants:[],schols:[],priority:[],meetings:[],people:[],taskGroups:[],
+    docTypes:['Приказ','Распоряжение','Служебная записка','Отчёт','Договор','Письмо','Заявка','Протокол','План','Дорожная карта','Другое'],
+    softTypes:['Веб-приложение','Мобильное приложение','Десктоп-приложение','Сервис / API','Библиотека / модуль','Телеграм-бот','Другое'],
+    scholTypes:['Президентская','Правительственная','Именная','Корпоративная','Иная'],
+    prioSet:[
+      {key:'low',label:'Низкий',color:'b-gray'},{key:'medium',label:'Средний',color:'b-blue'},
+      {key:'high',label:'Высокий',color:'b-amber'},{key:'urgent',label:'Срочный',color:'b-red'}
+    ],
+    statusSets:{
+      project:[{key:'planned',label:'Планируется',color:'b-gray'},{key:'active',label:'В работе',color:'b-blue'},{key:'paused',label:'Пауза',color:'b-amber'},{key:'done',label:'Завершён',color:'b-green'},{key:'cancelled',label:'Отменён',color:'b-red'}],
+      task:[{key:'new',label:'Новая',color:'b-gray'},{key:'progress',label:'В работе',color:'b-blue'},{key:'done',label:'Выполнена',color:'b-green'}],
+      grant:[{key:'draft',label:'Подготовка',color:'b-gray'},{key:'submitted',label:'Заявка подана',color:'b-cyan'},{key:'review',label:'На экспертизе',color:'b-amber'},{key:'won',label:'Выигран',color:'b-green'},{key:'lost',label:'Отклонён',color:'b-red'},{key:'contract',label:'Договор',color:'b-purple'},{key:'progress',label:'Исполняется',color:'b-blue'},{key:'done',label:'Завершён',color:'b-green'}],
+      schol:[{key:'candidate',label:'Кандидат',color:'b-gold'},{key:'docs',label:'Сбор документов',color:'b-amber'},{key:'approved',label:'Назначена',color:'b-blue'},{key:'paid',label:'Выплачивается',color:'b-green'},{key:'rejected',label:'Отказ',color:'b-red'},{key:'ended',label:'Завершена',color:'b-gray'}],
+      meet:[{key:'planned',label:'Запланировано',color:'b-blue'},{key:'held',label:'Проведено',color:'b-amber'},{key:'signed',label:'Протокол подписан',color:'b-green'}]
+    },
+    wfTemplates:[
+      {id:uid(),name:'Стандартное согласование',steps:['Подготовка','Согласование руководителем','Подписание','Регистрация','В дело']},
+      {id:uid(),name:'Коллегиальное рассмотрение',steps:['Проект документа','Обсуждение на совещании','Доработка','Утверждение']},
+      {id:uid(),name:'Договорная работа',steps:['Подготовка проекта','Правовая экспертиза','Согласование','Подписание','Исполнение']},
+      {id:uid(),name:'Жизненный цикл разработки ПО',steps:['Аналитика и сбор данных','Проектирование','Разработка','Тестирование','Релиз','Сопровождение']}
+    ]
+  };
+}
+const arrOf=x=>Array.isArray(x)?x.slice():[];
+function normalizeDB(){
+  ['docs','softs','projects'].forEach(k=>{
+    db[k].forEach(e=>{(e.steps||[]).forEach(s=>{s.branches=s.branches||[]})});
+  });
+  db.meetings.forEach(m=>{m.agenda=m.agenda||[];m.decisions=m.decisions||[];m.taskIds=m.taskIds||[]});
+  db.tasks.forEach(t=>{t.wf=t.wf||null});
+  db.priority.forEach(p=>{if(p.confirmed===undefined)p.confirmed=false});
+  if(!Array.isArray(db.taskGroups))db.taskGroups=[];
+  db.taskGroups.forEach(g=>{const c=g.criteria||{};g.criteria={projectIds:arrOf(c.projectIds),statuses:arrOf(c.statuses),priorities:arrOf(c.priorities),dues:arrOf(c.dues)}});
+  const def=defaults();
+  Object.keys(def.statusSets).forEach(k=>{if(!db.statusSets[k])db.statusSets[k]=def.statusSets[k]});
+  if(!Array.isArray(db.softTypes)||!db.softTypes.length)db.softTypes=def.softTypes;
+}
+function load(){
+  const base=defaults();
+  try{
+    const raw=localStorage.getItem(KEY);
+    if(raw){const p=JSON.parse(raw);Object.keys(base).forEach(k=>{if(p[k]!==undefined)base[k]=p[k]});db=base;normalizeDB();return}
+  }catch(e){}
+  db=base;save();
+}
+/* ================= DICT ================= */
+const FUNDED=['won','contract','progress','done'];
+const CAND=['candidate','docs'];
+const APPROVED=['approved','paid'];
+const COLORS=[['b-gray','Серый'],['b-blue','Синий'],['b-green','Зелёный'],['b-red','Красный'],['b-amber','Янтарный'],['b-purple','Фиолетовый'],['b-cyan','Бирюзовый'],['b-gold','Золотой']];
+const STEP_ST={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Выполнен','b-green'],rejected:['Отклонён','b-red']};
+const BR_MODES={closeParent:['🔒','Закрытие ветки закрывает родительский этап'],independent:['🔓','Независимая ветка — не влияет на родительский маршрут'],closeStage:['🎯','Закрытие ветки закрывает другой этап родителя']};
+function stOf(set,key){return (db.statusSets[set]||[]).find(x=>x.key===key)||{label:key||'—',color:'b-gray'}}
+function prioOf(key){return (db.prioSet||[]).find(x=>x.key===key)||{label:key||'—',color:'b-gray'}}
+function setOpts(set,sel){return (db.statusSets[set]||[]).map(s=>'<option value="'+s.key+'" '+(sel===s.key?'selected':'')+'>'+s.label+'</option>').join('')}
+function firstKey(set){return db.statusSets[set]&&db.statusSets[set][0]?db.statusSets[set][0].key:''}
+function stUsage(set,key){
+  if(set==='project')return db.projects.filter(x=>x.status===key).length;
+  if(set==='task')return db.tasks.filter(x=>x.status===key).length;
+  if(set==='grant')return db.grants.filter(x=>x.status===key).length;
+  if(set==='schol')return db.schols.filter(x=>x.status===key).length;
+  if(set==='meet')return db.meetings.filter(x=>x.status===key).length;
+  if(set==='prio')return db.tasks.filter(x=>x.priority===key).length;
+  return 0;
+}
+/* ================= HELPERS ================= */
+function byId(arr,id){return arr.find(x=>x.id===id)}
+function projName(id){const p=byId(db.projects,id);return p?p.title:''}
+function taskName(id){const p=byId(db.tasks,id);return p?p.title:''}
+function grantName(id){const p=byId(db.grants,id);return p?p.title:''}
+function scholName(id){const p=byId(db.schols,id);return p?p.name:''}
+function prioName(id){const p=byId(db.priority,id);return p?p.name:''}
+function stDateHTML(x){return x&&x.statusDate?'<span style="font-size:11px;color:#94a3b8;font-weight:600">от '+fmt(x.statusDate)+'</span>':''}
+function opts(arr,sel,valK,labK){
+  valK=valK||'id';labK=labK||'title';
+  let h='<option value="">— не выбрано —</option>';
+  arr.forEach(x=>{h+='<option value="'+x[valK]+'" '+(sel===x[valK]?'selected':'')+'>'+esc(x[labK])+'</option>'});
+  return h;
+}
+function wfStatus(e){
+  if(!e.steps||!e.steps.length)return['Без маршрута','b-gray','progress'];
+  if(e.steps.some(s=>s.state==='rejected'))return['Отклонён','b-red','rejected'];
+  if(e.steps.every(s=>s.state==='done'))return['Завершён','b-green','done'];
+  return['В работе','b-blue','progress'];
+}
+function docProgress(e){return (e.steps||[]).filter(s=>s.state==='done').length}
+function wfProgressLabel(t){
+  if(!t||!t.wf)return '';
+  const ent=getEnt(t.wf.kind,t.wf.id);
+  if(!ent||!ent.steps)return '';
+  if(t.wf.branch){
+    const st=ent.steps[t.wf.step];const br=st&&(st.branches||[]).find(b=>b.id===t.wf.branch);
+    if(!br)return '';const bs=br.steps[t.wf.bstep];
+    return 'ветка «'+br.name+'» · «'+(bs?bs.name:'')+'»';
+  }
+  const s=ent.steps[t.wf.step];
+  if(!s)return '';
+  const done=ent.steps.filter(x=>x.state==='done').length;
+  return '«'+s.name+'» — этап '+(t.wf.step+1)+' из '+ent.steps.length+' (выполнено '+done+')';
+}
+function linksHTML(d){
+  const c=[];
+  if(d.projectId)c.push('<span class="lchip">🗂 <b>'+esc(projName(d.projectId))+'</b></span>');
+  if(d.taskId)c.push('<span class="lchip">✅ <b>'+esc(taskName(d.taskId))+'</b></span>');
+  if(d.grantId)c.push('<span class="lchip">💰 <b>'+esc(grantName(d.grantId))+'</b></span>');
+  if(d.scholId)c.push('<span class="lchip">🎓 <b>'+esc(scholName(d.scholId))+'</b></span>');
+  if(d.prId)c.push('<span class="lchip">🚀 <b>'+esc(prioName(d.prId))+'</b></span>');
+  return c.length?'<div class="link-chips">'+c.join('')+'</div>':'<span style="color:var(--muted);font-size:12px">без привязки</span>';
+}
+function toast(msg){
+  const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('show'));
+  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),320)},2600);
+}
+function setPage(t,s,a){document.getElementById('vt').textContent=t;document.getElementById('vs').textContent=s||'';document.getElementById('ta').innerHTML=a||''}
+function prioAvg(){return db.priority.length?Math.round(db.priority.reduce((a,p)=>a+Math.min(100,100*(+p.cur||0)/(+p.plan||1)),0)/db.priority.length):0}
+function refreshDatalists(){document.getElementById('peopleList').innerHTML=db.people.map(p=>'<option value="'+esc(p.name)+'">').join('')}
+function pcStatusOf(p){const pc=Math.min(100,Math.round(100*(+p.cur||0)/(+p.plan||1)));return pc>=100?'done':(pc>=50?'work':'risk')}
+/* ================= ФИЛЬТРЫ И СОРТИРОВКА ================= */
+function tglF(mod,key,val){const arr=state.filters[mod][key];const i=arr.indexOf(val);if(i>=0)arr.splice(i,1);else arr.push(val);render()}
+function clearF(mod){state.filters[mod]=JSON.parse(JSON.stringify(FDEF[mod]));render()}
+function hasF(mod){const f=state.filters[mod];return !!(f.q||f.overdue||Object.keys(f).some(k=>Array.isArray(f[k])&&f[k].length))}
+function fSearch(mod,ph){
+  const f=state.filters[mod];
+  return '<input id="flt_'+mod+'_q" value="'+esc(f.q||'')+'" placeholder="'+ph+'" oninput="setFQ(\''+mod+'\',this.value)" style="flex:1;min-width:220px;max-width:420px">';
+}
+function setFQ(mod,v){state.filters[mod].q=v;state._focus='flt_'+mod+'_q';render()}
+function fChip(mod,key,val,label){
+  const on=state.filters[mod][key].indexOf(val)>=0;
+  return '<button class="chip '+(on?'on':'')+'" onclick="tglF(\''+mod+'\',\''+key+'\',\''+val+'\')">'+label+'</button>';
+}
+function fRow(label,items){
+  return '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-top:8px"><span style="font-size:10.5px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.5px;min-width:80px;padding-top:7px">'+label+'</span><div style="display:flex;gap:6px;flex-wrap:wrap;flex:1">'+items+'</div></div>';
+}
+function setSort(mod,key){const s=state.sort[mod];if(s&&s.key===key)s.dir=-s.dir;else state.sort[mod]={key:key,dir:1};render()}
+function thS(mod,key,label){
+  const s=state.sort[mod];const act=s&&s.key===key;
+  return '<th class="srt" onclick="setSort(\''+mod+'\',\''+key+'\')">'+label+(act?(s.dir>0?' ▲':' ▼'):' ⇵')+'</th>';
+}
+function setSortSel(mod,key){if(!state.sort[mod])state.sort[mod]={key:key,dir:1};else state.sort[mod].key=key;render()}
+function setSortDir(mod){if(!state.sort[mod])state.sort[mod]={key:'title',dir:1};state.sort[mod].dir*=-1;render()}
+function sortBar(mod,fields){
+  const s=state.sort[mod]||{key:fields[0][0],dir:1};
+  let h='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">';
+  h+='<span style="font-size:10.5px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Сортировка</span>';
+  h+='<select style="max-width:230px" onchange="setSortSel(\''+mod+'\',this.value)">';
+  fields.forEach(f=>{h+='<option value="'+f[0]+'" '+(s.key===f[0]?'selected':'')+'>'+f[1]+'</option>'});
+  h+='</select>';
+  h+='<button class="btn sm" onclick="setSortDir(\''+mod+'\')">'+(s.dir>0?'↑ по возрастанию':'↓ по убыванию')+'</button>';
+  h+='</div>';
+  return h;
+}
+function applySort(list,mod,g){
+  const s=state.sort[mod];if(!s||!g[s.key])return list;
+  const f=g[s.key];
+  return list.slice().sort((a,b)=>{
+    const va=f(a),vb=f(b);let r;
+    if(typeof va==='number'||typeof vb==='number')r=(+va||0)-(+vb||0);
+    else r=String(va==null?'':va).localeCompare(String(vb==null?'':vb),'ru');
+    return r*s.dir;
+  });
+}
+/* ================= MODALS ================= */
+function closeModal(){document.querySelectorAll('.overlay').forEach(o=>o.remove())}
+function openModal(title,body,submitLabel,onSubmit,wide){
+  closeModal();
+  const ov=document.createElement('div');ov.className='overlay';
+  ov.innerHTML='<div class="modal '+(wide?'wide':'')+'">'
+    +'<div class="modal-head"><h3>'+title+'</h3><button type="button" class="x">✕</button></div>'
+    +'<form class="modal-body">'+body+'<div class="modal-foot">'
+    +'<button type="button" class="btn ghost mcancel">Отмена</button>'
+    +(submitLabel?'<button class="btn primary" type="submit">'+submitLabel+'</button>':'')
+    +'</div></form></div>';
+  document.body.appendChild(ov);
+  ov.querySelector('.x').onclick=closeModal;
+  ov.querySelector('.mcancel').onclick=closeModal;
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)closeModal()});
+  const form=ov.querySelector('form');
+  form.addEventListener('submit',e=>{
+    e.preventDefault();
+    const o={};new FormData(e.target).forEach((v,k)=>{o[k]=v});
+    if(onSubmit)onSubmit(o);
+  });
+  form.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA')e.preventDefault()});
+  return ov;
+}
+function askConfirm(text,label,cb){
+  openModal('Подтверждение','<p style="padding:12px 0;font-size:14px">'+text+'</p>',label||'Удалить',()=>{cb();closeModal()});
+  const b=document.querySelector('.overlay .btn.primary');if(b)b.classList.add('danger');
+}
+/* ================= PRINT ================= */
+const P_HEAD='<div class="phead"><div><div class="porg">Военно-медицинская академия</div><div class="pdep">Управление стратегических инициатив и проектов</div></div><div class="pnum">ИС «Цезарь»<br>форма '+new Date().getFullYear()+'</div></div>';
+const ORG_LINE='Военно-медицинская академия · Управление стратегических инициатив и проектов';
+function openPrint(html,compact){
+  const w=document.getElementById('printWrap');
+  w.innerHTML='<div class="pv-bar"><b>🖨 Предпросмотр печати</b><span class="sp"></span>'
+    +'<button class="btn gold sm" onclick="window.print()">🖨 Печать</button>'
+    +'<button class="btn sm" style="background:#fff" onclick="closePrint()">✕ Закрыть</button></div>'
+    +'<div class="paper'+(compact?' min':'')+'">'+html+'</div>';
+  w.classList.add('on');
+}
+function closePrint(){const w=document.getElementById('printWrap');w.classList.remove('on');w.innerHTML=''}
+/* ================= WORKFLOW ЯДРО ================= */
+function getEnt(kind,id){return kind==='doc'?byId(db.docs,id):(kind==='soft'?byId(db.softs,id):byId(db.projects,id))}
+function reopenEnt(kind,id){if(kind==='doc')openDoc(id);else if(kind==='soft')openSoft(id);else openProject(id)}
+function entExecutor(kind,ent){return kind==='project'?(ent.leader||''):(ent.resp||'')}
+function entProjectId(kind,ent){return kind==='project'?ent.id:(ent.projectId||'')}
+function stepTaskTitle(kind,ent,s){return ent.title+' — этап: '+s.name}
+function createStepTask(kind,entId,s,i){
+  const ent=getEnt(kind,entId);if(!ent)return;
+  const t={id:uid(),title:stepTaskTitle(kind,ent,s),executor:entExecutor(kind,ent),
+    status:s.state==='active'?'progress':(s.state==='done'?'done':'new'),statusDate:todayISO(),priority:'medium',deadline:s.deadline||'',
+    projectId:entProjectId(kind,ent),
+    desc:'Автозадача этапа «'+s.name+'». Завершение задачи закрывает этап и переводит маршрут на следующий.',
+    wf:{kind:kind,id:entId,step:i}};
+  db.tasks.push(t);s.taskId=t.id;
+}
+function createBranchTask(kind,entId,si,bi,bsi){
+  const ent=getEnt(kind,entId);if(!ent)return;
+  const br=ent.steps[si].branches[bi];const bs=br.steps[bsi];
+  const t={id:uid(),title:ent.title+' — ветка «'+br.name+'»: '+bs.name,executor:entExecutor(kind,ent),
+    status:bs.state==='active'?'progress':(bs.state==='done'?'done':'new'),statusDate:todayISO(),priority:'medium',deadline:bs.deadline||'',
+    projectId:entProjectId(kind,ent),desc:'Автозадача этапа ветки «'+br.name+'».',
+    wf:{kind:kind,id:entId,step:si,branch:br.id,bstep:bsi}};
+  db.tasks.push(t);bs.taskId=t.id;
+}
+function syncTaskFromStep(s){
+  const t=s.taskId?byId(db.tasks,s.taskId):null;if(!t)return;
+  let ns=t.status;
+  if(s.state==='done')ns='done';else if(s.state==='active')ns='progress';else if(s.state==='pending')ns='new';
+  if(ns!==t.status){t.status=ns;t.statusDate=todayISO()}
+}
+function checkBranchDone(ent,si,bi){
+  const step=ent.steps[si];if(!step)return;
+  const br=(step.branches||[])[bi];if(!br)return;
+  if(!br.steps.length||!br.steps.every(s=>s.state==='done'))return;
+  if(br.mode==='closeParent'){if(step.state!=='done'){step.state='done';step.date=todayISO();syncTaskFromStep(step)}}
+  else if(br.mode==='closeStage'){const tg=ent.steps[br.targetStep||0];if(tg&&tg.state!=='done'){tg.state='done';tg.date=todayISO();syncTaskFromStep(tg)}}
+}
+function syncWfFromTask(t){
+  if(!t||!t.wf)return;
+  const ent=getEnt(t.wf.kind,t.wf.id);if(!ent||!ent.steps)return;
+  if(t.wf.branch){
+    const step=ent.steps[t.wf.step];if(!step)return;
+    const bi=(step.branches||[]).findIndex(b=>b.id===t.wf.branch);if(bi<0)return;
+    const br=step.branches[bi];const bs=br.steps[t.wf.bstep];if(!bs)return;
+    if(t.status==='done'){if(bs.state!=='done'){bs.state='done';bs.date=todayISO()}checkBranchDone(ent,t.wf.step,bi)}
+    else if(bs.state==='done'){bs.state=t.status==='progress'?'active':'pending';bs.date=''}
+    return;
+  }
+  const s=ent.steps[t.wf.step];if(!s)return;
+  if(t.status==='done'){
+    if(s.state!=='done'){s.state='done';s.date=todayISO()}
+    const nxt=ent.steps[t.wf.step+1];
+    if(nxt&&nxt.state!=='done'&&nxt.state!=='rejected'){
+      nxt.state='active';
+      const nt=nxt.taskId?byId(db.tasks,nxt.taskId):null;
+      if(nt&&nt.status!=='done'){nt.status='progress';nt.statusDate=todayISO()}
+    }
+  } else if(s.state==='done'){
+    s.state=t.status==='progress'?'active':'pending';s.date='';
+  }
+}
+function reindexAll(ent){
+  ent.steps.forEach((s,i)=>{
+    const t=s.taskId?byId(db.tasks,s.taskId):null;if(t&&t.wf)t.wf.step=i;
+    (s.branches||[]).forEach(br=>{
+      br.steps.forEach((bs,bsi)=>{const bt=bs.taskId?byId(db.tasks,bs.taskId):null;if(bt&&bt.wf){bt.wf.step=i;bt.wf.bstep=bsi}});
+    });
+  });
+}
+function collectWfTaskIds(ent){
+  const tids=[];
+  (ent.steps||[]).forEach(s=>{
+    if(s.taskId)tids.push(s.taskId);
+    (s.branches||[]).forEach(br=>br.steps.forEach(bs=>{if(bs.taskId)tids.push(bs.taskId)}));
+  });
+  return tids;
+}
+function buildStepsFromForm(fd){
+  if(fd.wfMode==='custom'){
+    const arr=(fd.stepsText||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{
+      const parts=line.split('|');
+      const name=parts[0].trim();
+      let deadline='';
+      if(parts[1]){const v=parts[1].trim();if(/^\d{4}-\d{2}-\d{2}$/.test(v))deadline=v}
+      return {name:name,deadline:deadline};
+    }).filter(x=>x.name);
+    const src=arr.length?arr:[{name:'Подготовка',deadline:''},{name:'Утверждение',deadline:''}];
+    return src.map((x,i)=>({name:x.name,state:i===0?'active':'pending',date:'',deadline:x.deadline,comment:'',taskId:'',branches:[]}));
+  }
+  const tpl=byId(db.wfTemplates,fd.templateId);
+  const names=tpl?tpl.steps.slice():['Подготовка','Утверждение'];
+  return names.map((n,i)=>({name:n,state:i===0?'active':'pending',date:'',deadline:'',comment:'',taskId:'',branches:[]}));
+}
+/* ================= WORKFLOW ХОЛСТ ================= */
+function wfLayout(ent){
+  const nodes=[],edges=[];
+  (ent.steps||[]).forEach((s,i)=>{
+    const key='s'+i;
+    nodes.push({key:key,si:i,label:s.name,state:s.state,x:30+i*215,y:30,branch:false,deadline:s.deadline,sub:'этап '+(i+1)+' из '+ent.steps.length+' · '+(STEP_ST[s.state]||[''])[0]});
+    if(i>0)edges.push({a:'s'+(i-1),b:key,dashed:false});
+  });
+  (ent.steps||[]).forEach((s,i)=>{
+    (s.branches||[]).forEach((br,bi)=>{
+      const px=30+i*215;
+      let prevKey='s'+i;
+      br.steps.forEach((bs,bsi)=>{
+        const key='s'+i+'b'+bi+'x'+bsi;
+        nodes.push({key:key,si:i,bi:bi,bsi:bsi,label:bs.name,state:bs.state,x:px+30+bi*200,y:150+bsi*92,branch:true,deadline:bs.deadline,sub:'🌿 '+br.name+(bsi===0?' · '+(BR_MODES[br.mode]?BR_MODES[br.mode][0]:''):'')});
+        edges.push({a:prevKey,b:key,dashed:true});
+        prevKey=key;
+      });
+    });
+  });
+  return {nodes:nodes,edges:edges};
+}
+function wfCanvasHTML(kind,ent){
+  const lay=wfLayout(ent);
+  window._wfEdges=lay.edges;
+  if(!lay.nodes.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте первый этап.</div>';
+  const off=(state.wfOff[ent.id]||{});
+  let maxX=560,maxY=300;
+  lay.nodes.forEach(n=>{
+    if(off[n.key]){n.x=off[n.key].x;n.y=off[n.key].y}
+    maxX=Math.max(maxX,n.x+230);maxY=Math.max(maxY,n.y+100);
+  });
+  let h='<div class="wfbox" id="wfbox" style="height:'+Math.min(470,maxY+30)+'px"><div style="position:relative;width:'+maxX+'px;height:'+(maxY+20)+'px">'
+    +'<svg style="position:absolute;left:0;top:0;pointer-events:none;overflow:visible"></svg>';
+  lay.nodes.forEach(n=>{
+    const selc=state.wfSel&&state.wfSel.key===n.key?' sel':'';
+    h+='<div class="wfnode '+(n.branch?'branch ':'')+n.state+selc+'" data-k="'+n.key+'" style="left:'+n.x+'px;top:'+n.y+'px" onmousedown="nodeDown(event,\''+n.key+'\')">'
+      +'<div class="t">'+esc(n.label)+'</div>'
+      +'<div class="s">'+esc(n.sub)+'</div>'
+      +(n.deadline?'<div class="s">⏰ '+fmt(n.deadline)+'</div>':'')
+      +'</div>';
+  });
+  h+='</div></div>';
+  return h;
+}
+function drawEdges(){
+  const box=document.getElementById('wfbox');if(!box)return;
+  const inner=box.firstChild;const svg=inner.querySelector('svg');
+  svg.setAttribute('width',inner.offsetWidth);svg.setAttribute('height',inner.offsetHeight);
+  const pos={};
+  inner.querySelectorAll('.wfnode').forEach(el=>{pos[el.getAttribute('data-k')]={x:el.offsetLeft,y:el.offsetTop,w:el.offsetWidth,h:el.offsetHeight}});
+  let out='';
+  (window._wfEdges||[]).forEach(e=>{
+    const a=pos[e.a],b=pos[e.b];if(!a||!b)return;
+    let x1,y1,x2,y2;
+    if(b.y>a.y+12){x1=a.x+a.w/2;y1=a.y+a.h;x2=b.x+b.w/2;y2=b.y}
+    else{x1=a.x+a.w;y1=a.y+a.h/2;x2=b.x;y2=b.y+b.h/2}
+    out+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+(e.dashed?'#94a3b8':'#64748b')+'" stroke-width="2" '+(e.dashed?'stroke-dasharray="6 5"':'')+'/>';
+  });
+  svg.innerHTML=out;
+}
+function nodeDown(ev,key){
+  if(ev.button!==0)return;
+  ev.preventDefault();
+  const el=ev.currentTarget;
+  const sx=ev.clientX,sy=ev.clientY,ol=el.offsetLeft,ot=el.offsetTop;
+  let moved=false;
+  function mv(e){moved=true;el.style.left=(ol+e.clientX-sx)+'px';el.style.top=(ot+e.clientY-sy)+'px';drawEdges()}
+  function up(){
+    document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);
+    if(!moved){selectWfNode(key)}
+    else{
+      if(!state.wfOff[state.wfEntId])state.wfOff[state.wfEntId]={};
+      state.wfOff[state.wfEntId][key]={x:el.offsetLeft,y:el.offsetTop};
+    }
+  }
+  document.addEventListener('mousemove',mv);
+  document.addEventListener('mouseup',up);
+}
+function selectWfNode(key){state.wfSel={key:key};reopenEnt(state.wfKind,state.wfEntId)}
+function parseKey(key){
+  if(key.indexOf('b')<0)return {si:+key.slice(1)};
+  const m=key.match(/^s(\d+)b(\d+)x(\d+)$/);
+  if(!m)return null;
+  return {si:+m[1],bi:+m[2],bsi:+m[3]};
+}
+function wfInspectorHTML(kind,ent){
+  if(!state.wfSel)return '<div style="font-size:12px;color:var(--muted);margin-top:10px">🖱 Кликните по узлу этапа, чтобы управлять им: завершить, вернуться, поменять дедлайн, создать ответвление. Узлы можно перетаскивать.</div>';
+  const pk=parseKey(state.wfSel.key);
+  if(!pk)return '';
+  const id=ent.id;
+  let h='<div class="card" style="margin-top:12px;padding:14px;border:1px dashed #cfd8e8">';
+  if(pk.bi===undefined){
+    const s=ent.steps[pk.si];if(!s)return '';
+    h+='<b style="font-size:13px">🧭 Этап '+(pk.si+1)+': '+esc(s.name)+'</b>'
+    +'<div class="frow" style="margin-top:8px">'
+    +'<div><label>Название</label><input value="'+esc(s.name)+'" onchange="renameStep(\''+kind+'\',\''+id+'\','+pk.si+',this.value)"></div>'
+    +'<div><label>Дедлайн</label><input type="date" value="'+(s.deadline||'')+'" onchange="setStepDeadline(\''+kind+'\',\''+id+'\','+pk.si+',this.value)"></div></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
+    +(s.state!=='done'?'<button class="btn sm primary" onclick="setStepState(\''+kind+'\',\''+id+'\','+pk.si+',\'done\')">✅ Завершить этап</button>':'')
+    +(s.state==='pending'?'<button class="btn sm" onclick="setStepState(\''+kind+'\',\''+id+'\','+pk.si+',\'active\')">▶ Сделать текущим</button>':'')
+    +((s.state==='done'||s.state==='rejected')?'<button class="btn sm" onclick="setStepState(\''+kind+'\',\''+id+'\','+pk.si+',\'active\')">↩ Вернуться на этап</button>':'')
+    +((s.state==='active'||s.state==='pending')?'<button class="btn sm danger" onclick="rejectStep(\''+kind+'\',\''+id+'\','+pk.si+')">⛔ Отклонить</button>':'')
+    +'<button class="btn sm gold" onclick="addBranchModal(\''+kind+'\',\''+id+'\','+pk.si+')">🌿 Создать ответвление</button>'
+    +'<button class="btn sm" onclick="addStepToEnt(\''+kind+'\',\''+id+'\')">➕ Этап в конец</button>'
+    +(ent.steps.length>1?'<button class="btn sm danger" onclick="delStep(\''+kind+'\',\''+id+'\','+pk.si+')">🗑 Удалить этап</button>':'')
+    +'</div>'
+    +((s.branches||[]).length?'<div style="font-size:12px;color:var(--muted);margin-top:8px">Ответвлений от этапа: '+(s.branches||[]).length+'</div>':'');
+  }else{
+    const s=ent.steps[pk.si];if(!s)return '';
+    const br=(s.branches||[])[pk.bi];if(!br)return '';
+    const bs=br.steps[pk.bsi];if(!bs)return '';
+    const tgtOpts=ent.steps.map((x,i)=>'<option value="'+i+'" '+(br.targetStep===i?'selected':'')+'>'+(i+1)+'. '+esc(x.name)+'</option>').join('');
+    h+='<b style="font-size:13px">🌿 Ветка «'+esc(br.name)+'» · этап «'+esc(bs.name)+'»</b>'
+    +'<div class="frow" style="margin-top:8px">'
+    +'<div><label>Название этапа ветки</label><input value="'+esc(bs.name)+'" onchange="brRename(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+',this.value)"></div>'
+    +'<div><label>Дедлайн</label><input type="date" value="'+(bs.deadline||'')+'" onchange="brDeadline(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+',this.value)"></div></div>'
+    +'<div class="frow">'
+    +'<div><label>Название ветки</label><input value="'+esc(br.name)+'" onchange="brRenameBranch(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+',this.value)"></div>'
+    +'<div><label>Условие ветки</label><select onchange="setBranchMode(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+',this.value)">'
+    +Object.keys(BR_MODES).map(k=>'<option value="'+k+'" '+(br.mode===k?'selected':'')+'>'+BR_MODES[k][0]+' '+BR_MODES[k][1]+'</option>').join('')
+    +'</select></div></div>'
+    +(br.mode==='closeStage'?'<label>Какой этап родителя закрывает ветка</label><select onchange="setBranchTarget(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+',this.value)">'+tgtOpts+'</select>':'')
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
+    +(bs.state!=='done'?'<button class="btn sm primary" onclick="brState(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+',\'done\')">✅ Завершить этап</button>':'')
+    +(bs.state==='pending'?'<button class="btn sm" onclick="brState(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+',\'active\')">▶ Активировать</button>':'')
+    +(bs.state!=='pending'?'<button class="btn sm" onclick="brState(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+',\'pending\')">↩ Вернуть</button>':'')
+    +'<button class="btn sm" onclick="addBranchStepModal(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+')">➕ Этап ветки</button>'
+    +'<button class="btn sm danger" onclick="delBranchStep(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+','+pk.bsi+')">🗑 Удалить этап</button>'
+    +'<button class="btn sm danger" onclick="delBranch(\''+kind+'\',\''+id+'\','+pk.si+','+pk.bi+')">✂ Удалить ветку</button>'
+    +'</div>';
+  }
+  h+='</div>';
+  return h;
+}
+function wfAfterRender(){setTimeout(drawEdges,40)}
+function setStepState(kind,id,i,st2){
+  const ent=getEnt(kind,id);if(!ent||!ent.steps[i])return;
+  const s=ent.steps[i];
+  s.state=st2;s.date=(st2==='done'||st2==='rejected')?todayISO():'';
+  syncTaskFromStep(s);
+  save();render();reopenEnt(kind,id);
+  if(st2==='done')toast('Этап «'+s.name+'» завершён');
+  if(st2==='active')toast('Возврат на этап «'+s.name+'»');
+}
+function rejectStep(kind,id,i){
+  openModal('Отклонение этапа','<label>Комментарий (причина)</label><textarea name="comment" rows="3" placeholder="Комментарий…"></textarea>','Отклонить',fd=>{
+    const ent=getEnt(kind,id);const s=ent&&ent.steps[i];if(!s)return;
+    s.state='rejected';s.date=todayISO();s.comment=fd.comment||'';
+    syncTaskFromStep(s);
+    save();closeModal();render();reopenEnt(kind,id);toast('Этап отклонён');
+  });
+}
+function setStepDeadline(kind,id,i,v){
+  const ent=getEnt(kind,id);const s=ent&&ent.steps[i];if(!s)return;
+  s.deadline=v||'';
+  const t=s.taskId?byId(db.tasks,s.taskId):null;if(t)t.deadline=s.deadline;
+  save();render();reopenEnt(kind,id);
+}
+function renameStep(kind,id,i,v){
+  const ent=getEnt(kind,id);const s=ent&&ent.steps[i];if(!s)return;
+  const nv=v.trim();
+  if(!nv){toast('Название этапа не может быть пустым');render();reopenEnt(kind,id);return}
+  s.name=nv;
+  const t=s.taskId?byId(db.tasks,s.taskId):null;if(t)t.title=stepTaskTitle(kind,ent,s);
+  save();render();reopenEnt(kind,id);
+}
+function delStep(kind,id,i){
+  const ent=getEnt(kind,id);if(!ent)return;
+  if(ent.steps.length<=1){toast('Нельзя удалить единственный этап маршрута');return}
+  const s=ent.steps[i];
+  const tids=[s.taskId];
+  (s.branches||[]).forEach(br=>br.steps.forEach(bs=>tids.push(bs.taskId)));
+  db.tasks=db.tasks.filter(t=>tids.indexOf(t.id)<0);
+  ent.steps.splice(i,1);
+  reindexAll(ent);
+  state.wfSel=null;
+  save();render();reopenEnt(kind,id);toast('Этап удалён из маршрута');
+}
+function addStepToEnt(kind,id){
+  openModal('Новый этап маршрута',
+    '<label>Название этапа *</label><input name="nm" required placeholder="Например: Экспертиза">'
+    +'<label>Дедлайн</label><input type="date" name="dl">',
+    'Добавить этап',fd=>{
+      if(!fd.nm||!fd.nm.trim()){toast('Укажите название');return}
+      const ent=getEnt(kind,id);if(!ent)return;
+      const s={name:fd.nm.trim(),state:'pending',date:'',deadline:fd.dl||'',comment:'',taskId:'',branches:[]};
+      ent.steps.push(s);
+      createStepTask(kind,id,s,ent.steps.length-1);
+      reindexAll(ent);
+      save();closeModal();render();reopenEnt(kind,id);toast('Этап добавлен, автозадача создана');
+    });
+}
+function advanceEnt(kind,id){
+  const ent=getEnt(kind,id);if(!ent)return;
+  if(!ent.steps.length){toast('Маршрут пуст — добавьте этапы');return}
+  let i=ent.steps.findIndex(s=>s.state==='active');
+  if(i<0)i=ent.steps.findIndex(s=>s.state==='pending');
+  if(i<0){toast('Все этапы уже завершены');return}
+  ent.steps[i].state='done';ent.steps[i].date=todayISO();syncTaskFromStep(ent.steps[i]);
+  if(i+1<ent.steps.length){ent.steps[i+1].state='active';syncTaskFromStep(ent.steps[i+1]);toast('Этап «'+ent.steps[i].name+'» завершён')}
+  else toast('Все этапы маршрута завершены ✔');
+  save();render();reopenEnt(kind,id);
+}
+function rejectEnt(kind,id){
+  openModal(kind==='doc'?'Отклонение документа':(kind==='soft'?'Отклонение ПО':'Отклонение проекта'),'<label>Причина отклонения</label><textarea name="comment" rows="3" placeholder="Комментарий…"></textarea>','Отклонить',fd=>{
+    const ent=getEnt(kind,id);if(!ent)return;
+    let i=ent.steps.findIndex(s=>s.state==='active');if(i<0)i=ent.steps.findIndex(s=>s.state==='pending');
+    if(i>=0){ent.steps[i].state='rejected';ent.steps[i].date=todayISO();ent.steps[i].comment=fd.comment||'';syncTaskFromStep(ent.steps[i])}
+    save();closeModal();render();reopenEnt(kind,id);toast('Отклонено');
+  });
+}
+function addBranchModal(kind,id,si){
+  const ent=getEnt(kind,id);if(!ent)return;
+  const tgtOpts=ent.steps.map((s,i)=>'<option value="'+i+'">'+(i+1)+'. '+esc(s.name)+'</option>').join('');
+  openModal('🌿 Ответвление от этапа '+(si+1)+' («'+esc(ent.steps[si].name)+'»)',
+    '<label>Название ветки *</label><input name="bname" required placeholder="Например: Проверка профильным отделом">'
+    +'<label>Условие (режим)</label><select name="mode" onchange="document.getElementById(\'bt\').style.display=this.value===\'closeStage\'?\'block\':\'none\'">'
+    +'<option value="closeParent">'+BR_MODES.closeParent[0]+' Закрытие ветки закрывает родительский этап</option>'
+    +'<option value="independent">'+BR_MODES.independent[0]+' Независимая — не влияет на родительский маршрут</option>'
+    +'<option value="closeStage">'+BR_MODES.closeStage[0]+' Закрытие ветки закрывает другой этап родителя</option></select>'
+    +'<div id="bt" style="display:none"><label>Какой этап родителя закрыть</label><select name="target">'+tgtOpts+'</select></div>'
+    +'<p style="font-size:12px;color:var(--muted);margin-top:10px">У ветки собственный путь развития: добавляйте этапы, по каждому создаётся автозадача.</p>',
+    'Создать ветку',fd=>{
+      if(!fd.bname||!fd.bname.trim()){toast('Укажите название ветки');return}
+      const step=ent.steps[si];step.branches=step.branches||[];
+      step.branches.push({id:uid(),name:fd.bname.trim(),mode:fd.mode,targetStep:+(fd.target||0),steps:[]});
+      save();closeModal();render();reopenEnt(kind,id);toast('Ветка создана — добавьте в неё этапы');
+    });
+}
+function addBranchStepModal(kind,id,si,bi){
+  openModal('Новый этап ветки',
+    '<label>Название этапа *</label><input name="nm" required>'
+    +'<label>Дедлайн</label><input type="date" name="dl">',
+    'Добавить',fd=>{
+      if(!fd.nm||!fd.nm.trim()){toast('Укажите название');return}
+      const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];
+      br.steps.push({name:fd.nm.trim(),state:'pending',date:'',deadline:fd.dl||'',taskId:''});
+      createBranchTask(kind,id,si,bi,br.steps.length-1);
+      save();closeModal();render();reopenEnt(kind,id);toast('Этап ветки добавлен, автозадача создана');
+    });
+}
+function brState(kind,id,si,bi,bsi,st2){
+  const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];const bs=br.steps[bsi];
+  bs.state=st2;bs.date=st2==='done'?todayISO():'';
+  syncTaskFromStep(bs);
+  if(st2==='done')checkBranchDone(ent,si,bi);
+  save();render();reopenEnt(kind,id);
+  if(st2==='done')toast('Этап ветки завершён');
+}
+function brDeadline(kind,id,si,bi,bsi,v){
+  const ent=getEnt(kind,id);const bs=ent.steps[si].branches[bi].steps[bsi];
+  bs.deadline=v||'';
+  const t=bs.taskId?byId(db.tasks,bs.taskId):null;if(t)t.deadline=bs.deadline;
+  save();render();reopenEnt(kind,id);
+}
+function brRename(kind,id,si,bi,bsi,v){
+  const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];const bs=br.steps[bsi];
+  const nv=v.trim();if(!nv){toast('Пустое название');render();reopenEnt(kind,id);return}
+  bs.name=nv;
+  const t=bs.taskId?byId(db.tasks,bs.taskId):null;if(t)t.title=ent.title+' — ветка «'+br.name+'»: '+nv;
+  save();render();reopenEnt(kind,id);
+}
+function brRenameBranch(kind,id,si,bi,v){
+  const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];
+  const nv=v.trim();if(!nv){toast('Пустое название');render();reopenEnt(kind,id);return}
+  br.name=nv;
+  br.steps.forEach(bs=>{const t=bs.taskId?byId(db.tasks,bs.taskId):null;if(t)t.title=ent.title+' — ветка «'+nv+'»: '+bs.name});
+  save();render();reopenEnt(kind,id);
+}
+function setBranchMode(kind,id,si,bi,val){
+  const ent=getEnt(kind,id);ent.steps[si].branches[bi].mode=val;
+  save();render();reopenEnt(kind,id);
+}
+function setBranchTarget(kind,id,si,bi,val){
+  const ent=getEnt(kind,id);ent.steps[si].branches[bi].targetStep=+val;
+  save();render();reopenEnt(kind,id);
+}
+function delBranchStep(kind,id,si,bi,bsi){
+  const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];const bs=br.steps[bsi];
+  if(bs.taskId)db.tasks=db.tasks.filter(t=>t.id!==bs.taskId);
+  br.steps.splice(bsi,1);
+  reindexAll(ent);state.wfSel=null;
+  save();render();reopenEnt(kind,id);toast('Этап ветки удалён');
+}
+function delBranch(kind,id,si,bi){
+  askConfirm('Удалить ветку и все её этапы (автозадачи будут удалены)?','Удалить',()=>{
+    const ent=getEnt(kind,id);const br=ent.steps[si].branches[bi];
+    const tids=br.steps.map(bs=>bs.taskId).filter(Boolean);
+    db.tasks=db.tasks.filter(t=>tids.indexOf(t.id)<0);
+    ent.steps[si].branches.splice(bi,1);
+    state.wfSel=null;
+    save();render();reopenEnt(kind,id);toast('Ветка удалена');
+  });
+}
+/* ================= NAV / ROUTER ================= */
+const NAV=[
+  ['dash','📊','Дашборд'],['docs','📁','Документооборот'],['softs','💻','Программное обеспечение'],
+  ['projects','🗂','Проектная работа'],['tasks','✅','Задачи'],['grants','💰','Грантовая работа'],
+  ['schols','🎓','Именные стипендии'],['priority','🚀','Приоритет-2030'],['meetings','🤝','Совещания'],
+  ['reports','📈','Отчёты'],['admin','⚙️','Администрирование']
+];
+function renderNav(){
+  const counts={dash:'',docs:db.docs.length,softs:db.softs.length,projects:db.projects.length,tasks:db.tasks.length,grants:db.grants.length,schols:db.schols.length,priority:db.priority.length,meetings:db.meetings.length,reports:'',admin:''};
+  document.getElementById('nav').innerHTML=NAV.map(n=>'<button class="nv '+(state.view===n[0]?'on':'')+'" onclick="setView(\''+n[0]+'\')"><span>'+n[1]+'</span>'+n[2]+(counts[n[0]]!==''?'<span class="cnt">'+counts[n[0]]+'</span>':'')+'</button>').join('');
+}
+function setView(v){state.view=v;closeModal();render()}
+function render(){
+  renderNav();refreshDatalists();
+  const views={dash:renderDash,docs:renderDocs,softs:renderSofts,projects:renderProjects,tasks:renderTasks,grants:renderGrants,schols:renderSchols,priority:renderPriority,meetings:renderMeetings,meetEdit:renderMeetEdit,reports:renderReports,admin:renderAdmin};
+  if(views[state.view])views[state.view]();
+  const c=document.getElementById('content');c.classList.remove('anim');void c.offsetWidth;c.classList.add('anim');
+  if(state._focus){
+    const el=document.getElementById(state._focus);
+    if(el){el.focus();try{el.setSelectionRange(el.value.length,el.value.length)}catch(e){}}
+    state._focus=null;
+  }
+}
+/* ================= DASHBOARD ================= */
+function renderDash(){
+  setPage('Дашборд','Стратегические инициативы и проекты · '+new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}));
+  const inWork=db.docs.filter(d=>wfStatus(d)[2]==='progress').length;
+  const softWork=db.softs.filter(s=>wfStatus(s)[2]==='progress').length;
+  const actTasks=db.tasks.filter(t=>t.status!=='done');
+  const overdue=actTasks.filter(t=>t.deadline&&t.deadline<todayISO());
+  const actProj=db.projects.filter(p=>p.status==='active').length;
+  const wonSum=db.grants.filter(g=>FUNDED.includes(g.status)).reduce((a,g)=>a+(+g.amount||0),0);
+  const cand=db.schols.filter(s=>CAND.includes(s.status)).length;
+  const sic=(bg,fg,ic)=>'<div class="sic" style="background:'+bg+';color:'+fg+'">'+ic+'</div>';
+  let h='<div class="stat-grid">';
+  h+='<div class="card stat">'+sic('#eef2ff','#4f46e5','📁')+'<div class="v">'+inWork+'</div><div class="l">документов в работе</div></div>';
+  h+='<div class="card stat">'+sic('#ecfeff','#0e7490','💻')+'<div class="v">'+softWork+'</div><div class="l">ПО в разработке</div></div>';
+  h+='<div class="card stat">'+sic('#ecfdf5','#059669','✅')+'<div class="v">'+actTasks.length+'<span style="font-size:14px;color:'+(overdue.length?'var(--red)':'var(--muted)')+'"> / '+overdue.length+' просроч.</span></div><div class="l">активных задач</div></div>';
+  h+='<div class="card stat">'+sic('#fff7ed','#ea580c','🗂')+'<div class="v">'+actProj+'</div><div class="l">проектов в работе</div></div>';
+  h+='<div class="card stat">'+sic('#fefce8','#b45309','💰')+'<div class="v" style="font-size:18px">'+money(wonSum)+'</div><div class="l">привлечено грантами</div></div>';
+  h+='<div class="card stat">'+sic('#fdf2f8','#db2777','🎓')+'<div class="v">'+cand+'</div><div class="l">кандидатов на стипендии</div></div>';
+  h+='<div class="card stat">'+sic('#f5f3ff','#7c3aed','🚀')+'<div class="v">'+prioAvg()+'%</div><div class="l">готовность «Приоритет-2030»</div></div>';
+  h+='</div>';
+  h+='<div style="display:grid;gap:16px">';
+  h+='<div class="card pad"><h3 style="margin-bottom:13px">⏰ Ближайшие сроки задач</h3>';
+  const up=actTasks.sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999')).slice(0,7);
+  if(up.length){
+    up.forEach(t=>{
+      const od=t.deadline&&t.deadline<todayISO();
+      h+='<div class="row-item '+(od?'overdue':'')+'" style="padding:10px 13px"><div class="ri-body"><div class="ri-t" style="font-size:13px">'+esc(t.title)+'</div>'
+        +'<div class="ri-s">'+esc(t.executor||'—')+' · до '+fmt(t.deadline)+(od?' · <span class="badge b-red">просрочено</span>':'')+(t.wf?' · 🧭 '+esc(wfProgressLabel(t)):'')+'</div></div></div>';
+    });
+  } else h+='<p style="color:var(--muted)">Активных задач нет</p>';
+  h+='</div></div>';
+  document.getElementById('content').innerHTML=h;
+}
+/* ================= ДОКУМЕНТООБОРОТ ================= */
+function renderDocs(){
+  setPage('Документооборот','Маршруты с автозадачами этапов, ответвлениями и условиями',
+    '<button class="btn primary" onclick="docFormModal()">＋ Документ</button>');
+  const f=state.filters.docs;
+  let list=db.docs.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(d=>((d.title||'')+' '+(d.type||'')+' '+(d.resp||'')).toLowerCase().includes(n))}
+  if(f.wf.length)list=list.filter(d=>f.wf.indexOf(wfStatus(d)[2])>=0);
+  if(f.type.length)list=list.filter(d=>f.type.indexOf(d.type)>=0);
+  if(f.projectId.length)list=list.filter(d=>f.projectId.indexOf(d.projectId||'')>=0&&d.projectId);
+  list=applySort(list,'docs',{
+    title:d=>d.title,type:d=>d.type,prog:d=>docProgress(d)/(d.steps.length||1),
+    resp:d=>d.resp,deadline:d=>d.deadline||'9999',status:d=>wfStatus(d)[0]
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('docs','🔍 Поиск по наименованию, типу, исполнителю…')
+    +(hasF('docs')?'<button class="btn ghost sm" onclick="clearF(\'docs\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',fChip('docs','wf','progress','В работе')+fChip('docs','wf','done','Завершённые')+fChip('docs','wf','rejected','Отклонённые'))
+    +fRow('Тип',db.docTypes.map(t=>fChip('docs','type',t,esc(t))).join(''))
+    +(db.projects.length?fRow('Проект',db.projects.map(p=>fChip('docs','projectId',p.id,esc(cut(p.title,28)))).join('')):'')
+    +sortBar('docs',[['title','Наименование'],['type','Тип'],['prog','Готовность маршрута'],['resp','Исполнитель'],['deadline','Срок'],['status','Статус']])
+    +'</div>';
+  h+='<div class="card" style="overflow-x:auto">';
+  if(list.length){
+    h+='<table class="tbl"><thead><tr>'+thS('docs','title','Документ')+thS('docs','type','Тип')+thS('docs','prog','Маршрут')+ '<th>Привязки</th>'+thS('docs','resp','Исполнитель')+thS('docs','deadline','Срок')+thS('docs','status','Статус')+'<th></th></tr></thead><tbody>';
+    list.forEach(d=>{
+      const st=wfStatus(d);const pr=docProgress(d);
+      const brCount=(d.steps||[]).reduce((a,s)=>a+(s.branches?s.branches.length:0),0);
+      h+='<tr><td style="min-width:220px"><div class="nm" style="cursor:pointer" onclick="openDoc(\''+d.id+'\')">'+esc(d.title)+'</div>'
+        +'<div class="sub">'+d.type+' · от '+fmt(d.date)+(d.link?' · <span class="doc-link"><a href="'+esc(d.link)+'" target="_blank" rel="noopener">🔗 ссылка</a></span>':'')+'</div></td>'
+        +'<td><div style="font-size:12.5px;font-weight:700">'+esc(d.templateName)+'</div>'
+        +'<div class="pbar blue" style="width:92px;margin-top:6px"><i style="width:'+(d.steps.length?Math.round(100*pr/d.steps.length):0)+'%"></i></div>'
+        +'<div class="sub">'+pr+'/'+d.steps.length+' этапов'+(brCount?' · 🌿 '+brCount:'')+'</div></td>'
+        +'<td style="max-width:230px">'+linksHTML(d)+'</td>'
+        +'<td style="font-size:12.5px">'+esc(d.resp||'—')+'</td>'
+        +'<td style="font-size:12.5px;white-space:nowrap">'+(d.deadline?fmt(d.deadline)+(d.deadline<todayISO()&&st[2]==='progress'?' <span class="badge b-red">!</span>':''):'—')+'</td>'
+        +'<td><span class="badge '+st[1]+'">'+st[0]+'</span></td>'
+        +'<td style="white-space:nowrap"><button class="icobtn" onclick="openDoc(\''+d.id+'\')">👁</button><button class="icobtn" onclick="docFormModal(\''+d.id+'\')">✏️</button><button class="icobtn" onclick="deleteDoc(\''+d.id+'\')">🗑</button></td></tr>';
+    });
+    h+='</tbody></table>';
+  } else h+='<div class="empty">📁<p>'+(hasF('docs')?'Ничего не найдено по фильтрам':'Документов нет. Создайте первый документ.')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function wfFormBlock(){
+  return '<label>Маршрут (workflow)</label>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Для каждого этапа будет создана автозадача. Ответвления и условия создаются на холсте маршрута.</div>'
+    +'<div class="radio-row">'
+    +'<label><input type="radio" name="wfMode" value="template" checked onchange="document.getElementById(\'wfTpl\').style.display=\'block\';document.getElementById(\'wfCus\').style.display=\'none\'"> По шаблону</label>'
+    +'<label><input type="radio" name="wfMode" value="custom" onchange="document.getElementById(\'wfTpl\').style.display=\'none\';document.getElementById(\'wfCus\').style.display=\'block\'"> Индивидуальный</label>'
+    +'</div>'
+    +'<div id="wfTpl"><select name="templateId">'+opts(db.wfTemplates,db.wfTemplates[0]?db.wfTemplates[0].id:'','id','name')+'</select></div>'
+    +'<div id="wfCus" style="display:none"><textarea name="stepsText" rows="5" placeholder="Этапы маршрута, каждый с новой строки.&#10;Дедлайн этапа через «|»:&#10;Подготовка | '+dPlus(3)+'&#10;Согласование | '+dPlus(7)+'"></textarea></div>';
+}
+function docFormModal(id){
+  const d=id?byId(db.docs,id):null;
+  let typeSel='<select name="type">';
+  db.docTypes.forEach(t=>{typeSel+='<option '+(d&&d.type===t?'selected':'')+'>'+esc(t)+'</option>'});
+  typeSel+='</select>';
+  const body='<label>Наименование документа *</label><input name="title" required value="'+esc(d?d.title:'')+'">'
+    +'<div class="frow"><div><label>Тип документа</label>'+typeSel+'</div>'
+    +'<div><label>Дата документа</label><input type="date" name="date" value="'+(d?d.date:todayISO())+'"></div></div>'
+    +'<label>🔗 Ссылка на документ (облако, СЭД, диск…)</label><input name="link" placeholder="https://…" value="'+esc(d?d.link:'')+'">'
+    +'<div class="frow"><div><label>Исполнитель / ответственный</label><input name="resp" list="peopleList" value="'+esc(d?d.resp:'')+'"></div>'
+    +'<div><label>Срок исполнения</label><input type="date" name="deadline" value="'+(d?d.deadline:'')+'"></div></div>'
+    +(!d?wfFormBlock():'')
+    +'<label style="margin-top:16px">🔗 Привязки</label>'
+    +'<div class="frow">'
+    +'<div><label>Проект</label><select name="projectId">'+opts(db.projects,d?d.projectId:'')+'</select></div>'
+    +'<div><label>Задача</label><select name="taskId">'+opts(db.tasks,d?d.taskId:'')+'</select></div>'
+    +'<div><label>Грант</label><select name="grantId">'+opts(db.grants,d?d.grantId:'')+'</select></div>'
+    +'<div><label>Именная стипендия</label><select name="scholId">'+opts(db.schols,d?d.scholId:'','id','name')+'</select></div>'
+    +'<div><label>Показатель Приоритет-2030</label><select name="prId">'+opts(db.priority,d?d.prId:'','id','name')+'</select></div>'
+    +'</div>'
+    +'<label>Примечание</label><textarea name="note" rows="2">'+esc(d?d.note:'')+'</textarea>';
+  openModal(d?'Редактирование документа':'Новый документ',body,'Сохранить',fd=>{
+    if(!fd.title||!fd.title.trim()){toast('Укажите наименование документа');return}
+    const old=id?byId(db.docs,id):null;
+    let steps,tplName;
+    if(old){steps=old.steps;tplName=old.templateName}
+    else{
+      steps=buildStepsFromForm(fd);
+      const tpl=fd.wfMode==='custom'?null:byId(db.wfTemplates,fd.templateId);
+      tplName=fd.wfMode==='custom'?'Индивидуальный маршрут':(tpl?tpl.name:'Без шаблона');
+    }
+    const doc={id:old?old.id:uid(),title:fd.title.trim(),type:fd.type,link:(fd.link||'').trim(),note:(fd.note||'').trim(),
+      date:fd.date||todayISO(),deadline:fd.deadline||'',resp:(fd.resp||'').trim(),templateName:tplName,
+      projectId:fd.projectId||'',taskId:fd.taskId||'',grantId:fd.grantId||'',scholId:fd.scholId||'',prId:fd.prId||'',steps:steps};
+    if(old){Object.assign(old,doc)}
+    else{db.docs.unshift(doc);doc.steps.forEach((s,i)=>createStepTask('doc',doc.id,s,i))}
+    save();closeModal();render();toast(old?'Документ обновлён':'Документ создан · автозадачи этапов сформированы');
+  });
+}
+function deleteDoc(id){
+  const d=byId(db.docs,id);
+  askConfirm('Удалить документ «'+esc(d?d.title:'')+'»? Автозадачи этапов и веток будут удалены.','Удалить',()=>{
+    const doc=byId(db.docs,id);
+    const tids=collectWfTaskIds(doc);
+    db.tasks=db.tasks.filter(t=>tids.indexOf(t.id)<0);
+    db.docs=db.docs.filter(x=>x.id!==id);save();render();toast('Документ удалён');
+  });
+}
+function openDoc(id){
+  const d=byId(db.docs,id);if(!d)return;
+  state.wfKind='doc';state.wfEntId=id;
+  const st=wfStatus(d);const pr=docProgress(d);
+  let body='<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">'
+    +'<div><div style="font-size:16px;font-weight:800">'+esc(d.title)+'</div>'
+    +'<div style="color:var(--muted);font-size:12.5px;margin-top:4px">'+d.type+' · от '+fmt(d.date)+' · маршрут: '+esc(d.templateName)+'</div></div>'
+    +'<span class="badge '+st[1]+'">'+st[0]+'</span></div>';
+  if(d.link)body+='<div style="margin-top:10px" class="doc-link">🔗 <a href="'+esc(d.link)+'" target="_blank" rel="noopener">'+esc(d.link)+'</a></div>';
+  body+='<div class="kv" style="margin-top:12px">'
+    +'<b>Исполнитель</b><span>'+esc(d.resp||'—')+'</span>'
+    +'<b>Срок исполнения</b><span>'+(d.deadline?fmt(d.deadline):'—')+'</span>'
+    +'<b>Готовность</b><span>'+pr+' из '+d.steps.length+' этапов</span>'
+    +'<b>Привязки</b><span>'+linksHTML(d)+'</span>'
+    +(d.note?'<b>Примечание</b><span>'+esc(d.note)+'</span>':'')
+    +'</div>'
+    +'<label>🧭 Холст маршрута</label>'
+    +wfCanvasHTML('doc',d)
+    +wfInspectorHTML('doc',d)
+    +'<div style="display:flex;gap:9px;margin-top:18px;flex-wrap:wrap">';
+  if(st[2]==='progress'){
+    body+='<button type="button" class="btn primary" onclick="advanceEnt(\'doc\',\''+d.id+'\')">▶ Завершить текущий этап</button>'
+      +'<button type="button" class="btn danger" onclick="rejectEnt(\'doc\',\''+d.id+'\')">✕ Отклонить документ</button>';
+  }
+  body+='<button type="button" class="btn" onclick="closeModal();docFormModal(\''+d.id+'\')">✏️ Редактировать</button>'
+    +'<button type="button" class="btn ghost" onclick="deleteDoc(\''+d.id+'\')">🗑 Удалить</button></div>';
+  openModal('Карточка документа',body,'Закрыть',()=>closeModal(),true);
+  wfAfterRender();
+}
+/* ================= ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ================= */
+function renderSofts(){
+  setPage('Программное обеспечение','Планирование и отслеживание разработки программ, приложений и сервисов',
+    '<button class="btn primary" onclick="softFormModal()">＋ Программа</button>');
+  const f=state.filters.softs;
+  let list=db.softs.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(s=>((s.title||'')+' '+(s.type||'')+' '+(s.repo||'')+' '+(s.resp||'')).toLowerCase().includes(n))}
+  if(f.wf.length)list=list.filter(s=>f.wf.indexOf(wfStatus(s)[2])>=0);
+  if(f.type.length)list=list.filter(s=>f.type.indexOf(s.type)>=0);
+  if(f.projectId.length)list=list.filter(s=>f.projectId.indexOf(s.projectId||'')>=0&&s.projectId);
+  list=applySort(list,'softs',{
+    title:s=>s.title,type:s=>s.type,repo:s=>s.repo,ver:s=>s.version,
+    deadline:s=>s.deadline||'9999',prog:s=>docProgress(s)/(s.steps.length||1),status:s=>wfStatus(s)[0]
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('softs','🔍 Поиск по названию, репозиторию, ответственному…')
+    +(hasF('softs')?'<button class="btn ghost sm" onclick="clearF(\'softs\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',fChip('softs','wf','progress','В разработке')+fChip('softs','wf','done','Завершено')+fChip('softs','wf','rejected','Отклонено'))
+    +fRow('Тип',db.softTypes.map(t=>fChip('softs','type',t,esc(t))).join(''))
+    +(db.projects.length?fRow('Проект',db.projects.map(p=>fChip('softs','projectId',p.id,esc(cut(p.title,28)))).join('')):'')
+    +sortBar('softs',[['title','Название'],['type','Тип'],['ver','Версия'],['deadline','Срок'],['prog','Готовность'],['status','Статус']])
+    +'</div>';
+  h+='<div class="card" style="overflow-x:auto">';
+  if(list.length){
+    h+='<table class="tbl"><thead><tr>'+thS('softs','title','Программа')+thS('softs','type','Тип')+thS('softs','repo','Репозиторий')+thS('softs','ver','Версия')+thS('softs','deadline','Срок')+thS('softs','prog','Маршрут')+thS('softs','status','Статус')+'<th></th></tr></thead><tbody>';
+    list.forEach(s=>{
+      const st=wfStatus(s);const pr=docProgress(s);
+      h+='<tr><td style="min-width:200px"><div class="nm" style="cursor:pointer" onclick="openSoft(\''+s.id+'\')">'+esc(s.title)+'</div>'
+        +'<div class="sub">'+esc(s.stack||'')+'</div></td>'
+        +'<td style="font-size:12.5px">'+esc(s.type)+'</td>'
+        +'<td>'+(s.repo?'<span class="doc-link"><a href="'+esc(s.repo)+'" target="_blank" rel="noopener">🐙 GitHub</a></span>':'—')+'</td>'
+        +'<td style="font-size:12.5px">'+esc(s.version||'—')+'</td>'
+        +'<td style="font-size:12.5px;white-space:nowrap">'+(s.deadline?fmt(s.deadline):'—')+'</td>'
+        +'<td><div class="pbar blue" style="width:92px"><i style="width:'+(s.steps.length?Math.round(100*pr/s.steps.length):0)+'%"></i></div><div class="sub">'+pr+'/'+s.steps.length+' этапов</div></td>'
+        +'<td><span class="badge '+st[1]+'">'+st[0]+'</span></td>'
+        +'<td style="white-space:nowrap"><button class="icobtn" onclick="openSoft(\''+s.id+'\')">👁</button><button class="icobtn" onclick="softFormModal(\''+s.id+'\')">✏️</button><button class="icobtn" onclick="deleteSoft(\''+s.id+'\')">🗑</button></td></tr>';
+    });
+    h+='</tbody></table>';
+  } else h+='<div class="empty">💻<p>'+(hasF('softs')?'Ничего не найдено по фильтрам':'Программ нет. Добавьте первую разработку.')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function softFormModal(id){
+  const s=id?byId(db.softs,id):null;
+  let typeSel='<select name="type">';
+  db.softTypes.forEach(t=>{typeSel+='<option '+(s&&s.type===t?'selected':'')+'>'+esc(t)+'</option>'});
+  typeSel+='</select>';
+  const body='<label>Название программы / приложения *</label><input name="title" required value="'+esc(s?s.title:'')+'" placeholder="Например: Портал учёта заявок">'
+    +'<div class="frow"><div><label>Тип</label>'+typeSel+'</div>'
+    +'<div><label>Версия</label><input name="version" value="'+esc(s?s.version:'')+'" placeholder="0.1.0"></div></div>'
+    +'<label>🐙 Ссылка на репозиторий GitHub *</label><input name="repo" placeholder="https://github.com/org/repo" value="'+esc(s?s.repo:'')+'">'
+    +'<label>Стек технологий</label><input name="stack" value="'+esc(s?s.stack:'')+'" placeholder="Например: Python, FastAPI, PostgreSQL">'
+    +'<div class="frow"><div><label>Ответственный разработчик</label><input name="resp" list="peopleList" value="'+esc(s?s.resp:'')+'"></div>'
+    +'<div><label>Плановый срок</label><input type="date" name="deadline" value="'+(s?s.deadline:'')+'"></div></div>'
+    +(!s?wfFormBlock():'')
+    +'<label>Проект</label><select name="projectId">'+opts(db.projects,s?s.projectId:'')+'</select>'
+    +'<label>Описание</label><textarea name="note" rows="2">'+esc(s?s.note:'')+'</textarea>';
+  openModal(s?'Редактирование ПО':'Новая разработка',body,'Сохранить',fd=>{
+    if(!fd.title||!fd.title.trim()){toast('Укажите название');return}
+    const old=id?byId(db.softs,id):null;
+    let steps,tplName;
+    if(old){steps=old.steps;tplName=old.templateName}
+    else{
+      steps=buildStepsFromForm(fd);
+      const tpl=fd.wfMode==='custom'?null:byId(db.wfTemplates,fd.templateId);
+      tplName=fd.wfMode==='custom'?'Индивидуальный маршрут':(tpl?tpl.name:'Без шаблона');
+    }
+    const so={id:old?old.id:uid(),title:fd.title.trim(),type:fd.type,repo:(fd.repo||'').trim(),stack:(fd.stack||'').trim(),
+      version:(fd.version||'').trim(),resp:(fd.resp||'').trim(),deadline:fd.deadline||'',projectId:fd.projectId||'',
+      note:(fd.note||'').trim(),templateName:tplName,steps:steps};
+    if(old){Object.assign(old,so)}
+    else{db.softs.unshift(so);so.steps.forEach((st,i)=>createStepTask('soft',so.id,st,i))}
+    save();closeModal();render();toast(old?'ПО обновлено':'Разработка добавлена · автозадачи этапов сформированы');
+  });
+}
+function deleteSoft(id){
+  const s=byId(db.softs,id);
+  askConfirm('Удалить «'+esc(s?s.title:'')+'»? Автозадачи этапов и веток будут удалены.','Удалить',()=>{
+    const so=byId(db.softs,id);
+    const tids=collectWfTaskIds(so);
+    db.tasks=db.tasks.filter(t=>tids.indexOf(t.id)<0);
+    db.softs=db.softs.filter(x=>x.id!==id);save();render();toast('ПО удалено');
+  });
+}
+function openSoft(id){
+  const s=byId(db.softs,id);if(!s)return;
+  state.wfKind='soft';state.wfEntId=id;
+  const st=wfStatus(s);const pr=docProgress(s);
+  let body='<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">'
+    +'<div><div style="font-size:16px;font-weight:800">'+esc(s.title)+' '+(s.version?'<span class="badge b-gray">v '+esc(s.version)+'</span>':'')+'</div>'
+    +'<div style="color:var(--muted);font-size:12.5px;margin-top:4px">'+esc(s.type)+' · '+esc(s.stack||'—')+'</div></div>'
+    +'<span class="badge '+st[1]+'">'+st[0]+'</span></div>';
+  if(s.repo)body+='<div style="margin-top:10px" class="doc-link">🐙 <a href="'+esc(s.repo)+'" target="_blank" rel="noopener">'+esc(s.repo)+'</a></div>';
+  body+='<div class="kv" style="margin-top:12px">'
+    +'<b>Ответственный</b><span>'+esc(s.resp||'—')+'</span>'
+    +'<b>Плановый срок</b><span>'+(s.deadline?fmt(s.deadline):'—')+'</span>'
+    +'<b>Готовность</b><span>'+pr+' из '+s.steps.length+' этапов</span>'
+    +'<b>Проект</b><span>'+(s.projectId?esc(projName(s.projectId)):'—')+'</span>'
+    +(s.note?'<b>Описание</b><span>'+esc(s.note)+'</span>':'')
+    +'</div>'
+    +'<label>🧭 Холст маршрута разработки</label>'
+    +wfCanvasHTML('soft',s)
+    +wfInspectorHTML('soft',s)
+    +'<div style="display:flex;gap:9px;margin-top:18px;flex-wrap:wrap">';
+  if(st[2]==='progress'){
+    body+='<button type="button" class="btn primary" onclick="advanceEnt(\'soft\',\''+s.id+'\')">▶ Завершить текущий этап</button>'
+      +'<button type="button" class="btn danger" onclick="rejectEnt(\'soft\',\''+s.id+'\')">✕ Отклонить</button>';
+  }
+  body+='<button type="button" class="btn" onclick="closeModal();softFormModal(\''+s.id+'\')">✏️ Редактировать</button>'
+    +'<button type="button" class="btn ghost" onclick="deleteSoft(\''+s.id+'\')">🗑 Удалить</button></div>';
+  openModal('Карточка ПО',body,'Закрыть',()=>closeModal(),true);
+  wfAfterRender();
+}
+/* ================= ПРОЕКТЫ ================= */
+function renderProjects(){
+  setPage('Проектная работа','Проекты с маршрутами (workflow), ответвлениями и автозадачами этапов',
+    '<button class="btn primary" onclick="projectFormModal()">＋ Проект</button>');
+  const f=state.filters.projects;
+  let list=db.projects.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(p=>((p.title||'')+' '+(p.code||'')+' '+(p.leader||'')).toLowerCase().includes(n))}
+  if(f.status.length)list=list.filter(p=>f.status.indexOf(p.status)>=0);
+  list=applySort(list,'projects',{
+    code:p=>p.code||'яя',title:p=>p.title,leader:p=>p.leader,start:p=>p.start||'9999',end:p=>p.end||'9999',
+    status:p=>stOf('project',p.status).label,prog:p=>docProgress(p)/(p.steps.length||1)
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('projects','🔍 Поиск по названию, коду, руководителю…')
+    +(hasF('projects')?'<button class="btn ghost sm" onclick="clearF(\'projects\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',db.statusSets.project.map(s=>fChip('projects','status',s.key,esc(s.label))).join(''))
+    +sortBar('projects',[['title','Название'],['code','Код'],['leader','Руководитель'],['start','Начало'],['end','Окончание'],['status','Статус'],['prog','Готовность маршрута']])
+    +'</div>';
+  h+='<div class="cards">';
+  if(list.length){
+    list.forEach(p=>{
+      const st=stOf('project',p.status);const wst=wfStatus(p);
+      const steps=p.steps||[];const done=steps.filter(s=>s.state==='done').length;
+      const pc=steps.length?Math.round(100*done/steps.length):(p.status==='done'?100:0);
+      const ts=db.tasks.filter(t=>t.projectId===p.id);
+      const docs=db.docs.filter(d=>d.projectId===p.id);
+      const softs=db.softs.filter(s=>s.projectId===p.id);
+      h+='<div class="card pad">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        +'<span class="badge b-gray">'+esc(p.code||'б/н')+'</span>'
+        +'<span><span class="badge '+st.color+'">'+st.label+'</span> '+stDateHTML(p)+'</span></div>'
+        +'<h3 style="margin:11px 0 5px;cursor:pointer" onclick="openProject(\''+p.id+'\')">'+esc(p.title)+'</h3>'
+        +'<div style="color:var(--muted);font-size:12.5px">👤 '+esc(p.leader||'—')+' · 📅 '+fmt(p.start)+' → '+fmt(p.end)+'</div>'
+        +'<div style="display:flex;justify-content:space-between;font-size:12px;margin-top:12px"><span>🧭 этапы маршрута: '+(steps.length?done+'/'+steps.length:'—')+' <span class="badge '+wst[1]+'" style="padding:1px 8px;margin-left:4px">'+wst[0]+'</span></span><span>'+pc+'%</span></div>'
+        +'<div class="pbar blue" style="margin-top:5px"><i style="width:'+pc+'%"></i></div>'
+        +'<div class="link-chips" style="margin-top:12px">'
+        +(p.grantId?'<span class="lchip">💰 <b>'+esc(cut(grantName(p.grantId),22))+'</b></span>':'')
+        +(p.prId?'<span class="lchip">🚀 <b>Приоритет-2030</b></span>':'')
+        +'<span class="lchip">✅ задач: '+ts.length+'</span>'
+        +'<span class="lchip">📁 документов: '+docs.length+'</span>'
+        +(softs.length?'<span class="lchip">💻 ПО: '+softs.length+'</span>':'')
+        +'</div>'
+        +'<div style="display:flex;gap:7px;margin-top:14px">'
+        +'<button class="btn sm" onclick="openProject(\''+p.id+'\')">Открыть</button>'
+        +'<button class="icobtn" onclick="projectFormModal(\''+p.id+'\')">✏️</button>'
+        +'<button class="icobtn" onclick="deleteProject(\''+p.id+'\')">🗑</button>'
+        +'</div></div>';
+    });
+  } else h+='<div class="empty" style="grid-column:1/-1">🗂<p>'+(hasF('projects')?'Ничего не найдено по фильтрам':'Проектов пока нет')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function projectFormModal(id){
+  const p=id?byId(db.projects,id):null;
+  const body='<div class="frow">'
+    +'<div><label>Код проекта</label><input name="code" value="'+esc(p?p.code:'')+'" placeholder="П-01"></div>'
+    +'<div><label>Статус</label><select name="status">'+setOpts('project',p?p.status:firstKey('project'))+'</select></div></div>'
+    +'<label>Название проекта *</label><input name="title" required value="'+esc(p?p.title:'')+'">'
+    +'<label>Руководитель</label><input name="leader" list="peopleList" value="'+esc(p?p.leader:'')+'">'
+    +'<div class="frow"><div><label>Дата начала</label><input type="date" name="start" value="'+(p?p.start:'')+'"></div>'
+    +'<div><label>Дата окончания</label><input type="date" name="end" value="'+(p?p.end:'')+'"></div></div>'
+    +'<div class="frow"><div><label>💰 Связанный грант</label><select name="grantId">'+opts(db.grants,p?p.grantId:'')+'</select></div>'
+    +'<div><label>🚀 Показатель Приоритет-2030</label><select name="prId">'+opts(db.priority,p?p.prId:'','id','name')+'</select></div></div>'
+    +(!p?wfFormBlock():'')
+    +'<label>Описание</label><textarea name="desc" rows="3">'+esc(p?p.desc:'')+'</textarea>';
+  openModal(p?'Редактирование проекта':'Новый проект',body,'Сохранить',fd=>{
+    if(!fd.title||!fd.title.trim()){toast('Укажите название проекта');return}
+    const pr={id:p?p.id:uid(),code:(fd.code||'').trim(),title:fd.title.trim(),leader:(fd.leader||'').trim(),status:fd.status,
+      statusDate:(p&&p.status===fd.status&&p.statusDate)?p.statusDate:todayISO(),
+      start:fd.start||'',end:fd.end||'',grantId:fd.grantId||'',prId:fd.prId||'',desc:(fd.desc||'').trim(),
+      steps:p&&p.steps?p.steps:[]};
+    if(p){Object.assign(p,pr)}
+    else{
+      pr.steps=buildStepsFromForm(fd);
+      db.projects.unshift(pr);
+      pr.steps.forEach((s,i)=>createStepTask('project',pr.id,s,i));
+    }
+    save();closeModal();render();toast(!p?'Проект создан · автозадачи этапов сформированы':'Проект сохранён');
+  });
+}
+function openProject(id){
+  const p=byId(db.projects,id);if(!p)return;
+  state.wfKind='project';state.wfEntId=id;
+  const st=stOf('project',p.status);const wst=wfStatus(p);const pr=docProgress(p);
+  const ts=db.tasks.filter(t=>t.projectId===id);
+  const docs=db.docs.filter(d=>d.projectId===id);
+  const softs=db.softs.filter(s=>s.projectId===id);
+  let body='<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+    +'<span class="badge b-gray">'+esc(p.code||'б/н')+'</span>'
+    +'<span><span class="badge '+st.color+'">'+st.label+'</span> '+stDateHTML(p)+' <span class="badge '+wst[1]+'" style="margin-left:5px">'+wst[0]+'</span></span></div>'
+    +'<div class="kv">'
+    +'<b>Руководитель</b><span>'+esc(p.leader||'—')+'</span>'
+    +'<b>Сроки</b><span>'+fmt(p.start)+' → '+fmt(p.end)+'</span>'
+    +'<b>Готовность маршрута</b><span>'+pr+' из '+(p.steps||[]).length+' этапов</span>'
+    +'<b>Грант</b><span>'+(p.grantId?esc(grantName(p.grantId)):'—')+'</span>'
+    +'<b>Приоритет-2030</b><span>'+(p.prId?esc(prioName(p.prId)):'—')+'</span>'
+    +(p.desc?'<b>Описание</b><span>'+esc(p.desc)+'</span>':'')
+    +'</div>'
+    +'<label>🧭 Холст маршрута проекта</label>'
+    +wfCanvasHTML('project',p)
+    +wfInspectorHTML('project',p)
+    +'<label>✅ Задачи проекта ('+ts.length+')</label>';
+  if(ts.length){
+    ts.slice(0,12).forEach(t=>{
+      const ts2=stOf('task',t.status);
+      body+='<div class="row-item"><div class="ri-body"><div class="ri-t">'+esc(t.title)+'</div><div class="ri-s">'+esc(t.executor||'—')+' · до '+fmt(t.deadline)+(t.wf?' · 🧭 '+esc(wfProgressLabel(t)):'')+'</div></div><span class="badge '+ts2.color+'">'+ts2.label+'</span></div>';
+    });
+    if(ts.length>12)body+='<div style="font-size:12px;color:var(--muted)">… и ещё '+(ts.length-12)+' в разделе «Задачи»</div>';
+  } else body+='<p style="color:var(--muted);font-size:13px">Задач нет</p>';
+  body+='<label>📁 Документы проекта ('+docs.length+')</label>';
+  if(docs.length){
+    docs.slice(0,6).forEach(d=>{
+      const st2=wfStatus(d);
+      body+='<div class="row-item" style="cursor:pointer" onclick="openDoc(\''+d.id+'\')"><div class="ri-body"><div class="ri-t">'+esc(d.title)+'</div><div class="ri-s">'+d.type+' · '+docProgress(d)+'/'+d.steps.length+' этапов</div></div><span class="badge '+st2[1]+'">'+st2[0]+'</span></div>';
+    });
+  } else body+='<p style="color:var(--muted);font-size:13px">Документов нет</p>';
+  if(softs.length){
+    body+='<label>💻 ПО проекта ('+softs.length+')</label>';
+    softs.forEach(s=>{
+      const st2=wfStatus(s);
+      body+='<div class="row-item" style="cursor:pointer" onclick="openSoft(\''+s.id+'\')"><div class="ri-body"><div class="ri-t">'+esc(s.title)+'</div><div class="ri-s">'+esc(s.type)+' · '+docProgress(s)+'/'+s.steps.length+' этапов</div></div><span class="badge '+st2[1]+'">'+st2[0]+'</span></div>';
+    });
+  }
+  body+='<div style="display:flex;gap:9px;margin-top:18px;flex-wrap:wrap">';
+  if(wst[2]==='progress'){
+    body+='<button type="button" class="btn primary" onclick="advanceEnt(\'project\',\''+p.id+'\')">▶ Завершить текущий этап</button>'
+      +'<button type="button" class="btn danger" onclick="rejectEnt(\'project\',\''+p.id+'\')">✕ Отклонить проект</button>';
+  }
+  body+='<button type="button" class="btn" onclick="closeModal();projectFormModal(\''+p.id+'\')">✏️ Редактировать</button>'
+    +'<button type="button" class="btn ghost" onclick="deleteProject(\''+p.id+'\')">🗑 Удалить</button></div>';
+  openModal('Проект: '+esc(p.title),body,'Закрыть',()=>closeModal(),true);
+  wfAfterRender();
+}
+function deleteProject(id){
+  const p=byId(db.projects,id);
+  askConfirm('Удалить проект «'+esc(p?p.title:'')+'»? Автозадачи маршрута будут удалены, остальные связи очищены.','Удалить',()=>{
+    const proj=byId(db.projects,id);
+    const tids=collectWfTaskIds(proj);
+    db.tasks=db.tasks.filter(t=>tids.indexOf(t.id)<0);
+    db.projects=db.projects.filter(x=>x.id!==id);
+    db.tasks.forEach(t=>{if(t.projectId===id)t.projectId=''});
+    db.docs.forEach(d=>{if(d.projectId===id)d.projectId=''});
+    db.softs.forEach(s=>{if(s.projectId===id)s.projectId=''});
+    db.meetings.forEach(m=>{if(m.projectId===id)m.projectId='';m.decisions.forEach(dc=>{if(dc.projectId===id)dc.projectId=''})});
+    db.grants.forEach(g=>{if(g.projectId===id)g.projectId=''});
+    db.priority.forEach(pp=>{if(pp.projectId===id)pp.projectId=''});
+    save();render();toast('Проект удалён');
+  });
+}
+/* ================= ЗАДАЧИ ================= */
+function renderTasks(){
+  setPage('Задачи','Задачи, поручения и автозадачи этапов workflow','<button class="btn primary" onclick="taskFormModal()">＋ Задача</button>');
+  const f=state.filters.tasks;
+  let list=db.tasks.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(t=>((t.title||'')+' '+(t.executor||'')+' '+(t.desc||'')).toLowerCase().includes(n))}
+  if(f.status.length)list=list.filter(t=>f.status.indexOf(t.status)>=0);
+  if(f.priority.length)list=list.filter(t=>f.priority.indexOf(t.priority)>=0);
+  if(f.projectId.length)list=list.filter(t=>t.projectId&&f.projectId.indexOf(t.projectId)>=0);
+  if(f.overdue)list=list.filter(t=>t.deadline&&t.deadline<todayISO()&&t.status!=='done');
+  list=applySort(list,'tasks',{
+    title:t=>t.title,executor:t=>t.executor,prio:t=>db.prioSet.findIndex(p=>p.key===t.priority),
+    deadline:t=>t.deadline||'9999',wf:t=>t.wf?wfProgressLabel(t):'яяя',status:t=>stOf('task',t.status).label
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('tasks','🔍 Поиск по тексту, исполнителю…')
+    +'<label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer"><input type="checkbox" style="width:auto" '+(f.overdue?'checked':'')+' onchange="tglOverdue()"> ⚠ только просроченные</label>'
+    +(hasF('tasks')?'<button class="btn ghost sm" onclick="clearF(\'tasks\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',db.statusSets.task.map(s=>fChip('tasks','status',s.key,esc(s.label))).join(''))
+    +fRow('Приоритет',db.prioSet.map(p=>fChip('tasks','priority',p.key,esc(p.label))).join(''))
+    +(db.projects.length?fRow('Проект',db.projects.map(p=>fChip('tasks','projectId',p.id,esc(cut(p.title,28)))).join('')):'')
+    +sortBar('tasks',[['title','Задача'],['executor','Исполнитель'],['prio','Приоритет'],['deadline','Срок'],['wf','Этап workflow'],['status','Статус']])
+    +'</div>';
+  h+='<div class="card" style="overflow-x:auto">';
+  if(list.length){
+    h+='<table class="tbl"><thead><tr>'+thS('tasks','title','Задача')+thS('tasks','executor','Исполнитель')+thS('tasks','prio','Приоритет')+thS('tasks','deadline','Срок')+thS('tasks','wf','Этап workflow')+thS('tasks','status','Статус')+'<th></th></tr></thead><tbody>';
+    list.forEach(t=>{
+      const od=t.deadline&&t.deadline<todayISO()&&t.status!=='done';
+      const st=stOf('task',t.status);const pr=prioOf(t.priority);
+      h+='<tr><td style="min-width:230px"><div class="nm">'+esc(t.title)+'</div>'
+        +'<div class="sub">'+(t.projectId?'🗂 '+esc(projName(t.projectId)):'без проекта')+(t.desc?' · '+esc(t.desc):'')+'</div></td>'
+        +'<td style="font-size:12.5px">'+esc(t.executor||'—')+'</td>'
+        +'<td><span class="badge '+pr.color+'">'+pr.label+'</span></td>'
+        +'<td style="font-size:12.5px;white-space:nowrap">'+fmt(t.deadline)+(od?' <span class="badge b-red">просрочено</span>':'')+'</td>'
+        +'<td style="max-width:230px;font-size:12px">'+(t.wf?'🧭 '+esc(wfProgressLabel(t)):'—')+'</td>'
+        +'<td><button class="badge '+st.color+'" style="border:0;cursor:pointer;font-family:inherit" title="Нажмите, чтобы сменить статус" onclick="cycleTask(\''+t.id+'\')">'+st.label+'</button>'
+        +(t.statusDate?'<div class="sub">от '+fmt(t.statusDate)+'</div>':'')+'</td>'
+        +'<td style="white-space:nowrap"><button class="icobtn" onclick="taskFormModal(\''+t.id+'\')">✏️</button><button class="icobtn" onclick="deleteTask(\''+t.id+'\')">🗑</button></td></tr>';
+    });
+    h+='</tbody></table>';
+  } else h+='<div class="empty">✅<p>'+(hasF('tasks')?'Ничего не найдено по фильтрам':'Задач нет')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function tglOverdue(){state.filters.tasks.overdue=!state.filters.tasks.overdue;render()}
+function cycleTask(id){
+  const t=byId(db.tasks,id);const arr=db.statusSets.task||[];if(!t||!arr.length)return;
+  const i=arr.findIndex(s=>s.key===t.status);
+  t.status=arr[(i+1)%arr.length].key;
+  t.statusDate=todayISO();
+  syncWfFromTask(t);
+  save();render();
+}
+function taskFormModal(id){
+  const t=id?byId(db.tasks,id):null;
+  let wfInfo='';
+  if(t&&t.wf){
+    wfInfo='<div class="row-item" style="background:#f7f9fd"><div class="ri-body"><div class="ri-t">🧭 Задача привязана к этапу workflow</div>'
+      +'<div class="ri-s">'+esc(wfProgressLabel(t))+'. Завершение задачи закроет этап и переведёт маршрут на следующий.</div></div></div>';
+  }
+  const prioSel=db.prioSet.map(p=>'<option value="'+p.key+'" '+(t&&t.priority===p.key?'selected':'')+'>'+esc(p.label)+'</option>').join('');
+  const body=wfInfo
+    +'<label>Текст задачи *</label><input name="title" required value="'+esc(t?t.title:'')+'">'
+    +'<div class="frow">'
+    +'<div><label>Проект</label><select name="projectId">'+opts(db.projects,t?t.projectId:'')+'</select></div>'
+    +'<div><label>Исполнитель</label><input name="executor" list="peopleList" value="'+esc(t?t.executor:'')+'"></div>'
+    +'<div><label>Приоритет</label><select name="priority">'+prioSel+'</select></div>'
+    +'<div><label>Срок</label><input type="date" name="deadline" value="'+(t?t.deadline:'')+'"></div>'
+    +'<div><label>Статус</label><select name="status">'+setOpts('task',t?t.status:firstKey('task'))+'</select></div>'
+    +'</div>'
+    +'<label>Описание</label><textarea name="desc" rows="2">'+esc(t?t.desc:'')+'</textarea>';
+  openModal(t?'Редактирование задачи':'Новая задача',body,'Сохранить',fd=>{
+    if(!fd.title||!fd.title.trim()){toast('Укажите текст задачи');return}
+    const tk={id:t?t.id:uid(),title:fd.title.trim(),projectId:fd.projectId||'',executor:(fd.executor||'').trim(),
+      priority:fd.priority,deadline:fd.deadline||'',status:fd.status,
+      statusDate:(t&&t.status===fd.status&&t.statusDate)?t.statusDate:todayISO(),
+      desc:(fd.desc||'').trim(),wf:t&&t.wf?t.wf:null};
+    if(t)Object.assign(t,tk);else db.tasks.unshift(tk);
+    syncWfFromTask(tk);
+    save();closeModal();render();toast('Задача сохранена');
+  });
+}
+function deleteTask(id){
+  const t=byId(db.tasks,id);
+  const warn=t&&t.wf?' Задача привязана к этапу workflow — привязка этапа будет снята.':'';
+  askConfirm('Удалить задачу?'+warn,'Удалить',()=>{
+    const task=byId(db.tasks,id);
+    if(task&&task.wf){
+      const ent=getEnt(task.wf.kind,task.wf.id);
+      if(ent&&task.wf.branch){
+        const stp=ent.steps[task.wf.step];const br=stp&&(stp.branches||[]).find(b=>b.id===task.wf.branch);
+        const bs=br&&br.steps[task.wf.bstep];if(bs&&bs.taskId===id)bs.taskId='';
+      }else{
+        const s=ent&&ent.steps&&ent.steps[task.wf.step];if(s&&s.taskId===id)s.taskId='';
+      }
+    }
+    db.tasks=db.tasks.filter(x=>x.id!==id);
+    db.docs.forEach(d=>{if(d.taskId===id)d.taskId=''});
+    save();render();toast('Задача удалена');
+  });
+}
+/* ================= ГРАНТЫ ================= */
+function renderGrants(){
+  setPage('Грантовая работа','Заявки, конкурсы, выигранное финансирование и связанные проекты',
+    '<button class="btn primary" onclick="grantFormModal()">＋ Грант / заявка</button>');
+  const won=db.grants.filter(g=>FUNDED.includes(g.status)).reduce((a,g)=>a+(+g.amount||0),0);
+  const f=state.filters.grants;
+  let list=db.grants.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(g=>((g.title||'')+' '+(g.fund||'')+' '+(g.leader||'')).toLowerCase().includes(n))}
+  if(f.status.length)list=list.filter(g=>f.status.indexOf(g.status)>=0);
+  list=applySort(list,'grants',{
+    title:g=>g.title,fund:g=>g.fund,leader:g=>g.leader,amount:g=>+g.amount||0,
+    start:g=>g.dateStart||'9999',status:g=>stOf('grant',g.status).label
+  });
+  let h='<div class="chips"><span class="chip on">Привлечено финансирование: '+money(won)+'</span><span class="chip">Всего заявок: '+db.grants.length+'</span></div>';
+  h+='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('grants','🔍 Поиск по названию, фонду, руководителю…')
+    +(hasF('grants')?'<button class="btn ghost sm" onclick="clearF(\'grants\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',db.statusSets.grant.map(s=>fChip('grants','status',s.key,esc(s.label))).join(''))
+    +sortBar('grants',[['title','Название'],['fund','Фонд'],['leader','Руководитель'],['amount','Сумма'],['start','Дата'],['status','Статус']])
+    +'</div>';
+  h+='<div class="cards">';
+  if(list.length){
+    list.forEach(g=>{
+      const st=stOf('grant',g.status);
+      const docs=db.docs.filter(d=>d.grantId===g.id);
+      h+='<div class="card pad">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        +'<span><span class="badge '+st.color+'">'+st.label+'</span> '+stDateHTML(g)+'</span>'
+        +'<b style="font-size:16px;font-family:\'Manrope\',sans-serif">'+money(g.amount)+'</b></div>'
+        +'<h3 style="margin:11px 0 5px">'+esc(g.title)+'</h3>'
+        +'<div style="color:var(--muted);font-size:12.5px">🏦 '+esc(g.fund||'—')+'</div>'
+        +'<div style="color:var(--muted);font-size:12.5px;margin-top:3px">👤 '+esc(g.leader||'—')+' · 📅 '+fmt(g.dateStart)+' → '+fmt(g.dateEnd)+'</div>'
+        +'<div class="link-chips" style="margin-top:12px">'
+        +(g.projectId?'<span class="lchip">🗂 <b>'+esc(cut(projName(g.projectId),24))+'</b></span>':'')
+        +'<span class="lchip">📁 документов: '+docs.length+'</span></div>'
+        +'<div style="display:flex;gap:7px;margin-top:14px">'
+        +'<button class="icobtn" onclick="grantFormModal(\''+g.id+'\')">✏️</button>'
+        +'<button class="icobtn" onclick="deleteGrant(\''+g.id+'\')">🗑</button>'
+        +'</div></div>';
+    });
+  } else h+='<div class="empty" style="grid-column:1/-1">💰<p>'+(hasF('grants')?'Ничего не найдено по фильтрам':'Грантов нет')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function grantFormModal(id){
+  const g=id?byId(db.grants,id):null;
+  const body='<label>Название гранта (заявки) *</label><input name="title" required value="'+esc(g?g.title:'')+'">'
+    +'<div class="frow">'
+    +'<div><label>Фонд / источник</label><input name="fund" value="'+esc(g?g.fund:'')+'"></div>'
+    +'<div><label>Руководитель</label><input name="leader" list="peopleList" value="'+esc(g?g.leader:'')+'"></div>'
+    +'<div><label>Сумма, ₽</label><input type="number" name="amount" min="0" value="'+(g?g.amount:'')+'"></div>'
+    +'<div><label>Статус</label><select name="status">'+setOpts('grant',g?g.status:firstKey('grant'))+'</select></div>'
+    +'<div><label>Дата подачи / старта</label><input type="date" name="dateStart" value="'+(g?g.dateStart:'')+'"></div>'
+    +'<div><label>Дата окончания</label><input type="date" name="dateEnd" value="'+(g?g.dateEnd:'')+'"></div>'
+    +'</div>'
+    +'<label>🗂 Связанный проект</label><select name="projectId">'+opts(db.projects,g?g.projectId:'')+'</select>'
+    +'<label>Описание</label><textarea name="desc" rows="2">'+esc(g?g.desc:'')+'</textarea>';
+  openModal(g?'Редактирование гранта':'Новый грант / заявка',body,'Сохранить',fd=>{
+    if(!fd.title||!fd.title.trim()){toast('Укажите название гранта');return}
+    const gr={id:g?g.id:uid(),title:fd.title.trim(),fund:(fd.fund||'').trim(),leader:(fd.leader||'').trim(),
+      amount:+fd.amount||0,status:fd.status,
+      statusDate:(g&&g.status===fd.status&&g.statusDate)?g.statusDate:todayISO(),
+      dateStart:fd.dateStart||'',dateEnd:fd.dateEnd||'',
+      projectId:fd.projectId||'',desc:(fd.desc||'').trim()};
+    if(g)Object.assign(g,gr);else db.grants.unshift(gr);
+    save();closeModal();render();toast('Грант сохранён');
+  });
+}
+function deleteGrant(id){
+  askConfirm('Удалить грант? Связи с документами и проектами будут очищены.','Удалить',()=>{
+    db.grants=db.grants.filter(g=>g.id!==id);
+    db.docs.forEach(d=>{if(d.grantId===id)d.grantId=''});
+    db.projects.forEach(p=>{if(p.grantId===id)p.grantId=''});
+    save();render();toast('Грант удалён');
+  });
+}
+/* ================= СТИПЕНДИИ ================= */
+function renderSchols(){
+  setPage('Именные стипендии','Кандидаты, назначения и сопровождение стипендий',
+    '<button class="btn primary" onclick="scholFormModal()">＋ Стипендия</button>');
+  const f=state.filters.schols;
+  let list=db.schols.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(s=>((s.name||'')+' '+(s.holder||'')+' '+(s.resp||'')).toLowerCase().includes(n))}
+  if(f.status.length)list=list.filter(s=>f.status.indexOf(s.status)>=0);
+  if(f.type.length)list=list.filter(s=>f.type.indexOf(s.type)>=0);
+  list=applySort(list,'schols',{
+    name:s=>s.name,holder:s=>s.holder,type:s=>s.type,amount:s=>+s.amount||0,period:s=>s.period,status:s=>stOf('schol',s.status).label
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('schols','🔍 Поиск по названию, соискателю…')
+    +(hasF('schols')?'<button class="btn ghost sm" onclick="clearF(\'schols\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',db.statusSets.schol.map(s=>fChip('schols','status',s.key,esc(s.label))).join(''))
+    +fRow('Тип',db.scholTypes.map(t=>fChip('schols','type',t,esc(t))).join(''))
+    +sortBar('schols',[['name','Стипендия'],['holder','Соискатель'],['type','Тип'],['amount','Размер'],['period','Период'],['status','Статус']])
+    +'</div>';
+  h+='<div class="cards">';
+  if(list.length){
+    list.forEach(s=>{
+      const st=stOf('schol',s.status);
+      const docs=db.docs.filter(d=>d.scholId===s.id);
+      h+='<div class="card pad">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        +'<span class="badge b-gold">'+esc(s.type)+'</span>'
+        +'<span><span class="badge '+st.color+'">'+st.label+'</span> '+stDateHTML(s)+'</span></div>'
+        +'<h3 style="margin:11px 0 5px">'+esc(s.name)+'</h3>'
+        +'<div style="color:var(--muted);font-size:12.5px">🎓 '+esc(s.holder||'—')+'</div>'
+        +'<div style="margin-top:10px"><b style="font-size:16px;font-family:\'Manrope\',sans-serif">'+money(s.amount)+'</b> <span style="color:var(--muted);font-size:12.5px">/ мес · период: '+esc(s.period||'—')+'</span></div>'
+        +'<div style="color:var(--muted);font-size:12.5px;margin-top:6px">Ответственный: '+esc(s.resp||'—')+'</div>'
+        +'<div class="link-chips" style="margin-top:12px"><span class="lchip">📁 документов: '+docs.length+'</span></div>'
+        +'<div style="display:flex;gap:7px;margin-top:14px">'
+        +'<button class="icobtn" onclick="scholFormModal(\''+s.id+'\')">✏️</button>'
+        +'<button class="icobtn" onclick="deleteSchol(\''+s.id+'\')">🗑</button>'
+        +'</div></div>';
+    });
+  } else h+='<div class="empty" style="grid-column:1/-1">🎓<p>'+(hasF('schols')?'Ничего не найдено по фильтрам':'Стипендий нет')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function scholFormModal(id){
+  const s=id?byId(db.schols,id):null;
+  const typeSel=db.scholTypes.map(t=>'<option '+(s&&s.type===t?'selected':'')+'>'+esc(t)+'</option>').join('');
+  const body='<label>Наименование стипендии *</label><input name="name" required value="'+esc(s?s.name:'')+'" placeholder="Стипендия им. …">'
+    +'<div class="frow">'
+    +'<div><label>Соискатель / получатель</label><input name="holder" list="peopleList" value="'+esc(s?s.holder:'')+'"></div>'
+    +'<div><label>Тип</label><select name="type">'+typeSel+'</select></div>'
+    +'<div><label>Размер, ₽/мес</label><input type="number" name="amount" min="0" value="'+(s?s.amount:'')+'"></div>'
+    +'<div><label>Период</label><input name="period" value="'+esc(s?s.period:'')+'" placeholder="2025/2026 уч. год"></div>'
+    +'<div><label>Статус</label><select name="status">'+setOpts('schol',s?s.status:firstKey('schol'))+'</select></div>'
+    +'<div><label>Ответственный</label><input name="resp" list="peopleList" value="'+esc(s?s.resp:'')+'"></div>'
+    +'</div>';
+  openModal(s?'Редактирование стипендии':'Новая стипендия',body,'Сохранить',fd=>{
+    if(!fd.name||!fd.name.trim()){toast('Укажите наименование стипендии');return}
+    const sc={id:s?s.id:uid(),name:fd.name.trim(),holder:(fd.holder||'').trim(),type:fd.type,
+      amount:+fd.amount||0,period:(fd.period||'').trim(),status:fd.status,
+      statusDate:(s&&s.status===fd.status&&s.statusDate)?s.statusDate:todayISO(),
+      resp:(fd.resp||'').trim()};
+    if(s)Object.assign(s,sc);else db.schols.unshift(sc);
+    save();closeModal();render();toast('Стипендия сохранена');
+  });
+}
+function deleteSchol(id){
+  askConfirm('Удалить стипендию?','Удалить',()=>{
+    db.schols=db.schols.filter(s=>s.id!==id);
+    db.docs.forEach(d=>{if(d.scholId===id)d.scholId=''});
+    save();render();toast('Стипендия удалена');
+  });
+}
+/* ================= ПРИОРИТЕТ-2030 (рабочая таблица) ================= */
+function togglePrioConfirm(id){
+  const p=byId(db.priority,id);if(!p)return;
+  p.confirmed=!p.confirmed;
+  save();render();
+  toast(p.confirmed?'Показатель отмечен подтверждённым ✓':'Отметка подтверждения снята');
+}
+function renderPriority(){
+  setPage('Приоритет-2030','Рабочая таблица показателей программы развития — связана с проектами, документами и совещаниями','');
+  const f=state.filters.priority;
+  const dirs=[];db.priority.forEach(p=>{if(p.dir&&dirs.indexOf(p.dir)<0)dirs.push(p.dir)});
+  let list=db.priority.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(p=>((p.name||'')+' '+(p.dir||'')+' '+(p.resp||'')+' '+(p.comment||'')).toLowerCase().includes(n))}
+  if(f.dir.length)list=list.filter(p=>f.dir.indexOf(p.dir||'')>=0&&p.dir);
+  if(f.pc.length)list=list.filter(p=>f.pc.indexOf(pcStatusOf(p))>=0);
+  list=applySort(list,'priority',{
+    name:p=>p.name,dir:p=>p.dir||'',resp:p=>p.resp||'',
+    proj:p=>p.projectId?projName(p.projectId):'',doc:p=>p.docId?(byId(db.docs,p.docId)||{}).title||'':'',
+    plan:p=>+p.plan||0,cur:p=>+p.cur||0,pc:p=>Math.min(100,Math.round(100*(+p.cur||0)/(+p.plan||1))),
+    fund:p=>+p.fund||0,deadline:p=>p.deadline||'9999',status:p=>pcStatusOf(p),conf:p=>p.confirmed?1:0
+  });
+  const pcLabel={done:'Достигнут',work:'В работе',risk:'Под риском'};
+  const pcCls={done:'yes',work:'mid',risk:'no'};
+  const totalFund=db.priority.reduce((a,p)=>a+(+p.fund||0),0);
+  const doneN=db.priority.filter(p=>pcStatusOf(p)==='done').length;
+  const year=new Date().getFullYear();
+  const s=state.sort.priority||{key:'',dir:1};
+  const thP=(key,label,hint)=>'<th class="srt" onclick="setSort(\'priority\',\''+key+'\')">'+label+(s.key===key?(s.dir>0?' ▲':' ▼'):'')+(hint?'<small>'+hint+'</small>':'')+'</th>';
+  let h='<div class="p30">';
+  /* верхняя панель */
+  h+='<div class="p30-top">'
+    +'<div class="p30-brand"><div class="p30-ico">🚀</div><div><strong>Цезарь <span>/ Приоритет-2030</span></strong><small>Рабочая таблица показателей · период '+year+'</small></div></div>'
+    +'<div class="p30-actions">'
+    +'<button class="pbtn" onclick="printReport(\'priority\')">🖨 Печать таблицы</button>'
+    +'<button class="pbtn primary" onclick="prioFormModal()">＋ Показатель</button>'
+    +'</div></div>';
+  h+='<div class="p30-note">Значения указываются за отчётный период; показатель связывается с проектом и подтверждающим документом. Отметка «✓ подтверждено» означает, что значение проверено документом. Данные автоматически попадают в отчёты и на дашборд.</div>';
+  /* панель инструментов */
+  h+='<div class="p30-tools">'
+    +'<input id="flt_priority_q" value="'+esc(f.q||'')+'" placeholder="🔍 Поиск по показателю, направлению, ответственному…" oninput="setFQ(\'priority\',this.value)" style="min-width:260px">'
+    +'<div class="p30-chips">'
+    +dirs.map(d=>'<button class="p30-chip '+(f.dir.indexOf(d)>=0?'on':'')+'" onclick="tglF(\'priority\',\'dir\',\''+esc(d)+'\')">'+esc(d)+'</button>').join('')
+    +'<button class="p30-chip '+(f.pc.indexOf('done')>=0?'on':'')+'" onclick="tglF(\'priority\',\'pc\',\'done\')">Достигнут</button>'
+    +'<button class="p30-chip '+(f.pc.indexOf('work')>=0?'on':'')+'" onclick="tglF(\'priority\',\'pc\',\'work\')">В работе</button>'
+    +'<button class="p30-chip '+(f.pc.indexOf('risk')>=0?'on':'')+'" onclick="tglF(\'priority\',\'pc\',\'risk\')">Под риском</button>'
+    +'</div>'
+    +'<select onchange="setSortSel(\'priority\',this.value)" title="Сортировка">'
+    +[['name','Сортировка: показатель'],['dir','Сортировка: направление'],['pc','Сортировка: готовность %'],['plan','Сортировка: план'],['cur','Сортировка: факт'],['fund','Сортировка: финансирование'],['deadline','Сортировка: срок'],['resp','Сортировка: ответственный'],['conf','Сортировка: отметка']].map(x=>'<option value="'+x[0]+'" '+(s.key===x[0]?'selected':'')+'>'+x[1]+'</option>').join('')
+    +'</select>'
+    +'<button class="pbtn" onclick="setSortDir(\'priority\')">'+(s.dir>0?'↑ по возрастанию':'↓ по убыванию')+'</button>'
+    +(hasF('priority')?'<button class="pbtn" onclick="clearF(\'priority\')">✕ Сброс</button>':'')
+    +'</div>';
+  /* таблица */
+  h+='<div class="p30-scroll"><table class="p30-table"><thead><tr>'
+    +'<th class="p30-idx">№</th>'
+    +'<th class="p30-name srt" onclick="setSort(\'priority\',\'name\')">Наименование показателя'+(s.key==='name'?(s.dir>0?' ▲':' ▼'):'')+'<small>цель / проверяемый результат</small></th>'
+    +thP('dir','Направление','образование / наука / …')
+    +thP('resp','Ответственный','')
+    +thP('proj','Проект','связь с проектной работой')
+    +thP('doc','Документ','подтверждающий')
+    +thP('plan','План','значение')
+    +thP('cur','Факт','значение')
+    +'<th>Ед.</th>'
+    +thP('fund','Финансирование','тыс. ₽ за период')
+    +thP('pc','%','готовность')
+    +thP('deadline','Срок','')
+    +thP('status','Статус','')
+    +thP('conf','Отметка','подтверждено')
+    +'<th>Комментарий</th>'
+    +'</tr></thead><tbody>';
+  if(list.length){
+    list.forEach((p,i)=>{
+      const pc=Math.min(100,Math.round(100*(+p.cur||0)/(+p.plan||1)));
+      const pck=pcStatusOf(p);
+      const od=p.deadline&&p.deadline<todayISO()&&pck!=='done';
+      const doc=p.docId?byId(db.docs,p.docId):null;
+      h+='<tr>'
+        +'<td class="p30-idx">'+(i+1)+'</td>'
+        +'<td class="p30-name"><span class="nm" onclick="prioFormModal(\''+p.id+'\')">'+esc(p.name)+'</span></td>'
+        +'<td>'+(p.dir?'<span class="p30-mark plain" style="cursor:default">'+esc(p.dir)+'</span>':'—')+'</td>'
+        +'<td>'+esc(p.resp||'—')+'</td>'
+        +'<td>'+(p.projectId?'<button class="p30-link" onclick="openProject(\''+p.projectId+'\')">🗂 '+esc(cut(projName(p.projectId),26))+'</button>':'—')+'</td>'
+        +'<td>'+(doc?'<button class="p30-link" onclick="openDoc(\''+doc.id+'\')">📄 '+esc(cut(doc.title,24))+'</button>':'—')+'</td>'
+        +'<td class="p30-money">'+numF(p.plan)+'</td>'
+        +'<td class="p30-money">'+numF(p.cur)+'</td>'
+        +'<td>'+esc(p.unit||'—')+'</td>'
+        +'<td class="p30-money">'+numF(p.fund)+'</td>'
+        +'<td><span style="font-weight:700">'+pc+'%</span><div class="p30-mini"><i style="width:'+pc+'%"></i></div></td>'
+        +'<td style="'+(od?'color:#b91c1c;font-weight:700':'')+';white-space:nowrap">'+(p.deadline?fmt(p.deadline):'—')+(od?' ⚠':'')+'</td>'
+        +'<td><span class="p30-mark '+pcCls[pck]+' plain" style="cursor:default">'+pcLabel[pck]+'</span></td>'
+        +'<td><button class="p30-mark '+(p.confirmed?'yes':'')+'" onclick="togglePrioConfirm(\''+p.id+'\')">'+(p.confirmed?'✓ подтверждено':'не подтверждено')+'</button></td>'
+        +'<td style="max-width:220px;color:var(--s-muted)">'+esc(p.comment||'')+'</td>'
+        +'</tr>';
+    });
+  }else{
+    h+='<tr><td class="p30-idx">—</td><td class="p30-name" colspan="14" style="color:var(--s-muted);text-align:center;padding:26px">Показателей нет — добавьте первый показатель кнопкой «＋ Показатель».</td></tr>';
+  }
+  h+='</tbody></table></div>';
+  /* подвал листа */
+  h+='<div class="p30-foot">'
+    +'<span>Показателей: '+db.priority.length+'</span>'
+    +'<span class="right">Достигнуто: '+doneN+' из '+db.priority.length+' · Средняя готовность: '+prioAvg()+'% · Финансирование: '+numF(totalFund)+' тыс. ₽</span>'
+    +'<span><span class="p30-save"></span>Сохранено автоматически</span>'
+    +'</div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function prioFormModal(id){
+  const p=id?byId(db.priority,id):null;
+  const body='<label>Наименование показателя *</label><input name="name" required value="'+esc(p?p.name:'')+'">'
+    +'<div class="frow">'
+    +'<div><label>Направление</label><input name="dir" value="'+esc(p?p.dir:'')+'" placeholder="Наука / Образование / Кадры…"></div>'
+    +'<div><label>Ответственный</label><input name="resp" list="peopleList" value="'+esc(p?p.resp:'')+'"></div>'
+    +'<div><label>Плановое значение</label><input type="number" name="plan" min="0" step="any" value="'+(p&&p.plan!=null?p.plan:'')+'"></div>'
+    +'<div><label>Текущее значение (факт)</label><input type="number" name="cur" min="0" step="any" value="'+(p&&p.cur!=null?p.cur:'')+'"></div>'
+    +'<div><label>Ед. измерения</label><input name="unit" value="'+esc(p?p.unit:'')+'" placeholder="% / шт. / тыс. ₽"></div>'
+    +'<div><label>Финансирование, тыс. ₽</label><input type="number" name="fund" min="0" step="any" value="'+(p&&p.fund!=null?p.fund:'')+'" placeholder="0"></div>'
+    +'<div><label>Срок достижения</label><input type="date" name="deadline" value="'+(p?p.deadline:'')+'"></div>'
+    +'</div>'
+    +'<div class="frow">'
+    +'<div><label>🗂 Связанный проект</label><select name="projectId">'+opts(db.projects,p?p.projectId:'')+'</select></div>'
+    +'<div><label>📄 Подтверждающий документ</label><select name="docId">'+opts(db.docs,p?p.docId:'')+'</select></div>'
+    +'</div>'
+    +'<label>Комментарий</label><textarea name="comment" rows="2" placeholder="Источник данных, методика расчёта, примечания…">'+esc(p?p.comment:'')+'</textarea>';
+  openModal(p?'Редактирование показателя':'Новый показатель Приоритет-2030',body,'Сохранить',fd=>{
+    if(!fd.name||!fd.name.trim()){toast('Укажите наименование показателя');return}
+    const pr={id:p?p.id:uid(),name:fd.name.trim(),dir:(fd.dir||'').trim(),resp:(fd.resp||'').trim(),
+      plan:+fd.plan||0,cur:+fd.cur||0,unit:(fd.unit||'').trim(),fund:+fd.fund||0,deadline:fd.deadline||'',
+      projectId:fd.projectId||'',docId:fd.docId||'',comment:(fd.comment||'').trim(),
+      confirmed:p?p.confirmed:false};
+    if(p)Object.assign(p,pr);else db.priority.unshift(pr);
+    save();closeModal();render();toast('Показатель сохранён');
+  });
+}
+function deletePrio(id){
+  askConfirm('Удалить показатель?','Удалить',()=>{
+    db.priority=db.priority.filter(p=>p.id!==id);
+    db.docs.forEach(d=>{if(d.prId===id)d.prId=''});
+    db.projects.forEach(p=>{if(p.prId===id)p.prId=''});
+    save();render();toast('Показатель удалён');
+  });
+}
+/* ================= ГРУППЫ ЗАДАЧ ================= */
+function matchDue(t,du){
+  const today=todayISO();
+  if(du==='week')return !!t.deadline&&t.deadline>=today&&t.deadline<=dPlus(7);
+  if(du==='month')return !!t.deadline&&t.deadline>=today&&t.deadline<=dPlus(30);
+  if(du==='overdue')return !!t.deadline&&t.deadline<today&&t.status!=='done';
+  return false;
+}
+function matchGroup(t,g){
+  const c=g.criteria||{};
+  if(c.projectIds&&c.projectIds.length){if(c.projectIds.indexOf(t.projectId||'')<0)return false}
+  if(c.statuses&&c.statuses.length){if(c.statuses.indexOf(t.status)<0)return false}
+  if(c.priorities&&c.priorities.length){if(c.priorities.indexOf(t.priority)<0)return false}
+  if(c.dues&&c.dues.length){if(!c.dues.some(du=>matchDue(t,du)))return false}
+  return true;
+}
+function grpDesc(g){
+  const c=g.criteria||{};const parts=[];
+  if(c.projectIds&&c.projectIds.length)parts.push('проекты: '+c.projectIds.map(id=>cut(projName(id),18)).join(', '));
+  if(c.statuses&&c.statuses.length)parts.push('статусы: '+c.statuses.map(k=>stOf('task',k).label).join(', '));
+  if(c.priorities&&c.priorities.length)parts.push('приоритеты: '+c.priorities.map(k=>prioOf(k).label).join(', '));
+  if(c.dues&&c.dues.length)parts.push('срок: '+c.dues.map(d=>d==='week'?'эта неделя':(d==='month'?'этот месяц':'просроченные')).join(', '));
+  return parts.length?parts.join(' · '):'все задачи';
+}
+function grpListHTML(){
+  if(!db.taskGroups.length)return '<p style="color:var(--muted);font-size:13px">Группы пока не созданы.</p>';
+  let h='';
+  db.taskGroups.forEach(g=>{
+    h+='<div class="row-item"><div class="ri-body"><div class="ri-t">⭐ '+esc(g.name)+'</div>'
+      +'<div class="ri-s">'+esc(grpDesc(g))+' · соответствует задач: '+db.tasks.filter(t=>matchGroup(t,g)).length+'</div></div>'
+      +'<button class="icobtn" onclick="grpFormModal(\''+g.id+'\')">✏️</button>'
+      +'<button class="icobtn" onclick="delGrp(\''+g.id+'\')">🗑</button></div>';
+  });
+  return h;
+}
+function grpListModal(){
+  openModal('⚙ Конструктор групп задач',
+    '<p style="font-size:12.5px;color:var(--muted)">Группы используются при массовом вынесении задач на совещания. Внутри параметра значения объединяются по «ИЛИ», между параметрами — по «И». Можно выбирать несколько значений в каждом параметре.</p>'
+    +'<div style="margin-top:12px">'+grpListHTML()+'</div>'
+    +'<div style="margin-top:14px"><button type="button" class="btn primary" onclick="grpFormModal()">＋ Новая группа</button></div>',
+    'Закрыть',()=>closeModal());
+}
+function grpFormModal(id){
+  const g=id?byId(db.taskGroups,id):null;
+  state.grpEdit={id:g?g.id:null,name:g?g.name:'',
+    projectIds:g&&g.criteria?arrOf(g.criteria.projectIds):[],
+    statuses:g&&g.criteria?arrOf(g.criteria.statuses):[],
+    priorities:g&&g.criteria?arrOf(g.criteria.priorities):[],
+    dues:g&&g.criteria?arrOf(g.criteria.dues):[]};
+  renderGrpModal();
+}
+function grpTgl(f,v){const a=state.grpEdit[f];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderGrpModal()}
+function renderGrpModal(){
+  const e=state.grpEdit;
+  const chip=(f,v,l)=>'<button type="button" class="chip '+(e[f].indexOf(v)>=0?'on':'')+'" onclick="grpTgl(\''+f+'\',\''+v+'\')">'+l+'</button>';
+  let body='<label>Название группы *</label><input value="'+esc(e.name)+'" placeholder="Например: Аудит — в работе и выполненные" oninput="state.grpEdit.name=this.value">'
+    +'<label>Проекты (несколько)</label><div class="chips" style="margin:4px 0 10px">'+(db.projects.length?db.projects.map(p=>chip('projectIds',p.id,esc(cut((p.code?p.code+' · ':'')+p.title,30)))).join(''):'<span style="color:var(--muted);font-size:12.5px">проектов нет</span>')+'</div>'
+    +'<label>Статусы задач (несколько)</label><div class="chips" style="margin:4px 0 10px">'+db.statusSets.task.map(s=>chip('statuses',s.key,esc(s.label))).join('')+'</div>'
+    +'<label>Приоритеты (несколько)</label><div class="chips" style="margin:4px 0 10px">'+db.prioSet.map(p=>chip('priorities',p.key,esc(p.label))).join('')+'</div>'
+    +'<label>Срок исполнения (несколько)</label><div class="chips" style="margin:4px 0 10px">'+chip('dues','week','📅 на этой неделе')+chip('dues','month','🗓 в этом месяце')+chip('dues','overdue','⚠️ просроченные')+'</div>'
+    +'<p style="font-size:12px;color:var(--muted)">Пустой параметр = ограничение не применяется. В конструкторе совещания выберите группу, чтобы отфильтровать задачи для вынесения.</p>';
+  openModal(e.id?'Редактирование группы':'Конструктор группы',body,'Сохранить группу',()=>grpSave());
+}
+function grpSave(){
+  const e=state.grpEdit;
+  if(!e.name||!e.name.trim()){toast('Укажите название группы');return}
+  const criteria={projectIds:e.projectIds.slice(),statuses:e.statuses.slice(),priorities:e.priorities.slice(),dues:e.dues.slice()};
+  if(e.id){const g=byId(db.taskGroups,e.id);if(g){g.name=e.name.trim();g.criteria=criteria}}
+  else db.taskGroups.push({id:uid(),name:e.name.trim(),criteria:criteria});
+  save();closeModal();render();toast('Группа сохранена');
+}
+function delGrp(id){
+  askConfirm('Удалить группу задач?','Удалить',()=>{
+    db.taskGroups=db.taskGroups.filter(g=>g.id!==id);
+    if(state.meetGroup==='grp_'+id)state.meetGroup='all';
+    save();render();toast('Группа удалена');
+  });
+}
+/* ================= ГРУППИРОВКА ЗАДАЧ ================= */
+function groupTasks(list){
+  const groups={},order=[];
+  list.forEach(t=>{
+    let gk,gl;
+    if(t.projectId){gk='p_'+t.projectId;gl='🗂 Проект: '+projName(t.projectId)}
+    else if(t.wf){const ent=getEnt(t.wf.kind,t.wf.id);gk='w_'+t.wf.id;gl=(t.wf.kind==='doc'?'📁 Документ: ':(t.wf.kind==='soft'?'💻 ПО: ':'🗂 '))+(ent?ent.title:'')}
+    else{gk='none';gl='📌 Без привязки'}
+    if(!groups[gk]){groups[gk]={label:gl,tasks:[]};order.push(gk)}
+    groups[gk].tasks.push(t);
+  });
+  order.forEach(k=>{
+    groups[k].tasks.sort((a,b)=>{
+      const wa=a.wf?a.wf.step:9999,wb=b.wf?b.wf.step:9999;
+      if(wa!==wb)return wa-wb;
+      return (a.deadline||'9999').localeCompare(b.deadline||'9999');
+    });
+  });
+  return order.map(k=>groups[k]);
+}
+/* ================= СОВЕЩАНИЯ ================= */
+function renderMeetings(){
+  setPage('Совещания','Повестка, массовое вынесение задач по группам, печатный бланк и протокол',
+    '<button class="btn" onclick="printBlank(null)">📄 Пустой бланк</button><button class="btn primary" onclick="newMeeting()">＋ Новое совещание</button>');
+  const f=state.filters.meetings;
+  let list=db.meetings.slice();
+  if(f.q){const n=f.q.toLowerCase();list=list.filter(m=>((m.title||'')+' '+(m.place||'')+' '+(m.chair||'')+' '+(m.num||'')).toLowerCase().includes(n))}
+  if(f.status.length)list=list.filter(m=>f.status.indexOf(m.status)>=0);
+  list=applySort(list,'meetings',{
+    num:m=>isNaN(+m.num)?m.num||'яя':+m.num,date:m=>m.date,title:m=>m.title,chair:m=>m.chair,
+    agenda:m=>m.agenda.length,tasks:m=>(m.taskIds||[]).length,dec:m=>m.decisions.length,status:m=>stOf('meet',m.status).label
+  });
+  let h='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+fSearch('meetings','🔍 Поиск по теме, номеру, месту, председателю…')
+    +(hasF('meetings')?'<button class="btn ghost sm" onclick="clearF(\'meetings\')">✕ Сбросить</button>':'')+'</div>'
+    +fRow('Статус',db.statusSets.meet.map(s=>fChip('meetings','status',s.key,esc(s.label))).join(''))
+    +sortBar('meetings',[['date','Дата'],['num','Номер'],['title','Тема'],['chair','Председатель'],['tasks','Задачи'],['dec','Решения'],['status','Статус']])
+    +'</div>';
+  h+='<div class="cards">';
+  if(list.length){
+    list.forEach(m=>{
+      const st=stOf('meet',m.status);
+      h+='<div class="card pad">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center"><span><span class="badge '+st.color+'">'+st.label+'</span> '+stDateHTML(m)+'</span><span style="color:var(--muted);font-size:12px">'+(m.num?'№ '+esc(m.num):'без номера')+'</span></div>'
+        +'<h3 style="margin:11px 0 5px;cursor:pointer" onclick="editMeeting(\''+m.id+'\')">'+esc(m.title||'Совещание (без темы)')+'</h3>'
+        +'<div style="color:var(--muted);font-size:12.5px">📅 '+fmt(m.date)+' '+esc(m.time||'')+' · 📍 '+esc(m.place||'—')+'</div>'
+        +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Председатель: '+esc(m.chair||'—')+(m.projectId?' · 🗂 '+esc(cut(projName(m.projectId),22)):'')+'</div>'
+        +'<div class="link-chips" style="margin-top:11px">'
+        +'<span class="lchip">📃 повестка: '+m.agenda.length+'</span>'
+        +'<span class="lchip">🎯 задач: '+(m.taskIds||[]).length+'</span>'
+        +'<span class="lchip">📌 решений: '+m.decisions.length+'</span></div>'
+        +'<div style="display:flex;gap:7px;margin-top:14px;flex-wrap:wrap">'
+        +'<button class="btn sm primary" onclick="editMeeting(\''+m.id+'\')">Открыть конструктор</button>'
+        +'<button class="btn sm" onclick="printBlank(\''+m.id+'\')">Бланк</button>'
+        +'<button class="btn sm" onclick="printProtocol(\''+m.id+'\')">Протокол</button>'
+        +'<button class="icobtn" onclick="deleteMeeting(\''+m.id+'\')">🗑</button>'
+        +'</div></div>';
+    });
+  } else h+='<div class="empty" style="grid-column:1/-1">🤝<p>'+(hasF('meetings')?'Ничего не найдено по фильтрам':'Совещаний нет. Нажмите «＋ Новое совещание».')+'</p></div>';
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function newMeeting(){
+  const m={id:uid(),title:'',num:'',status:firstKey('meet'),statusDate:todayISO(),date:todayISO(),time:'',place:'',chair:'',secretary:'',attendees:'',projectId:'',agenda:[],decisions:[],taskIds:[]};
+  db.meetings.unshift(m);save();
+  editMeeting(m.id);
+  toast('Совещание создано — заполните карточку');
+}
+function editMeeting(id){
+  state.view='meetEdit';state.meetEditId=id;state.meetGroup='all';state.meetQ='';state.meetSel=[];
+  render();
+}
+function deleteMeeting(id){
+  askConfirm('Удалить совещание вместе с повесткой, задачами и решениями?','Удалить',()=>{
+    db.meetings=db.meetings.filter(m=>m.id!==id);
+    if(state.meetEditId===id)state.meetEditId=null;
+    save();render();toast('Совещание удалено');
+  });
+}
+function curMeet(){return byId(db.meetings,state.meetEditId)}
+function upM(k,v){
+  const m=curMeet();if(!m)return;
+  m[k]=v;
+  if(k==='status')m.statusDate=todayISO();
+  save();state._focus='me_'+k;render();
+}
+function meetStepsHTML(m){
+  const s1=!!(m.title&&m.date&&m.num);
+  const s2=m.agenda.length>0||(m.taskIds||[]).length>0;
+  const s3=m.decisions.length>0||m.status!=='planned';
+  const arr=[[s1,'1. Карточка','тема, дата, участники'],[s2,'2. Повестка и задачи','вопросы, вынесение задач'],[s3,'3. Итоги','решения, подписание протокола']];
+  let h='<div class="msteps">';
+  arr.forEach(x=>{
+    h+='<div class="card mstep '+(x[0]?'done':'')+'"><div class="n">'+(x[0]?'✓':x[1].split('.')[0])+'</div><div><div class="t">'+x[1]+'</div><div class="s">'+x[2]+'</div></div></div>';
+  });
+  return h+'</div>';
+}
+function renderMeetEdit(){
+  const m=curMeet();
+  if(!m){state.view='meetings';renderMeetings();return}
+  const st=stOf('meet',m.status);
+  setPage('Конструктор совещания '+(m.num?'№ '+esc(m.num):''),
+    'Изменения сохраняются автоматически · статус: '+st.label+(m.statusDate?' от '+fmt(m.statusDate):''),
+    '<button class="btn" onclick="setView(\'meetings\')">← К списку</button>'
+    +'<button class="btn" onclick="printBlank(\''+m.id+'\')">📄 Бланк повестки</button>'
+    +'<button class="btn" onclick="printProtocol(\''+m.id+'\')">📋 Протокол</button>'
+    +'<button class="btn danger" onclick="deleteMeeting(\''+m.id+'\')">🗑 Удалить</button>');
+  let h=meetStepsHTML(m);
+  h+='<div class="card pad" style="margin-bottom:16px"><h3 style="margin-bottom:10px">🗒 Карточка совещания</h3>'
+    +'<label>Тема совещания</label><input id="me_title" value="'+esc(m.title)+'" placeholder="Например: Планёрка проектного офиса" oninput="upM(\'title\',this.value)">'
+    +'<div class="frow">'
+    +'<div><label>Номер протокола</label><input id="me_num" value="'+esc(m.num)+'" placeholder="1" oninput="upM(\'num\',this.value)"></div>'
+    +'<div><label>Статус</label><select id="me_status" onchange="upM(\'status\',this.value)">'+setOpts('meet',m.status)+'</select></div>'
+    +'<div><label>Дата</label><input type="date" id="me_date" value="'+(m.date||'')+'" onchange="upM(\'date\',this.value)"></div>'
+    +'<div><label>Время</label><input type="time" id="me_time" value="'+(m.time||'')+'" onchange="upM(\'time\',this.value)"></div>'
+    +'</div>'
+    +'<div class="frow">'
+    +'<div><label>Место проведения</label><input id="me_place" value="'+esc(m.place)+'" placeholder="Зал совещаний" oninput="upM(\'place\',this.value)"></div>'
+    +'<div><label>🗂 Связанный проект</label><select id="me_projectId" onchange="upM(\'projectId\',this.value)">'+opts(db.projects,m.projectId)+'</select></div>'
+    +'<div><label>Председатель</label><input id="me_chair" list="peopleList" value="'+esc(m.chair)+'" oninput="upM(\'chair\',this.value)"></div>'
+    +'<div><label>Секретарь</label><input id="me_secretary" list="peopleList" value="'+esc(m.secretary)+'" oninput="upM(\'secretary\',this.value)"></div>'
+    +'</div>'
+    +'<label>Участники (через запятую)</label>'
+    +'<textarea id="me_attendees" rows="2" oninput="upM(\'attendees\',this.value)" placeholder="ФИО участников">'+esc(m.attendees)+'</textarea>'
+    +(db.people.length?'<div class="link-chips" style="margin-top:9px">'+db.people.map(p=>{
+      const present=splitPeople(m.attendees).indexOf(p.name)>=0;
+      return '<span class="lchip" style="cursor:pointer'+(present?';background:#e5f7ec;border-color:#b7e6c6':'')+'" onclick="addAttendee(\''+esc(p.name)+'\')">'+(present?'✓ ':'＋ ')+esc(p.name)+'</span>';
+    }).join('')+'</div>':'')
+    +'</div>';
+  h+='<div class="card pad" style="margin-bottom:16px"><h3 style="margin-bottom:10px">📃 Повестка · вопросов: '+m.agenda.length+'</h3>';
+  if(m.agenda.length){
+    m.agenda.forEach((a,i)=>{
+      h+='<div class="row-item" style="flex-wrap:wrap">'
+        +'<b style="color:var(--muted);width:20px;text-align:center">'+(i+1)+'</b>'
+        +'<input id="agi_'+i+'_topic" value="'+esc(a.topic)+'" placeholder="Вопрос повестки" oninput="updAgenda('+i+',\'topic\',this.value)" style="flex:2;min-width:220px">'
+        +'<input id="agi_'+i+'_speaker" value="'+esc(a.speaker||'')+'" placeholder="Докладчик" list="peopleList" oninput="updAgenda('+i+',\'speaker\',this.value)" style="flex:1;min-width:150px">'
+        +'<input id="agi_'+i+'_reglament" value="'+esc(a.reglament||'')+'" placeholder="Регламент" oninput="updAgenda('+i+',\'reglament\',this.value)" style="width:110px">'
+        +'<button class="icobtn" onclick="delAgendaRow('+i+')">🗑</button>'
+        +'</div>';
+    });
+  } else h+='<p style="color:var(--muted);font-size:13px;margin-bottom:10px">Вопросы не добавлены.</p>';
+  h+='<div class="mini-add"><b style="font-size:13px">➕ Добавить вопрос</b>'
+    +'<div class="frow3" style="grid-template-columns:2fr 1fr 120px auto">'
+    +'<div><label>Вопрос</label><input id="agT" placeholder="О чём говорим"></div>'
+    +'<div><label>Докладчик</label><input id="agS" list="peopleList" placeholder="ФИО"></div>'
+    +'<div><label>Регламент</label><input id="agR" placeholder="10 мин"></div>'
+    +'<button class="btn primary sm" onclick="addAgendaRow()">Добавить</button>'
+    +'</div></div></div>';
+  const sel=(m.taskIds||[]).map(tid=>byId(db.tasks,tid)).filter(Boolean);
+  state.meetSel=state.meetSel||[];
+  const selN=state.meetSel.length;
+  const gSel=state.meetGroup;
+  const gObj=gSel!=='all'?byId(db.taskGroups,gSel.slice(4)):null;
+  h+='<div class="card pad" style="margin-bottom:16px"><h3 style="margin-bottom:10px">🎯 Задачи совещания · вынесено: '+sel.length+'</h3>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Задачи в бланке и протоколе автоматически группируются по проектам/документам и сортируются по порядку этапов workflow. Для отбора используйте конструктор групп.</div>';
+  if(sel.length){
+    groupTasks(sel).forEach(gr=>{
+      const doneN=gr.tasks.filter(t=>t.status==='done').length;
+      h+='<div class="grp-head">'+esc(gr.label)+' · задач: '+gr.tasks.length+' · выполнено: '+doneN+'</div>';
+      gr.tasks.forEach(t=>{
+        const ts2=stOf('task',t.status);
+        h+='<div class="row-item '+(t.deadline&&t.deadline<todayISO()&&t.status!=='done'?'overdue':'')+'" style="flex-wrap:wrap">'
+          +'<div class="ri-body"><div class="ri-t" style="font-size:13px">'+esc(t.title)+'</div>'
+          +'<div class="ri-s">'+esc(t.executor||'—')+' · срок '+fmt(t.deadline)+(t.wf?' · 🧭 '+esc(wfProgressLabel(t)):'')+'</div></div>'
+          +'<span class="badge '+ts2.color+'">'+ts2.label+'</span>'
+          +(m.status!=='planned'?'<label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12px;cursor:pointer"><input type="checkbox" style="width:auto" '+(t.status==='done'?'checked':'')+' onchange="meetTaskDoneE(\''+t.id+'\',this.checked)"> исполнена</label>':'')
+          +'<button class="icobtn" title="Снять с совещания" onclick="toggleMeetTask(\''+m.id+'\',\''+t.id+'\')">✕</button>'
+          +'</div>';
+      });
+    });
+  } else h+='<p style="color:var(--muted);font-size:13px;margin-bottom:10px">Перечень пуст — вынесите задачи ниже.</p>';
+  h+='<div class="mini-add" style="margin-top:14px"><b style="font-size:13px">Вынесение задач по группам</b>'
+    +'<div class="chips" style="margin:10px 0">'
+    +db.taskGroups.map(g=>'<button type="button" class="chip '+(gSel==='grp_'+g.id?'on':'')+'" onclick="meetGrp(\''+g.id+'\')">⭐ '+esc(g.name)+'</button>').join('')
+    +'<button type="button" class="chip" onclick="grpListModal()">⚙ Конструктор групп</button>'
+    +(gSel!=='all'?'<button type="button" class="chip" onclick="meetGrp(\'all\')">✕ Сбросить группу</button>':'')
+    +'</div>'
+    +(gObj?'<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Условия группы «'+esc(gObj.name)+'»: '+esc(grpDesc(gObj))+'</div>':'')
+    +'<input id="meetQ" value="'+esc(state.meetQ)+'" placeholder="🔍 Поиск по доступным задачам…" oninput="setMeetQ(this.value)" style="margin-bottom:10px">'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<button type="button" class="btn sm" onclick="selAllMeet()">☑ Выбрать все показанные</button>'
+    +(selN?'<button type="button" class="btn sm ghost" onclick="state.meetSel=[];render()">Сбросить выбор</button>':'')
+    +'<button type="button" class="btn primary sm" onclick="addSelToMeet()" '+(selN?'':'disabled')+'>＋ Вынести выбранные ('+selN+')</button>'
+    +'</div>';
+  const avail=meetAvail(m);
+  if(avail.length){
+    avail.slice(0,60).forEach(t=>{
+      const ts2=stOf('task',t.status);const od=t.deadline&&t.deadline<todayISO()&&t.status!=='done';
+      h+='<div class="row-item '+(od?'overdue':'')+'" style="cursor:pointer" onclick="toggleSel(\''+t.id+'\')">'
+        +'<input type="checkbox" style="width:auto" '+(state.meetSel.indexOf(t.id)>=0?'checked':'')+' onchange="toggleSel(\''+t.id+'\')" onclick="event.stopPropagation()">'
+        +'<div class="ri-body"><div class="ri-t" style="font-size:13px">'+esc(t.title)+'</div>'
+        +'<div class="ri-s">'+esc(t.executor||'—')+' · срок '+fmt(t.deadline)+(od?' · <span class="badge b-red">просрочено</span>':'')+(t.projectId?' · 🗂 '+esc(projName(t.projectId)):'')+(t.wf?' · 🧭 этап':'')+'</div></div>'
+        +'<span class="badge '+ts2.color+'">'+ts2.label+'</span></div>';
+    });
+    if(avail.length>60)h+='<div style="font-size:12px;color:var(--muted)">Показаны первые 60 из '+avail.length+' — уточните группу или поиск.</div>';
+  } else h+='<p style="color:var(--muted);font-size:13px">Нет доступных задач по выбранным условиям.</p>';
+  h+='</div></div>';
+  h+='<div class="card pad"><h3 style="margin-bottom:10px">📌 Решения · '+m.decisions.length+'</h3>';
+  if(m.decisions.length){
+    m.decisions.forEach((dc,i)=>{
+      h+='<div class="row-item" style="flex-wrap:wrap">'
+        +'<b style="color:var(--muted);width:20px;text-align:center">'+(i+1)+'</b>'
+        +'<input id="dci_'+i+'_text" value="'+esc(dc.text)+'" placeholder="Текст решения" oninput="updDecision('+i+',\'text\',this.value)" style="flex:2;min-width:220px">'
+        +'<input id="dci_'+i+'_executor" value="'+esc(dc.executor||'')+'" placeholder="Исполнитель" list="peopleList" oninput="updDecision('+i+',\'executor\',this.value)" style="width:170px">'
+        +'<input id="dci_'+i+'_deadline" type="date" value="'+(dc.deadline||'')+'" onchange="updDecision('+i+',\'deadline\',this.value)" style="width:150px">'
+        +'<span class="badge '+(dc.status==='done'?'b-green':'b-amber')+'">'+(dc.status==='done'?'исполнено':'на контроле')+'</span>'
+        +'<button class="icobtn" title="Отметить исполнение" onclick="toggleDecisionRow('+i+')">✔</button>'
+        +'<button class="icobtn" title="Создать задачу по решению" onclick="taskFromDecisionRow('+i+')">✅</button>'
+        +'<button class="icobtn" onclick="delDecisionRow('+i+')">🗑</button>'
+        +'</div>';
+    });
+  } else h+='<p style="color:var(--muted);font-size:13px;margin-bottom:10px">Решений пока нет — они попадут в протокол.</p>';
+  h+='<div class="mini-add"><b style="font-size:13px">➕ Добавить решение</b>'
+    +'<div class="frow3" style="grid-template-columns:2fr 1fr 150px auto">'
+    +'<div><label>Текст решения</label><input id="dcT" placeholder="Что решено"></div>'
+    +'<div><label>Исполнитель</label><input id="dcE" list="peopleList" placeholder="ФИО"></div>'
+    +'<div><label>Срок</label><input type="date" id="dcD"></div>'
+    +'<button class="btn primary sm" onclick="addDecisionRow()">Добавить</button>'
+    +'</div></div>';
+  h+='<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:16px">'
+    +'<button class="btn gold" onclick="signProtocol()">✒️ Подписать протокол</button>'
+    +'<button class="btn" onclick="printBlank(\''+m.id+'\')">📄 Бланк повестки</button>'
+    +'<button class="btn" onclick="printProtocol(\''+m.id+'\')">📋 Протокол</button>'
+    +'<span style="font-size:12px;color:var(--muted);align-self:center">Печать автоматически размещается на нескольких страницах.</span>'
+    +'</div></div>';
+  document.getElementById('content').innerHTML=h;
+}
+function addAttendee(name){
+  const m=curMeet();if(!m)return;
+  const arr=splitPeople(m.attendees);
+  const i=arr.indexOf(name);
+  if(i>=0)arr.splice(i,1);else arr.push(name);
+  m.attendees=arr.join(', ');
+  save();render();
+}
+function updAgenda(i,k,v){
+  const m=curMeet();if(!m||!m.agenda[i])return;
+  m.agenda[i][k]=v;save();state._focus='agi_'+i+'_'+k;render();
+}
+function delAgendaRow(i){const m=curMeet();if(!m)return;m.agenda.splice(i,1);save();render()}
+function addAgendaRow(){
+  const m=curMeet();if(!m)return;
+  const tEl=document.getElementById('agT');
+  const topic=tEl?tEl.value.trim():'';
+  if(!topic){toast('Укажите вопрос повестки');return}
+  const sEl=document.getElementById('agS');
+  const rEl=document.getElementById('agR');
+  m.agenda.push({topic:topic,speaker:sEl?sEl.value.trim():'',reglament:rEl?rEl.value.trim():''});
+  save();render();
+}
+function meetGrp(id){state.meetGroup=id==='all'?'all':'grp_'+id;state.meetSel=[];render()}
+function setMeetQ(v){state.meetQ=v;state._focus='meetQ';render()}
+function meetAvail(m){
+  const ids=m.taskIds||[];
+  const q=(state.meetQ||'').toLowerCase();
+  const g=state.meetGroup!=='all'?byId(db.taskGroups,state.meetGroup.slice(4)):null;
+  return db.tasks.filter(t=>!ids.includes(t.id)&&(!g||matchGroup(t,g))&&(!q||((t.title||'')+' '+(t.executor||'')).toLowerCase().indexOf(q)>=0))
+    .sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999'));
+}
+function toggleSel(tid){
+  state.meetSel=state.meetSel||[];
+  const i=state.meetSel.indexOf(tid);
+  if(i>=0)state.meetSel.splice(i,1);else state.meetSel.push(tid);
+  render();
+}
+function selAllMeet(){
+  const m=curMeet();if(!m)return;
+  const avail=meetAvail(m);
+  const set=new Set((state.meetSel||[]).concat(avail.map(t=>t.id)));
+  state.meetSel=Array.from(set);
+  render();
+}
+function addSelToMeet(){
+  const m=curMeet();if(!m)return;
+  m.taskIds=m.taskIds||[];
+  let n=0;(state.meetSel||[]).forEach(id=>{if(!m.taskIds.includes(id)){m.taskIds.push(id);n++}});
+  state.meetSel=[];
+  save();render();
+  toast(n?'Вынесено на совещание задач: '+n:'Задачи не добавлены');
+}
+function toggleMeetTask(mid,tid){
+  const m=byId(db.meetings,mid);if(!m)return;
+  m.taskIds=m.taskIds||[];
+  const i=m.taskIds.indexOf(tid);
+  if(i>=0)m.taskIds.splice(i,1);else m.taskIds.push(tid);
+  save();render();
+}
+function meetTaskDoneE(tid,checked){
+  const t=byId(db.tasks,tid);if(!t)return;
+  t.status=checked?'done':'progress';
+  t.statusDate=todayISO();
+  syncWfFromTask(t);
+  save();render();
+  toast(checked?'Задача исполнена — этап её workflow закрыт':'Отметка исполнения снята');
+}
+function updDecision(i,k,v){
+  const m=curMeet();if(!m||!m.decisions[i])return;
+  m.decisions[i][k]=v;save();state._focus='dci_'+i+'_'+k;render();
+}
+function delDecisionRow(i){const m=curMeet();if(!m)return;m.decisions.splice(i,1);save();render()}
+function toggleDecisionRow(i){
+  const m=curMeet();if(!m||!m.decisions[i])return;
+  m.decisions[i].status=m.decisions[i].status==='done'?'open':'done';
+  save();render();
+}
+function addDecisionRow(){
+  const m=curMeet();if(!m)return;
+  const tEl=document.getElementById('dcT');
+  const text=tEl?tEl.value.trim():'';
+  if(!text){toast('Укажите текст решения');return}
+  const eEl=document.getElementById('dcE');
+  const dEl=document.getElementById('dcD');
+  m.decisions.push({text:text,executor:eEl?eEl.value.trim():'',deadline:dEl?dEl.value:'',projectId:m.projectId||'',status:'open'});
+  save();render();
+}
+function taskFromDecisionRow(i){
+  const m=curMeet();if(!m||!m.decisions[i])return;
+  const dc=m.decisions[i];
+  db.tasks.unshift({id:uid(),title:'Поручение: '+dc.text,executor:dc.executor,deadline:dc.deadline,
+    projectId:dc.projectId||m.projectId||'',status:firstKey('task'),statusDate:todayISO(),priority:'high',
+    desc:'По протоколу № '+(m.num||'б/н')+' от '+fmt(m.date),wf:null});
+  save();render();toast('Задача создана по решению совещания ✔');
+}
+function signProtocol(){
+  const m=curMeet();if(!m)return;
+  m.status='signed';m.statusDate=todayISO();
+  save();render();toast('Протокол подписан ✒️');
+}
+/* ================= ПЕЧАТНЫЕ ФОРМЫ СОВЕЩАНИЙ ================= */
+function meetFlowHTML(steps){
+  let h='<div class="ag-flow">';
+  steps.forEach(s=>{h+='<div class="af"><div class="n">'+s[0]+'</div><div class="c">'+s[1]+'</div><div class="s">'+s[2]+'</div></div>'});
+  return h+'</div>';
+}
+function meetGroupsHTML(m){
+  const sel=(m.taskIds||[]).map(id=>byId(db.tasks,id)).filter(Boolean);
+  if(!sel.length)return '<div style="font-size:8.5pt;color:#666">Задачи на совещание не выносились.</div>';
+  let h='';
+  groupTasks(sel).forEach(gr=>{
+    const doneN=gr.tasks.filter(t=>t.status==='done').length;
+    h+='<div class="ag-grp">'+esc(gr.label)+' · задач: '+gr.tasks.length+(doneN?' · выполнено: '+doneN:'')+'</div>';
+    h+='<table class="ag-tbl"><tr><th style="width:6mm">№</th><th>Задача</th><th style="width:30mm">Этап workflow</th><th style="width:22mm">Исполнитель</th><th style="width:15mm">Срок</th><th style="width:20mm">Статус</th></tr>';
+    gr.tasks.forEach((t,i)=>{
+      const stt=stOf('task',t.status);
+      h+='<tr><td>'+(i+1)+'</td><td>'+esc(t.title)+'</td><td>'+(t.wf?esc(wfProgressLabel(t)):'—')+'</td><td>'+esc(t.executor||'—')+'</td><td>'+(t.deadline?fmt(t.deadline):'—')+'</td><td>'+esc(stt.label)+(t.statusDate?'<br><span style="font-size:6.8pt;color:#666">от '+fmt(t.statusDate)+'</span>':'')+'</td></tr>';
+    });
+    h+='</table>';
+  });
+  return h;
+}
+function decBlock(start,count){
+  const L='<div class="ag-line"></div>';
+  let h='';
+  for(let i=start;i<start+count;i++){
+    h+='<div class="ag-dec"><div class="ag-dec-h">'+i+'.</div><div style="flex:1">'
+      +L+L+L
+      +'<div class="ag-row" style="margin-top:2.4mm"><div class="ag-cell"><span class="ag-lbl">Срок исполнения</span>'+L+'</div><div class="ag-cell"><span class="ag-lbl">Ответственный</span>'+L+'</div><div class="ag-cell" style="flex:0 0 36mm"><span class="ag-lbl">Отметка</span><div style="font-size:7.6pt;margin-top:1.2mm">☐ исполнено &nbsp; ☐ на контроле</div></div></div>'
+      +'</div></div>';
+  }
+  return h;
+}
+function blankHTML(m){
+  const d=m||{num:'',date:todayISO(),time:'',place:'',chair:'',secretary:'',attendees:'',projectId:'',title:'',agenda:[],decisions:[],taskIds:[]};
+  const present=splitPeople(d.attendees);
+  const L='<div class="ag-line"></div>';
+  let h='<div class="ag">';
+  h+='<div class="ag-org"><span>'+ORG_LINE+'</span><span>Форма П-1 · бланк повестки</span></div>';
+  h+='<div class="ag-title">Повестка совещания</div>';
+  h+='<div class="ag-sub">печатный бланк для ведения совещания вручную · после совещания перенесите отметки в конструктор ИС «Цезарь»</div>';
+  h+='<div class="ag-meta">'
+    +'<div><b>Протокол №</b>'+(d.num?esc(d.num):'__________')+'</div>'
+    +'<div><b>Дата</b>'+fmtFull(d.date)+'</div>'
+    +'<div><b>Время</b>'+(d.time?esc(d.time):'____ : ____')+'</div>'
+    +'<div><b>Место</b>'+(d.place?esc(d.place):'______________________')+'</div>'
+    +'</div>';
+  h+='<div class="ag-row" style="margin-bottom:2mm"><div class="ag-cell"><b>Председатель:</b> '+(d.chair?esc(d.chair):'_______________________________')+'</div><div class="ag-cell"><b>Секретарь:</b> '+(d.secretary?esc(d.secretary):'_______________________________')+'</div></div>';
+  if(d.projectId)h+='<div class="ag-row" style="margin-bottom:2mm"><div class="ag-cell"><b>Рассматриваемый проект:</b> '+esc(projName(d.projectId))+'</div></div>';
+  h+='<div class="ag-sec">Краткий workflow совещания</div>';
+  h+=meetFlowHTML([
+    ['1','Открытие','председатель: '+(d.chair?esc(cut(d.chair,20)):'—')],
+    ['2','Повестка','вопросов: '+d.agenda.length],
+    ['3','Разбор задач','вынесено: '+(d.taskIds||[]).length],
+    ['4','Решения','фиксирует секретарь'],
+    ['5','Итоги','следующая встреча']
+  ]);
+  h+='<div class="ag-row"><div class="ag-cell"><span class="ag-lbl" style="margin:0">Тема совещания</span><div style="font-size:9pt;font-weight:700;margin-top:.5mm">'+esc(d.title||'')+'</div>'+(d.title?'':L)+'</div></div>';
+  h+='<div class="ag-sec">Присутствуют</div><table class="ag-tbl"><tr><th style="width:6mm">№</th><th>ФИО</th><th style="width:15mm">Явился</th><th>Отметка</th></tr>';
+  present.forEach((p,i)=>{h+='<tr><td>'+(i+1)+'</td><td>'+esc(p)+'</td><td style="text-align:center">☐</td><td></td></tr>'});
+  for(let i=present.length;i<present.length+3;i++){h+='<tr class="empty-row"><td>'+(i+1)+'</td><td></td><td></td><td></td></tr>'}
+  h+='</table>';
+  h+='<div class="ag-row" style="margin-top:1.5mm"><div class="ag-cell"><span class="ag-lbl" style="margin:0">Отсутствуют (кто / причина)</span>'+L+'</div><div class="ag-cell"><span class="ag-lbl" style="margin:0">Гости</span>'+L+'</div></div>';
+  h+='<div class="ag-sec">Повестка · вопросов: '+d.agenda.length+'</div>';
+  if(d.agenda.length){
+    h+='<table class="ag-tbl"><tr><th style="width:6mm">№</th><th>Вопрос</th><th style="width:32mm">Докладчик</th><th style="width:18mm">Регламент</th></tr>';
+    d.agenda.forEach((a,i)=>{h+='<tr><td>'+(i+1)+'</td><td>'+esc(a.topic)+'</td><td>'+esc(a.speaker||'—')+'</td><td>'+esc(a.reglament||'')+'</td></tr>'});
+    h+='</table>';
+  } else {
+    for(let i=1;i<=3;i++){h+='<div class="ag-row" style="margin-top:1.2mm"><div class="ag-cell" style="flex:0 0 8mm;font-weight:800">'+i+'.</div><div class="ag-cell">'+L+'</div></div>'}
+  }
+  h+='<div class="ag-sec">Задачи, выносимые на совещание (сгруппированы)</div>';
+  h+=meetGroupsHTML(d);
+  h+='<div class="ag-sec">Новые задачи, порученные на совещании</div><table class="ag-tbl"><tr><th style="width:6mm">№</th><th>Что сделать</th><th style="width:30mm">Исполнитель</th><th style="width:18mm">Срок</th></tr>';
+  for(let i=1;i<=4;i++){h+='<tr class="empty-row"><td>'+i+'</td><td></td><td></td><td></td></tr>'}
+  h+='</table>';
+  h+='<div class="ag-sec">Решения совещания — записи ведутся вручную</div>';
+  h+=decBlock(1,5);
+  h+='<div class="ag-sec">Итог совещания</div>'+L+L+L;
+  h+='<div class="ag-row" style="margin-top:2mm"><div class="ag-cell"><span class="ag-lbl">Дата следующего совещания</span>'+L+'</div><div class="ag-cell"><span class="ag-lbl">Время</span>'+L+'</div><div class="ag-cell"><span class="ag-lbl">Место</span>'+L+'</div></div>';
+  h+='<div class="ag-sign"><div><div class="ln"></div><div class="cap">Председатель: '+(d.chair?esc(d.chair):'__________________')+'</div></div><div><div class="ln"></div><div class="cap">Секретарь: '+(d.secretary?esc(d.secretary):'__________________')+'</div></div></div>';
+  h+='<div class="ag-note">Заполненный бланк повторно не печатается: перенесите итоги в конструктор совещания ИС «Цезарь» — статусы, сроки и исполнители обновятся автоматически. При нехватке места продолжайте записи решений на обороте или следующем листе.</div>';
+  h+='</div>';
+  return h;
+}
+function protocolHTML(m){
+  const present=splitPeople(m.attendees);
+  const doneDec=m.decisions.filter(dc=>dc.status==='done').length;
+  const L='<div class="ag-line"></div>';
+  let h='<div class="ag">';
+  h+='<div class="ag-org"><span>'+ORG_LINE+'</span><span>Форма П-2 · протокол</span></div>';
+  h+='<div class="ag-title">Протокол совещания</div>';
+  h+='<div class="ag-sub">№ '+(m.num?esc(m.num):'____')+' от '+fmtFull(m.date)+(m.time?' · '+esc(m.time):'')+(m.place?' · '+esc(m.place):'')+(m.title?' · тема: '+esc(m.title):'')+'</div>';
+  h+='<div class="ag-meta">'
+    +'<div><b>Протокол №</b>'+(m.num?esc(m.num):'__________')+'</div>'
+    +'<div><b>Дата</b>'+fmtFull(m.date)+'</div>'
+    +'<div><b>Время</b>'+(m.time?esc(m.time):'____ : ____')+'</div>'
+    +'<div><b>Место</b>'+(m.place?esc(m.place):'______________________')+'</div>'
+    +'</div>';
+  h+='<div class="ag-row" style="margin-bottom:2mm"><div class="ag-cell"><b>Председатель:</b> '+(m.chair?esc(m.chair):'_______________________________')+'</div><div class="ag-cell"><b>Секретарь:</b> '+(m.secretary?esc(m.secretary):'_______________________________')+'</div></div>';
+  if(m.projectId)h+='<div class="ag-row" style="margin-bottom:2mm"><div class="ag-cell"><b>Рассматриваемый проект:</b> '+esc(projName(m.projectId))+'</div></div>';
+  h+='<div class="ag-row"><div class="ag-cell"><span class="ag-lbl" style="margin:0">Присутствовали</span>'+(present.length?'<div style="font-size:8.5pt;margin-top:1mm">'+present.map(esc).join(', ')+'</div>':L)+'</div></div>';
+  h+='<div class="ag-sec">Ход совещания</div>';
+  h+=meetFlowHTML([
+    ['1','Открытие','председатель: '+(m.chair?esc(cut(m.chair,20)):'—')],
+    ['2','Повестка','вопросов: '+m.agenda.length],
+    ['3','Разбор задач','рассмотрено: '+(m.taskIds||[]).length],
+    ['4','Решения','принято: '+m.decisions.length+' (исполнено: '+doneDec+')'],
+    ['5','Итоги','статус: '+esc(stOf('meet',m.status).label)]
+  ]);
+  h+='<div class="ag-sec">Повестка</div>';
+  if(m.agenda.length){
+    h+='<table class="ag-tbl"><tr><th style="width:6mm">№</th><th>Вопрос</th><th style="width:32mm">Докладчик</th><th style="width:18mm">Регламент</th></tr>';
+    m.agenda.forEach((a,i)=>{h+='<tr><td>'+(i+1)+'</td><td>'+esc(a.topic)+'</td><td>'+esc(a.speaker||'—')+'</td><td>'+esc(a.reglament||'')+'</td></tr>'});
+    h+='</table>';
+  } else h+='<div style="font-size:8.5pt;color:#666">Повестка не сформирована.</div>';
+  h+='<div class="ag-sec">Рассмотренные задачи (сгруппированы)</div>';
+  h+=meetGroupsHTML(m);
+  h+='<div class="ag-sec">Принятые решения</div>';
+  if(m.decisions.length){
+    h+='<table class="ag-tbl"><tr><th style="width:6mm">№</th><th>Решение</th><th style="width:26mm">Исполнитель</th><th style="width:16mm">Срок</th><th style="width:26mm">Проект</th><th style="width:20mm">Исполнение</th></tr>';
+    m.decisions.forEach((d,i)=>{h+='<tr><td>'+(i+1)+'</td><td>'+esc(d.text)+'</td><td>'+esc(d.executor||'—')+'</td><td>'+(d.deadline?fmt(d.deadline):'—')+'</td><td>'+(d.projectId?esc(projName(d.projectId)):'—')+'</td><td>'+(d.status==='done'?'исполнено':'на контроле')+'</td></tr>'});
+    h+='</table>';
+  } else h+='<div style="font-size:8.5pt;color:#666">Решения не зафиксированы.</div>';
+  h+='<div class="ag-sec">Контроль исполнения</div>';
+  h+='<div class="ag-row"><div class="ag-cell"><span class="ag-lbl">Контроль возложить на</span>'+L+'</div><div class="ag-cell"><span class="ag-lbl">Срок отчёта об исполнении</span>'+L+'</div></div>';
+  h+='<div class="ag-sec">Итог совещания</div>'+L+L+L;
+  h+='<div class="ag-sign"><div><div class="ln"></div><div class="cap">Председатель: '+(m.chair?esc(m.chair):'__________________')+'</div></div><div><div class="ln"></div><div class="cap">Секретарь: '+(m.secretary?esc(m.secretary):'__________________')+'</div></div></div>';
+  h+='<div class="ag-note">Протокол сформирован в ИС «Цезарь» · '+new Date().toLocaleString('ru-RU')+'</div>';
+  h+='</div>';
+  return h;
+}
+function printBlank(id){const m=id?byId(db.meetings,id):null;openPrint(blankHTML(m),true)}
+function printProtocol(id){const m=id?byId(db.meetings,id):null;if(!m){toast('Сначала создайте совещание');return}openPrint(protocolHTML(m),true)}
+/* ================= ОТЧЁТЫ ================= */
+function renderReports(){
+  setPage('Отчёты','Печатные формы отчётов по всем направлениям деятельности Управления');
+  const reps=[
+    ['common','📊','Комплексный отчёт Управления','Сводка по всем модулям: документы, ПО, задачи, проекты, гранты, стипендии, Приоритет-2030'],
+    ['docs','📁','Отчёт по документообороту','Реестр документов, статусы, этапы маршрутов и дедлайны'],
+    ['soft','💻','Отчёт по программному обеспечению','Разработки, репозитории, версии и этапы жизненного цикла'],
+    ['projects','🗂','Отчёт по проектной работе','Портфель проектов, маршруты и задачи'],
+    ['grants','💰','Отчёт по грантовой работе','Заявки, победы и объёмы финансирования'],
+    ['schols','🎓','Отчёт по именным стипендиям','Кандидаты и назначенные стипендии'],
+    ['priority','🚀','Отчёт по Приоритет-2030','Рабочая таблица показателей программы развития'],
+    ['meetings','🤝','Отчёт по совещаниям','Заседания, задачи, повестки и контроль решений']
+  ];
+  let h='<div class="cards">';
+  reps.forEach(r=>{
+    h+='<div class="card pad" style="cursor:pointer" onclick="printReport(\''+r[0]+'\')">'
+      +'<div style="font-size:30px">'+r[1]+'</div><h3 style="margin:10px 0 5px">'+r[2]+'</h3>'
+      +'<div style="color:var(--muted);font-size:12.5px">'+r[3]+'</div>'
+      +'<div style="margin-top:13px"><button class="btn sm primary">Сформировать 🖨</button></div>'
+      +'</div>';
+  });
+  h+='</div>';
+  document.getElementById('content').innerHTML=h;
+}
+function tbl(hs,rows){
+  let h='<table><thead><tr>';
+  hs.forEach(x=>{h+='<th>'+x+'</th>'});
+  h+='</tr></thead><tbody>';
+  if(rows.length){rows.forEach(r=>{h+='<tr>';r.forEach(c=>{h+='<td>'+(c!=null?c:'—')+'</td>'});h+='</tr>'})}
+  else h+='<tr><td colspan="'+hs.length+'">нет данных</td></tr>';
+  return h+'</tbody></table>';
+}
+function printReport(type){
+  const now=new Date().toLocaleString('ru-RU');
+  let title='',body='';
+  if(type==='common'){
+    title='Комплексный отчёт Управления';
+    const st={progress:0,done:0,rejected:0};db.docs.forEach(d=>st[wfStatus(d)[2]]++);
+    const actT=db.tasks.filter(x=>x.status!=='done'),od=actT.filter(x=>x.deadline&&x.deadline<todayISO());
+    const won=db.grants.filter(g=>FUNDED.includes(g.status)).reduce((a,g)=>a+(+g.amount||0),0);
+    body='<div class="ph2">1. Общие показатели</div>'+tbl(['Показатель','Значение'],[
+      ['Документов всего / в работе / завершено / отклонено',db.docs.length+' / '+st.progress+' / '+st.done+' / '+st.rejected],
+      ['ПО в разработке / всего',db.softs.filter(s=>wfStatus(s)[2]==='progress').length+' / '+db.softs.length],
+      ['Проектов в работе / всего',db.projects.filter(p=>p.status==='active').length+' / '+db.projects.length],
+      ['Задач активных / просроченных',actT.length+' / '+od.length],
+      ['Привлечено грантами',money(won)],
+      ['Именных стипендий: назначено / кандидатов',db.schols.filter(s=>APPROVED.includes(s.status)).length+' / '+db.schols.filter(s=>CAND.includes(s.status)).length],
+      ['Совещаний проведено',db.meetings.filter(m=>m.status!=='planned').length],
+      ['Средняя готовность Приоритет-2030',prioAvg()+'%']
+    ])
+    +'<div class="ph2">2. Документооборот (в работе)</div>'+tbl(['Документ','Тип','Этапы','Исполнитель','Срок'],
+      db.docs.filter(d=>wfStatus(d)[2]==='progress').map(d=>[esc(d.title),d.type,docProgress(d)+'/'+d.steps.length,esc(d.resp),d.deadline?fmt(d.deadline):'—']))
+    +'<div class="ph2">3. Проекты</div>'+tbl(['Код','Проект','Руководитель','Статус','Этапы','Задачи'],
+      db.projects.map(p=>{const ts=db.tasks.filter(x=>x.projectId===p.id);const stp=p.steps||[];return[esc(p.code),esc(p.title),esc(p.leader),stOf('project',p.status).label,stp.length?stp.filter(s=>s.state==='done').length+'/'+stp.length:'—',ts.filter(x=>x.status==='done').length+'/'+ts.length]}))
+    +'<div class="ph2">4. Гранты</div>'+tbl(['Грант','Фонд','Сумма','Статус'],db.grants.map(g=>[esc(g.title),esc(g.fund),money(g.amount),stOf('grant',g.status).label]))
+    +'<div class="ph2">5. Приоритет-2030</div>'+tbl(['Показатель','План','Факт','%','Срок'],
+      db.priority.map(p=>[esc(p.name),p.plan+' '+p.unit,p.cur+' '+p.unit,Math.min(100,Math.round(100*(+p.cur||0)/(+p.plan||1)))+'%',fmt(p.deadline)]));
+  }
+  if(type==='docs'){
+    title='Отчёт по документообороту';
+    body='<div class="ph2">Реестр документов</div>'+tbl(['Документ','Тип','Маршрут','Этапы','Исполнитель','Срок','Статус'],
+      db.docs.map(d=>{const st=wfStatus(d);return[esc(d.title),d.type,esc(d.templateName),docProgress(d)+'/'+d.steps.length,esc(d.resp),d.deadline?fmt(d.deadline):'—',st[0]]}))
+    +'<p class="note">Всего документов: '+db.docs.length+'. Сформировано: '+now+'.</p>';
+  }
+  if(type==='soft'){
+    title='Отчёт по программному обеспечению';
+    body='<div class="ph2">Реестр разработок</div>'+tbl(['Программа','Тип','Репозиторий','Версия','Ответственный','Срок','Этапы','Статус'],
+      db.softs.map(s=>{const st=wfStatus(s);return[esc(s.title),esc(s.type),esc(s.repo),esc(s.version),esc(s.resp),s.deadline?fmt(s.deadline):'—',docProgress(s)+'/'+s.steps.length,st[0]]}))
+    +'<p class="note">Всего разработок: '+db.softs.length+'. Сформировано: '+now+'.</p>';
+  }
+  if(type==='projects'){
+    title='Отчёт по проектной работе';
+    body='<div class="ph2">Портфель проектов</div>'+tbl(['Код','Проект','Руководитель','Сроки','Статус','Этапы','Задачи'],
+      db.projects.map(p=>{const ts=db.tasks.filter(x=>x.projectId===p.id);const stp=p.steps||[];return[esc(p.code),esc(p.title),esc(p.leader),fmt(p.start)+' → '+fmt(p.end),stOf('project',p.status).label,stp.length?stp.filter(s=>s.state==='done').length+'/'+stp.length:'—',ts.filter(x=>x.status==='done').length+'/'+ts.length]}))
+    +'<div class="ph2">Задачи</div>'+tbl(['Задача','Проект','Исполнитель','Приоритет','Срок','Этап workflow','Статус'],
+      db.tasks.map(x=>{let wf='—';if(x.wf)wf=esc(wfProgressLabel(x));
+      return[esc(x.title),x.projectId?esc(projName(x.projectId)):'—',esc(x.executor),prioOf(x.priority).label,x.deadline?fmt(x.deadline):'—',wf,stOf('task',x.status).label]}));
+  }
+  if(type==='grants'){
+    title='Отчёт по грантовой работе';
+    const won=db.grants.filter(g=>FUNDED.includes(g.status)).reduce((a,g)=>a+(+g.amount||0),0);
+    body='<div class="ph2">Гранты и заявки</div>'+tbl(['Грант','Фонд','Руководитель','Сумма','Сроки','Статус','Проект'],
+      db.grants.map(g=>[esc(g.title),esc(g.fund),esc(g.leader),money(g.amount),fmt(g.dateStart)+' → '+fmt(g.dateEnd),stOf('grant',g.status).label,g.projectId?esc(projName(g.projectId)):'—']))
+    +'<p><b>Итого привлечено (выигранные и действующие): '+money(won)+'</b></p>';
+  }
+  if(type==='schols'){
+    title='Отчёт по именным стипендиям';
+    body='<div class="ph2">Стипендии</div>'+tbl(['Стипендия','Соискатель','Тип','Размер','Период','Статус','Ответственный'],
+      db.schols.map(s=>[esc(s.name),esc(s.holder),esc(s.type),money(s.amount),esc(s.period),stOf('schol',s.status).label,esc(s.resp)]));
+  }
+  if(type==='priority'){
+    title='Отчёт по программе «Приоритет-2030»';
+    const pcLabel={done:'Достигнут',work:'В работе',risk:'Под риском'};
+    body='<div class="ph2">Рабочая таблица показателей</div>'+tbl(['№','Показатель','Направление','План','Факт','%','Финансирование, тыс. ₽','Срок','Ответственный','Проект','Отметка'],
+      db.priority.map((p,i)=>[i+1,esc(p.name),esc(p.dir||'—'),numF(p.plan)+' '+(p.unit||''),numF(p.cur)+' '+(p.unit||''),Math.min(100,Math.round(100*(+p.cur||0)/(+p.plan||1)))+'%',numF(p.fund),fmt(p.deadline),esc(p.resp||'—'),p.projectId?esc(cut(projName(p.projectId),24)):'—',p.confirmed?'✓ подтверждено':'не подтверждено']))
+    +'<p><b>Показателей: '+db.priority.length+' · Достигнуто: '+db.priority.filter(p=>pcStatusOf(p)==='done').length+' · Средняя готовность: '+prioAvg()+'% · Финансирование всего: '+numF(db.priority.reduce((a,p)=>a+(+p.fund||0),0))+' тыс. ₽</b></p>';
+  }
+  if(type==='meetings'){
+    title='Отчёт по совещаниям и контролю решений';
+    body='<div class="ph2">Совещания</div>'+tbl(['№','Дата','Тема','Статус','Вопросов','Задач','Решений'],
+      db.meetings.map(m=>[esc(m.num)||'—',fmt(m.date),esc(m.title),stOf('meet',m.status).label,m.agenda.length,(m.taskIds||[]).length,m.decisions.length]))
+    +'<div class="ph2">Контроль решений</div>'+tbl(['Решение','Исполнитель','Срок','Протокол','Исполнение'],
+      [].concat(...db.meetings.map(m=>m.decisions.map(dc=>[esc(dc.text),esc(dc.executor),dc.deadline?fmt(dc.deadline):'—','№ '+esc(m.num||'б/н')+' от '+fmt(m.date),dc.status==='done'?'исполнено':'на контроле']))));
+  }
+  openPrint(P_HEAD+'<h1>'+title+'</h1><div class="note" style="text-align:center;margin:4px 0 14px">Сформировано ИС «Цезарь» · '+now+'</div>'+body);
+}
+/* ================= АДМИНИСТРИРОВАНИЕ ================= */
+function renderAdmin(){
+  setPage('Администрирование','Справочники: сотрудники, статусы, типы, приоритеты, маршруты, группы задач');
+  const tabs=[['people','👥 Сотрудники'],['statuses','🏷️ Статусы'],['doctypes','📄 Типы документов'],['softtypes','💻 Типы ПО'],['prio','⚡ Приоритеты'],['scholtypes','🎓 Типы стипендий'],['wf','🧭 Маршруты'],['groups','⭐ Группы задач']];
+  const tab=state.adminTab||'people';
+  let body='<div class="chips">';
+  tabs.forEach(x=>{body+='<button class="chip '+(tab===x[0]?'on':'')+'" onclick="state.adminTab=\''+x[0]+'\';render()">'+x[1]+'</button>'});
+  body+='</div>';
+  if(tab==='people'){
+    body+='<div class="card pad" style="max-width:760px;margin-bottom:16px">'
+      +'<h3 style="margin-bottom:4px">Добавить сотрудника / исполнителя</h3>'
+      +'<div style="color:var(--muted);font-size:12.5px;margin-bottom:8px">Список используется во всех модулях для полей «Исполнитель», «Руководитель», «Председатель» и т.п.</div>'
+      +'<div class="frow3"><div><label>ФИО</label><input id="ppName" placeholder="Иванов И.И."></div>'
+      +'<div><label>Должность / роль</label><input id="ppRole" placeholder="Ведущий специалист"></div>'
+      +'<button class="btn primary" onclick="addPerson()">Добавить</button></div>'
+      +'</div>'
+      +'<div class="card" style="max-width:760px;overflow-x:auto">';
+    if(db.people.length){
+      body+='<table class="tbl"><thead><tr><th>Сотрудник</th><th>Должность</th><th>Задач</th><th></th></tr></thead><tbody>';
+      db.people.forEach(p=>{
+        body+='<tr><td class="nm">'+esc(p.name)+'</td><td style="font-size:12.5px">'+esc(p.role||'—')+'</td>'
+          +'<td><span class="lchip">'+db.tasks.filter(x=>x.executor===p.name).length+'</span></td>'
+          +'<td style="white-space:nowrap"><button class="icobtn" onclick="personModal(\''+p.id+'\')">✏️</button><button class="icobtn" onclick="delPerson(\''+p.id+'\')">🗑</button></td></tr>';
+      });
+      body+='</tbody></table>';
+    } else body+='<div class="empty">👥<p>Список пуст</p></div>';
+    body+='</div>';
+  }
+  if(tab==='statuses'){
+    const SETS=[['project','🗂 Статусы проектов'],['task','✅ Статусы задач'],['grant','💰 Статусы грантов'],['schol','🎓 Статусы стипендий'],['meet','🤝 Статусы совещаний']];
+    body+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">';
+    SETS.forEach(pair=>{
+      const set=pair[0],label=pair[1];
+      body+='<div class="card pad"><h3 style="margin-bottom:12px">'+label+'</h3>';
+      (db.statusSets[set]||[]).forEach(s=>{
+        body+='<div class="row-item" style="padding:9px 12px">'
+          +'<span class="badge '+s.color+'">'+esc(s.label)+'</span>'
+          +'<span class="ri-s" style="margin-left:4px">используется: '+stUsage(set,s.key)+'</span>'
+          +'<span style="flex:1"></span>'
+          +'<button class="icobtn" onclick="statusModal(\''+set+'\',\''+s.key+'\')">✏️</button>'
+          +'<button class="icobtn" onclick="delStatus(\''+set+'\',\''+s.key+'\')">🗑</button></div>';
+      });
+      let colOpts='';COLORS.forEach(c=>{colOpts+='<option value="'+c[0]+'">'+c[1]+'</option>'});
+      body+='<div class="mini-add" style="margin-top:10px">'
+        +'<div class="frow3" style="grid-template-columns:1fr 150px auto">'
+        +'<div><label>Новый статус</label><input id="stN_'+set+'" placeholder="Название"></div>'
+        +'<div><label>Цвет</label><select id="stC_'+set+'">'+colOpts+'</select></div>'
+        +'<button class="btn primary sm" onclick="addStatusFromUI(\''+set+'\')">＋</button>'
+        +'</div></div></div>';
+    });
+    body+='</div>';
+  }
+  if(tab==='doctypes'){
+    body+=typesTabCard('Типы документов','Тип документа','Например: Акт','addDocType','delDocType',db.docTypes);
+  }
+  if(tab==='softtypes'){
+    body+=typesTabCard('Типы программного обеспечения','Тип ПО','Например: Микросервис','addSoftType','delSoftType',db.softTypes);
+  }
+  if(tab==='scholtypes'){
+    body+=typesTabCard('Типы стипендий','Тип стипендии','Например: Губернаторская','addScholType','delScholType',db.scholTypes);
+  }
+  if(tab==='prio'){
+    body+='<div class="card pad" style="max-width:640px"><h3 style="margin-bottom:12px">Приоритеты задач</h3>';
+    db.prioSet.forEach(s=>{
+      body+='<div class="row-item" style="padding:9px 12px">'
+        +'<span class="badge '+s.color+'">'+esc(s.label)+'</span>'
+        +'<span class="ri-s" style="margin-left:4px">используется: '+stUsage('prio',s.key)+'</span>'
+        +'<span style="flex:1"></span>'
+        +'<button class="icobtn" onclick="prioKeyModal(\''+s.key+'\')">✏️</button>'
+        +'<button class="icobtn" onclick="delPrioKey(\''+s.key+'\')">🗑</button></div>';
+    });
+    let colOpts='';COLORS.forEach(c=>{colOpts+='<option value="'+c[0]+'">'+c[1]+'</option>'});
+    body+='<div class="mini-add" style="margin-top:10px">'
+      +'<div class="frow3" style="grid-template-columns:1fr 150px auto">'
+      +'<div><label>Новый приоритет</label><input id="prN" placeholder="Название"></div>'
+      +'<div><label>Цвет</label><select id="prC">'+colOpts+'</select></div>'
+      +'<button class="btn primary sm" onclick="addPrioKey()">＋</button>'
+      +'</div></div></div>';
+  }
+  if(tab==='wf'){
+    body+='<div style="margin-bottom:14px"><button class="btn primary" onclick="wfFormModal()">＋ Шаблон маршрута</button></div><div class="cards">';
+    if(db.wfTemplates.length){
+      db.wfTemplates.forEach(tp=>{
+        body+='<div class="card pad"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><h3>'+esc(tp.name)+'</h3>'
+          +'<div style="white-space:nowrap"><button class="icobtn" onclick="wfFormModal(\''+tp.id+'\')">✏️</button><button class="icobtn" onclick="deleteWf(\''+tp.id+'\')">🗑</button></div></div>'
+          +'<div class="link-chips" style="margin-top:12px">'+tp.steps.map((s,i)=>'<span class="lchip">'+(i+1)+'. '+esc(s)+'</span>').join(' → ')+'</div>'
+          +'<div style="color:var(--muted);font-size:12px;margin-top:12px">Используется в документах/проектах/ПО: '+[...db.docs,...db.projects,...db.softs].filter(x=>x.templateName===tp.name).length+'</div></div>';
+      });
+    } else body+='<div class="empty" style="grid-column:1/-1">🧭<p>Шаблонов нет</p></div>';
+    body+='</div>';
+  }
+  if(tab==='groups'){
+    body+='<div class="card pad" style="max-width:760px">'
+      +'<h3 style="margin-bottom:4px">Группы задач для совещаний</h3>'
+      +'<div style="color:var(--muted);font-size:12.5px;margin-bottom:12px">В конструкторе можно выбирать несколько значений в каждом параметре (например «В работе» и «Выполненные»). Внутри параметра — «ИЛИ», между параметрами — «И».</div>'
+      +grpListHTML()
+      +'<div style="margin-top:14px"><button class="btn primary" onclick="grpFormModal()">＋ Новая группа</button></div>'
+      +'</div>';
+  }
+  document.getElementById('content').innerHTML=body;
+}
+function typesTabCard(title,lbl,ph,addFn,delFn,arr){
+  let h='<div class="card pad" style="max-width:760px"><h3 style="margin-bottom:12px">'+title+'</h3><div class="link-chips" style="gap:8px">';
+  arr.forEach(tp=>{h+='<span class="lchip" style="font-size:13px;padding:7px 13px">'+esc(tp)+' <b style="cursor:pointer;color:var(--red);margin-left:4px" onclick="'+delFn+'(\''+esc(tp)+'\')">✕</b></span>'});
+  h+='</div><div class="mini-add" style="margin-top:14px"><div class="frow3" style="grid-template-columns:1fr auto">'
+    +'<div><label>'+lbl+'</label><input id="typeNew" placeholder="'+ph+'"></div>'
+    +'<button class="btn primary" onclick="'+addFn+'()">Добавить</button></div></div></div>';
+  return h;
+}
+function readTypeNew(){const el=document.getElementById('typeNew');return el?el.value.trim():''}
+function addPerson(){
+  const name=document.getElementById('ppName').value.trim();
+  const role=document.getElementById('ppRole').value.trim();
+  if(!name){toast('Укажите ФИО');return}
+  db.people.push({id:uid(),name:name,role:role});
+  save();render();toast('Сотрудник добавлен');
+}
+function personModal(id){
+  const p=byId(db.people,id);if(!p)return;
+  openModal('Редактирование сотрудника',
+    '<label>ФИО</label><input name="name" required value="'+esc(p.name)+'">'
+    +'<label>Должность / роль</label><input name="role" value="'+esc(p.role||'')+'">'
+    +'<p style="font-size:12px;color:var(--muted);margin-top:12px">⚠️ Изменение ФИО не обновляет уже введённые значения в задачах и документах.</p>',
+    'Сохранить',fd=>{p.name=fd.name.trim();p.role=(fd.role||'').trim();save();closeModal();render();toast('Сохранено')});
+}
+function delPerson(id){
+  const p=byId(db.people,id);if(!p)return;
+  askConfirm('Удалить сотрудника «'+esc(p.name)+'» из справочника?','Удалить',()=>{
+    db.people=db.people.filter(x=>x.id!==id);save();render();toast('Сотрудник удалён');
+  });
+}
+function addStatusFromUI(set){
+  const el=document.getElementById('stN_'+set);
+  const label=el?el.value.trim():'';
+  const color=document.getElementById('stC_'+set).value;
+  if(!label){toast('Укажите название статуса');return}
+  db.statusSets[set].push({key:uid(),label:label,color:color});
+  save();render();toast('Статус добавлен');
+}
+function statusModal(set,key){
+  const s=(db.statusSets[set]||[]).find(x=>x.key===key);if(!s)return;
+  let colOpts='';COLORS.forEach(c=>{colOpts+='<option value="'+c[0]+'" '+(s.color===c[0]?'selected':'')+'>'+c[1]+'</option>'});
+  openModal('Редактирование статуса',
+    '<label>Название</label><input name="label" required value="'+esc(s.label)+'">'
+    +'<label>Цвет</label><select name="color">'+colOpts+'</select>',
+    'Сохранить',fd=>{s.label=fd.label.trim();s.color=fd.color;save();closeModal();render();toast('Статус обновлён')});
+}
+function delStatus(set,key){
+  const used=stUsage(set,key);
+  if(used>0){toast('Нельзя удалить: статус используется в объектах ('+used+')');return}
+  askConfirm('Удалить статус?','Удалить',()=>{
+    db.statusSets[set]=db.statusSets[set].filter(s=>s.key!==key);
+    save();render();toast('Статус удалён');
+  });
+}
+function addPrioKey(){
+  const el=document.getElementById('prN');
+  const label=el?el.value.trim():'';
+  const color=document.getElementById('prC').value;
+  if(!label){toast('Укажите название приоритета');return}
+  db.prioSet.push({key:uid(),label:label,color:color});
+  save();render();toast('Приоритет добавлен');
+}
+function prioKeyModal(key){
+  const s=db.prioSet.find(x=>x.key===key);if(!s)return;
+  let colOpts='';COLORS.forEach(c=>{colOpts+='<option value="'+c[0]+'" '+(s.color===c[0]?'selected':'')+'>'+c[1]+'</option>'});
+  openModal('Редактирование приоритета',
+    '<label>Название</label><input name="label" required value="'+esc(s.label)+'">'
+    +'<label>Цвет</label><select name="color">'+colOpts+'</select>',
+    'Сохранить',fd=>{s.label=fd.label.trim();s.color=fd.color;save();closeModal();render();toast('Приоритет обновлён')});
+}
+function delPrioKey(key){
+  const used=stUsage('prio',key);
+  if(used>0){toast('Нельзя удалить: приоритет используется в задачах ('+used+')');return}
+  askConfirm('Удалить приоритет?','Удалить',()=>{
+    db.prioSet=db.prioSet.filter(s=>s.key!==key);save();render();toast('Приоритет удалён');
+  });
+}
+function addDocType(){const v=readTypeNew();if(!v){toast('Укажите тип');return}if(db.docTypes.indexOf(v)>=0){toast('Такой тип уже есть');return}db.docTypes.push(v);save();render();toast('Тип документа добавлен')}
+function delDocType(tp){const used=db.docs.filter(d=>d.type===tp).length;if(used){toast('Нельзя удалить: используется в документах ('+used+')');return}db.docTypes=db.docTypes.filter(x=>x!==tp);save();render();toast('Тип удалён')}
+function addSoftType(){const v=readTypeNew();if(!v){toast('Укажите тип');return}if(db.softTypes.indexOf(v)>=0){toast('Такой тип уже есть');return}db.softTypes.push(v);save();render();toast('Тип ПО добавлен')}
+function delSoftType(tp){const used=db.softs.filter(s=>s.type===tp).length;if(used){toast('Нельзя удалить: используется в ПО ('+used+')');return}db.softTypes=db.softTypes.filter(x=>x!==tp);save();render();toast('Тип удалён')}
+function addScholType(){const v=readTypeNew();if(!v){toast('Укажите тип');return}if(db.scholTypes.indexOf(v)>=0){toast('Такой тип уже есть');return}db.scholTypes.push(v);save();render();toast('Тип стипендии добавлен')}
+function delScholType(tp){const used=db.schols.filter(s=>s.type===tp).length;if(used){toast('Нельзя удалить: используется в стипендиях ('+used+')');return}db.scholTypes=db.scholTypes.filter(x=>x!==tp);save();render();toast('Тип удалён')}
+function wfFormModal(id){
+  const tp=id?byId(db.wfTemplates,id):null;
+  openModal(tp?'Редактирование шаблона':'Новый шаблон маршрута',
+    '<label>Наименование шаблона *</label><input name="name" required value="'+esc(tp?tp.name:'')+'">'
+    +'<label>Этапы (каждый с новой строки)</label><textarea name="stepsText" rows="6" required>'+esc(tp?tp.steps.join('\n'):['Подготовка','Согласование','Подписание'].join('\n'))+'</textarea>'
+    +'<p style="font-size:12px;color:var(--muted);margin-top:10px">Ответвления создаются на холсте маршрута конкретного документа, проекта или ПО.</p>',
+    'Сохранить',fd=>{
+      const steps=(fd.stepsText||'').split('\n').map(s=>s.trim()).filter(Boolean);
+      if(!steps.length){toast('Добавьте хотя бы один этап');return}
+      if(tp){tp.name=fd.name.trim();tp.steps=steps}else db.wfTemplates.push({id:uid(),name:fd.name.trim(),steps:steps});
+      save();closeModal();render();toast('Шаблон сохранён');
+    });
+}
+function deleteWf(id){
+  askConfirm('Удалить шаблон маршрута? Объекты, созданные по нему, сохранят свои этапы.','Удалить',()=>{
+    db.wfTemplates=db.wfTemplates.filter(x=>x.id!==id);save();render();toast('Шаблон удалён');
+  });
+}
+/* ================= ЭКСПОРТ / ИМПОРТ ================= */
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='caesar_'+todayISO()+'.json';a.click();
+  toast('Данные экспортированы в JSON 💾');
+}
+function importJSON(){document.getElementById('fileInput').click()}
+document.getElementById('fileInput').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const p=JSON.parse(r.result);
+      const base=defaults();
+      Object.keys(base).forEach(k=>{if(p[k]!==undefined)base[k]=p[k]});
+      db=base;normalizeDB();save();render();toast('Данные импортированы ✔');
+    }catch(err){toast('Ошибка чтения файла')}
+  };
+  r.readAsText(f);e.target.value='';
+});
+function resetAll(){
+  askConfirm('Очистить все данные и вернуть систему к чистому состоянию? Справочники будут восстановлены по умолчанию.','Очистить',()=>{
+    db=defaults();save();render();toast('Система очищена ♻️');
+  });
+}
+/* ================= INIT ================= */
+load();
+render();
+setTimeout(()=>{
+  const sp=document.getElementById('splash');
+  if(sp){sp.classList.add('hide');setTimeout(()=>sp.remove(),550)}
+},750);
+</script>
+</body>
+</html>
