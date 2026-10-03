@@ -206,7 +206,7 @@ workers изолированы).
 | Требование Amvera | Как выполнено в проекте |
 |---|---|
 | Секция `meta`: `environment: python`, `toolchain.name: pip`, версия Python | `amvera.yaml` → `python` / `pip` / `3.12` |
-| Зависимости ставятся из `requirements.txt` (`build.requirementsPath` по умолчанию) | секция `build` не нужна; все пакеты (fastapi, uvicorn[standard], alembic…) зафиксированы в `requirements.txt` |
+| Зависимости ставятся из `requirements.txt` (`build.requirementsPath` по умолчанию) | секция `build` не нужна; все пакеты (fastapi, uvicorn[standard], alembic…) зафиксированы в `requirements.txt`. ВАЖНО: async-движок SQLAlchemy требует нативную библиотеку **greenlet** — в `requirements.txt` он указан явно и через extra `sqlalchemy[asyncio]` (без него приложение падает на старте с `ImportError: The SQLAlchemy asyncio module requires ... 'greenlet'`) |
 | ASGI-приложение запускается через `run.command` (официальный рецепт «FastAPI» из доки) | `uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app` |
 | Порт задаётся **только** параметром `containerPort` (переменная `PORT` платформой не инжектируется) | `containerPort: 8080` = тот же порт в команде uvicorn |
 | Постоянное хранилище: `persistenceMount` на Amvera **доступен только для Node.js** — для python/pip диск даёт `build.diskSizeGb` (10–50 ГБ): папка `/var/opt/persistent-data` + симлинк `/srv/opt/persistent-data`, доступные и при сборке, и в рантайме | `amvera.yaml` → `build.diskSizeGb: 10`; SQLite задаётся переменной `DATABASE_PATH=/srv/opt/persistent-data/caesar.db` — данные переживают перезапуски/пересборки |
