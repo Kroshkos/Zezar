@@ -106,6 +106,10 @@ async def members(dept_id: int, user: User = Depends(get_current_user),
     return out
 
 
+class ModuleToggleIn(BaseModel):
+    is_enabled: bool
+
+
 class MemberIn(BaseModel):
     user_id: int
     role_in_dept: Role = Role.MEMBER
@@ -144,7 +148,14 @@ async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_curr
 async def remove_member(dept_id: int, member_user_id: int,
                         user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
-    await _require_global(session, user)
+    ctx = await build_context(session, user)
+    if not ctx.is_global:
+        # Head может удалять участников только из своего пространства
+        my = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == dept_id,
+            DepartmentMember.user_id == user.id))
+        if not (my and my.role_in_dept == Role.HEAD):
+            raise HTTPException(403)
     row = await session.scalar(
         select(DepartmentMember).where(DepartmentMember.user_id == member_user_id,
                                        DepartmentMember.department_id == dept_id))
@@ -170,10 +181,18 @@ async def dept_modules(dept_id: int, user: User = Depends(get_current_user),
 
 
 @router.put("/departments/{dept_id}/modules/{module_key}")
-async def toggle_module(dept_id: int, module_key: int | str, enabled: bool,
+async def toggle_module(dept_id: int, module_key: int | str,
+                        body: ModuleToggleIn,
                         user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
-    await _require_global(session, user)
+    ctx = await build_context(session, user)
+    if not ctx.is_global:
+        my = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == dept_id,
+            DepartmentMember.user_id == user.id))
+        if not (my and my.role_in_dept == Role.HEAD):
+            raise HTTPException(403)
+    enabled = body.is_enabled
     spec = registry.get(str(module_key))
     if not spec:
         raise HTTPException(404, "Модуль не зарегистрирован")
