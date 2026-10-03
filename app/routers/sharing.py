@@ -20,7 +20,8 @@ from app.core.access import build_context, resolve_permission, can_write, can_ma
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    DepartmentMember, Entity, EntityResponsible, EntityShare, Permission, User,
+    Department, DepartmentMember, Entity, EntityResponsible, EntityShare,
+    Permission, User,
 )
 
 router = APIRouter()
