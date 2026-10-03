@@ -1,18 +1,41 @@
-# Конфигурация деплоя на Amvera (https://docs.amvera.ru/applications/configuration/docker.html)
+# Конфигурация деплоя на Amvera
+# Документация: https://docs.amvera.ru/applications/environments/python-pip.html
+#               https://docs.amvera.ru/applications/configuration/config-file.html
 #
-# Особенности платформы, учтённые здесь:
-#  • docker-compose.yml НЕ поддерживается — используется только классический Dockerfile;
-#  • persistenceMount примонтирует постоянное хранилище к /data — ровно туда,
-#    где лежит SQLite-файл (DATABASE_PATH=/data/caesar.db). Данные переживают
-#    пересборку/перезапуск контейнера;
-#  • containerPort = 8000 — порт, который слушает uvicorn в CMD нашего Dockerfile.
+# Исправленные ошибки предыдущей версии:
+#  1) meta.environment был "python-pip" — неверно; по доке значение "python",
+#     а "pip" указывается в toolchain.name;
+#  2) была секция build.dockerfile + run.command/args — противоречие режимов сборки:
+#     наличие amvera.yaml переводит платформу в сборку через toolchain (venv +
+#     pip install -r requirements.txt), Dockerfile при этом игнорируется. Для
+#     python-окружения секция build факультативна (requirementsPath по умолчанию
+#     = requirements.txt) — убрана;
+#  3) run.command теперь соответствует официальному рецепту «ASGI-приложение
+#     (FastAPI)» из доки: единая строка без args (scriptName/command взаимоисключающи);
+#  4) PORT: на Amvera порт задаётся ТОЛЬКО параметром containerPort (переменная
+#     PORT платформой не инжектируется) — в команде указан фиксированный 8080,
+#     совпадающий с containerPort;
+#  5) persistenceMount: /data — путь постоянного хранилища, куда кладётся SQLite
+#     (DATABASE_PATH=/data/caesar.db); данные переживают перезапуски и пересборки.
+#
+# Примечания:
+#  • Dockerfile в репозитории остаётся для self-hosted VPS (docker run/compose);
+#    на Amvera используется именно эта конфигурация python/pip.
+#  • Alembic входит в requirements.txt; схема создаётся приложением в lifespan
+#    (create_all идемпотентен). Точечный запуск миграций — `alembic upgrade head`
+#    из корня репозитория (см. docs/DEPLOY.md, п. 10).
+#  • PYTHONPATH корня репозитория достаточно для импортов app/modules/integrations.
+#  • Переменные окружения (SECRET_KEY, YANDEX_*, TELEGRAM_* и др.) задаются в
+#    панели Amvera: раздел приложения → «Переменные и секреты» (не в git!).
+#    Полный список и порядок действий — docs/DEPLOY.md, раздел 10.
 
-build:
-  dockerfile: Dockerfile   # лежит в корне репозитория
+meta:
+  environment: python
+  toolchain:
+    name: pip
+    version: "3.12"
 
 run:
-  # Entrypoint сам выполняет миграции (см. ниже) и затем запускает uvicorn на ${PORT:-8000}
-  command: sh
-  args: /srv/app/entrypoint.sh
-  containerPort: 8000
+  command: uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app
+  containerPort: 8080
   persistenceMount: /data
