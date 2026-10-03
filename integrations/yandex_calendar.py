@@ -165,10 +165,19 @@ async def delete_event(email: str, apw_enc: str, cal_path: str, cal_uid: str) ->
     return r.status_code in (200, 204, 404)
 
 
-async def verify_credentials(email: str, app_password: str) -> bool:
-    """Проверка app-пароля при сохранении настроек (PUT /api/profile/calendar)."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.request("PROPFIND", CALDAV_BASE + "/",
-                                 headers={"Depth": "0", "Authorization": _basic(email, app_password),
-                                          "Content-Type": 'application/xml'})
-    return r.status_code in (200, 207)
+async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
+    """Проверка app-пароля при сохранении настроек (PUT /api/profile/calendar).
+
+    Возвращает (ok, http_code): код нужен, чтобы отличить неверный пароль (401/403)
+    от сетевых/сервисных ошибок и дать пользователю точную подсказку.
+    Примечание: CalDAV Яндекса аутентифицирует по ЛОГИНУ аккаунта, а не по email.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.request("PROPFIND", CALDAV_BASE + "/",
+                                     headers={"Depth": "0", "Authorization": _basic(login, app_password),
+                                              "Content-Type": 'application/xml'})
+    except httpx.HTTPError as e:
+        log.warning("verify_credentials network error: %s", e)
+        return False, 0
+    return r.status_code in (200, 207), r.status_code
