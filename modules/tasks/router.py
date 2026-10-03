@@ -187,24 +187,17 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
     # подразделений -> расшариваем всем участникам проекта (кроме владельца).
     # Права принимающей стороны: EDIT (могут вести свои подзадачи и назначать своего
     # ответственного — инвариант «несколько ответственных» из ТЗ).
-    share_with: list[tuple[int, Permission]] = []
-    if body.share_with:
-        own = set(user_dept_ids) if user.role not in (Role.ADMIN, Role.COORDINATOR) else None
-        for d in dict.fromkeys(body.share_with):
-            if d == dept_id:
-                continue
-            if not await session.get(Department, d):
-                raise HTTPException(404, f"Подразделение {d} не найдено")
-            if own is not None and d not in own:
-                raise HTTPException(403, "Можно расшаривать только своим подразделениям-участникам")
-            share_with.append((d, Permission.EDIT))
     ent = await entity_service.create_entity(
         session, user, kind=EntityKind.TASK, module_key=MODULE_KEY,
         owner_department_id=dept_id, title=body.title.strip(),
         description=body.description or None, status_key=body.status_key,
         priority_key=body.priority_key, due_date=body.due_date or None,
         tags=[], responsible_user_id=body.responsible_user_id or user.id,
-        share_with=share_with,
+        # межпространственный контекст: в сервис передаётся ПОЛНЫЙ список
+        # участников; сервис сам исключит «шеринг самому себе» (owner) и
+        # откроет слоты ответственных по одному от каждого подразделения
+        share_with=[(d, Permission.EDIT) for d in dict.fromkeys(body.share_with)]
+        if body.share_with else None,
     )
     # ЯВНЫЙ SELECT: не читать ORM-коллекцию ent.shares — после add() pending-объектов
     # любое последующее flush-событие (autoflush) может откатить непрочитанную
