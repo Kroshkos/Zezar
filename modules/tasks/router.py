@@ -18,7 +18,7 @@ from app.core import access, entity_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, Entity, EntityKind, Permission,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
     PriorityLevel, Role, StatusSet, User,
 )
 from app.models.module_payloads import TaskPayload
@@ -27,6 +27,14 @@ from app.ui import render_page
 router = APIRouter()
 
 MODULE_KEY = "tasks"
+
+
+async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
+    """Признак межпространственности — ЯВНЫЙ SELECT, а не ORM-коллекция:
+    после commit коллекция shares содержит snapshot состояния на момент
+    добавления pending-объектов и может быть пустой в новой сессии."""
+    return await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)) is not None
 
 
 class TaskIn(BaseModel):
@@ -43,14 +51,14 @@ class TaskIn(BaseModel):
 
 
 def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None,
-               resp_names: list[str]) -> dict:
+               resp_names: list[str], cross_dept: bool = False) -> dict:
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "priority_key": ent.priority_key,
         "due_date": ent.due_date, "tags": ent.tags or [],
         "department_id": ent.owner_department_id,
         # признак «межпространственная»: задача видна не только подразделению-владельцу
-        "cross_dept": bool(ent.shares),
+        "cross_dept": cross_dept,
         "project_entity_uid": payload.project_entity_uid if payload else None,
         "group_key": payload.group_key if payload else None,
         "checklist": (payload.checklist if payload else []) or [],
@@ -92,13 +100,14 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
+        cross = await _has_shares(session, ent)
         # Инвариант изоляции (см. list_tasks): сущность без шеринга видна только
         # подразделению-владельцу; админ/координатор — исключение по ТЗ.
-        if not ctx.is_global and not ent.shares \
+        if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         items.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
-                                await _resp_names(session, ent)))
+                                await _resp_names(session, ent), cross_dept=cross))
     statuses = (await session.scalars(
         select(StatusSet).where(StatusSet.kind == EntityKind.TASK).order_by(StatusSet.order))).all()
     prios = (await session.scalars(select(PriorityLevel).order_by(PriorityLevel.weight))).all()
@@ -140,14 +149,15 @@ async def list_tasks(user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
+        cross = await _has_shares(session, ent)
         # Инвариант изоляции рабочих пространств: сущность без шеринга видна ТОЛЬКО
         # подразделению-владельцу. Админ/координатор — исключение (агрегированное
         # представление всех пространств по ТЗ).
-        if not ctx.is_global and not ent.shares \
+        if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         out.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
-                              await _resp_names(session, ent)))
+                              await _resp_names(session, ent), cross_dept=cross))
     return out
 
 

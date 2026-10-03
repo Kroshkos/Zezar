@@ -19,8 +19,8 @@ from app.core import access, entity_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, Entity, EntityKind, Permission, PriorityLevel,
-    Role, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
+    PriorityLevel, Role, StatusSet, User,
 )
 from app.models.module_payloads import ProjectPayload
 from app.ui import render_page
@@ -28,6 +28,12 @@ from app.ui import render_page
 router = APIRouter()
 
 MODULE_KEY = "projects"
+
+
+async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
+    """Признак межпространственности — ЯВНЫЙ SELECT (см. tasks/_has_shares)."""
+    return await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)) is not None
 
 
 class ProjectIn(BaseModel):
@@ -50,14 +56,14 @@ async def _load_payload(session: AsyncSession, ent_id: int) -> ProjectPayload | 
 
 
 def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
-               resp_names: list[str]) -> dict:
+               resp_names: list[str], cross_dept: bool = False) -> dict:
     stages = (p.stages if p else []) or []
     done = sum(1 for s in stages if s.get("done"))
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "priority_key": ent.priority_key,
         "due_date": ent.due_date, "department_id": ent.owner_department_id,
-        "cross_dept": bool(ent.shares),
+        "cross_dept": cross_dept,
         "customer": p.customer if p else "", "budget": p.budget if p else "",
         "stages": stages, "stage_done": done, "stage_total": len(stages),
         "progress": round(done / len(stages) * 100) if stages else 0,
@@ -107,10 +113,11 @@ async def _visible_entities(session: AsyncSession, ctx: access.AccessContext,
         if perm is None:
             continue
         # Инвариант изоляции пространств: без шеринга видна только владельцу.
-        if not ctx.is_global and not ent.shares \
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
-        out.append((ent, perm))
+        out.append((ent, perm, cross))
     return out
 
 
@@ -132,8 +139,9 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
                         session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
     pairs = await _visible_entities(session, ctx, EntityKind.PROJECT)
-    items = [_proj_dict(e, await _load_payload(session, e.id), p, await _resp_names(session, e))
-             for e, p in sorted(pairs, key=lambda x: (x[0].due_date or "9999"))]
+    items = [_proj_dict(e, await _load_payload(session, e.id), p,
+                        await _resp_names(session, e), cross_dept=c)
+             for e, p, c in sorted(pairs, key=lambda x: (x[0].due_date or "9999"))]
     statuses = (await session.scalars(
         select(StatusSet).where(StatusSet.kind == EntityKind.PROJECT)
         .order_by(StatusSet.order))).all()
@@ -167,9 +175,9 @@ async def list_projects(user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
     out = []
-    for ent, perm in await _visible_entities(session, ctx, EntityKind.PROJECT):
+    for ent, perm, cross in await _visible_entities(session, ctx, EntityKind.PROJECT):
         out.append(_proj_dict(ent, await _load_payload(session, ent.id), perm,
-                              await _resp_names(session, ent)))
+                              await _resp_names(session, ent), cross_dept=cross))
     return out
 
 

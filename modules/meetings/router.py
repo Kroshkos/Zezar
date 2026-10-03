@@ -16,7 +16,7 @@ from app.core import access, entity_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, Entity, EntityKind, Permission, StatusSet, User,
+    Department, Entity, EntityKind, EntityShare, Permission, StatusSet, User,
 )
 from app.models.module_payloads import MeetingPayload
 from app.ui import render_page
@@ -24,6 +24,12 @@ from app.ui import render_page
 router = APIRouter()
 
 MODULE_KEY = "meetings"
+
+
+async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
+    """Признак межпространственности — ЯВНЫЙ SELECT (см. tasks/_has_shares)."""
+    return await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)) is not None
 
 
 class MeetingIn(BaseModel):
@@ -48,12 +54,12 @@ async def _load_payload(session: AsyncSession, ent_id: int) -> MeetingPayload | 
 
 
 def _meet_dict(ent: Entity, p: MeetingPayload | None, perm: Permission | None,
-               resp_names: list[str]) -> dict:
+               resp_names: list[str], cross_dept: bool = False) -> dict:
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
         "department_id": ent.owner_department_id,
-        "cross_dept": bool(ent.shares),
+        "cross_dept": cross_dept,
         "num": p.num if p else "", "chair": p.chair if p else "",
         "secretary": p.secretary if p else "", "attendees": p.attendees if p else "",
         "time": (p.time_ if p else "") or "", "location": p.location if p else "",
@@ -102,7 +108,8 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         if perm is None:
             continue
         # Инвариант изоляции пространств (см. list_meetings)
-        if not ctx.is_global and not ent.shares \
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         resp_names = []
@@ -111,7 +118,8 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append(_meet_dict(ent, await _load_payload(session, ent.id), perm, resp_names))
+        items.append(_meet_dict(ent, await _load_payload(session, ent.id), perm,
+                                resp_names, cross_dept=cross))
     statuses = (await session.scalars(
         select(StatusSet).where(StatusSet.kind == EntityKind.MEETING)
         .order_by(StatusSet.order))).all()
@@ -145,7 +153,8 @@ async def list_meetings(user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
-        if not ctx.is_global and not ent.shares \
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         resp_names = []
@@ -154,7 +163,8 @@ async def list_meetings(user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append(_meet_dict(ent, await _load_payload(session, ent.id), perm, resp_names))
+        out.append(_meet_dict(ent, await _load_payload(session, ent.id), perm,
+                              resp_names, cross_dept=cross))
     return out
 
 

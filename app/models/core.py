@@ -201,8 +201,13 @@ class Entity(TimestampMixin, Base):
     owner_department: Mapped[Department] = relationship()
     responsibles: Mapped[List["EntityResponsible"]] = relationship(
         back_populates="entity", cascade="all, delete-orphan", lazy="selectin")
+    # ВАЖНО: НЕ добавлять cascade="delete-orphan" к shares. Pending-объекты
+    # EntityShare, созданные через session.add() до flush (share_with при
+    # создании сущности), не имеют identity и orphan-детектор SQLAlchemy
+    # помечал их к удалению — шеринг терялся, инвариант ответственных
+    # нарушался, признак cross_dept в списках был всегда False.
     shares: Mapped[List["EntityShare"]] = relationship(
-        back_populates="entity", cascade="all, delete-orphan", lazy="selectin",
+        back_populates="entity", lazy="selectin",
         foreign_keys="EntityShare.entity_id")
 
 
