@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{# Дашборд: карточки KPI в стиле виджетов демо #}
+{% block content %}
+<div class="frow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">
+  {% for s in stats %}
+  <div class="card pad"><div style="font-size:26px;font-weight:800">{{ s.value }}</div>
+    <div class="sub">{{ s.label }}</div></div>
+  {% endfor %}
+  <div class="card pad"><div style="font-size:26px;font-weight:800;color:#dc2626">{{ overdue }}</div>
+    <div class="sub">⚠ Просрочено</div></div>
+  <div class="card pad"><div style="font-size:26px;font-weight:800;color:#2563eb">{{ pending_sync }}</div>
+    <div class="sub">🔄 Ждут синхронизации с календарём</div></div>
+</div>
+<p class="sub" style="margin-top:14px">Данные изолированы по вашим рабочим пространствам;
+координатор и администратор видят агрегированную сводку по всем.</p>
+{% endblock %}

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     # Фоновые задачи
     sync_interval_seconds: int = 300
+    workers_enabled: bool = True          # фоновые воркеры в lifespan (в прод-контейнере можно вынести в ARQ)
+    dev_login_enabled: bool = False       # вход по email без Яндекса (локальная разработка/тесты)
 
     @property
     def database_url(self) -> str:

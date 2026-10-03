@@ -59,15 +59,15 @@ def format_entity_event(p: dict) -> str:
 
 
 async def bind_by_code(session: AsyncSession, chat_id: int, code: str) -> str:
-    """Привязка по коду из профиля пользователя (админ выдаёт) или Invite.code."""
-    from app.core.security import read_session_token  # не нужен; код прямой
+    """Привязка по коду из профиля пользователя (код генерируется в /api/profile/telegram/bind)."""
     u = await session.scalar(select(User).where(User.telegram_bind_code == code))
     if u is None:
-        return "Код не найден. Попросите администратора сгенерировать новый."
-    u.telegram_chat_id = chat_id
+        return "Код не найден. Откройте «Мои интеграции» и сгенерируйте новый."
+    u.telegram_chat_id = str(chat_id)
     u.telegram_bind_code = None
+    u.telegram_optout = None
     await session.commit()
-    return f"Готово, {u.display_name}! Уведомления будут приходить сюда."
+    return f"Готово, {u.display_name}! Уведомления будут приходить сюда. Команды: /tasks, /mute, /help."
 
 
 async def handle_update(session: AsyncSession, upd: dict) -> str | None:
