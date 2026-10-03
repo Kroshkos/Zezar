@@ -23,11 +23,16 @@ ERRORS = {"no_code": "Яндекс не вернул код", "state": "Сесс
 
 
 @router.get("/login")
-async def login_page(request: Request, error: str = ""):
+async def login_page(request: Request, error: str = "", ya_id: str = ""):
     from app.core.config import get_settings
+    msg = ERRORS.get(error, "Ошибка входа")
+    # Bootstrap-подсказка: свой Yandex sub видит только сам пользователь
+    # (тот, кто прошёл OAuth), поэтому его безопасно показать на странице.
+    if error == "not_allowed" and ya_id:
+        msg += f". Ваш Yandex ID (sub): {ya_id} — сообщите его администратору."
     return templates.TemplateResponse(request, "login.html",
                                       {"error": bool(error),
-                                       "error_msg": ERRORS.get(error, "Ошибка входа"),
+                                       "error_msg": msg,
                                        "dev": bool(getattr(get_settings(), "dev_login_enabled", False))})
 
 
