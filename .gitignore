@@ -1,3 +1,3 @@
-# Compiled files
-*.pyc
+# Python bytecode and caches
 __pycache__/
+*.pyc

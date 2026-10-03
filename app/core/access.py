@@ -59,13 +59,21 @@ def entity_filter(ctx: AccessContext):
     )
     conds.append(Entity.id.in_(shared))
     # я НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа).
-    # ВАЖНО: это условие НЕ ограничивается списком shared — иначе сущности, расшаренные
-    # через служебный шэр (напр. при назначении внешнего ответственного в entity_service),
-    # просачивались бы в чужие пространства на уровне SQL-фильтра. Точная проверка прав
+    # ВАЖНО (изоляция пространств): ответственность даёт доступ ТОЛЬКО если моё
+    # подразделение участвует в сущности — является владельцем или получателем
+    # шэра. Иначе случайный/служебный слот просачивал бы чужие сущности в
+    # пространство пользователя на уровне SQL-фильтра. Точная проверка прав
     # всегда выполняется в resolve_permission (минимум прав).
     resp = (
         select(EntityResponsible.entity_id)
         .where(EntityResponsible.user_id == ctx.user.id)
+        .where(or_(
+            EntityResponsible.department_id.in_(ctx.department_ids or [-1]),
+            select(EntityShare.id).where(
+                EntityShare.entity_id == EntityResponsible.entity_id,
+                EntityShare.target_department_id == EntityResponsible.department_id,
+            ).exists(),
+        ))
     )
     conds.append(Entity.id.in_(resp))
     return or_(*conds)

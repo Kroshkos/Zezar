@@ -126,7 +126,10 @@ async def set_responsible(uid: str, dept_id: int, body: RespIn,
                                            DepartmentMember.user_id == body.user_id))
         if not member:
             raise HTTPException(400, "Пользователь не состоит в этом подразделении")
-    await entity_service.assign_responsible(session, user, ent, dept_id, body.user_id)
+    try:
+        await entity_service.assign_responsible(session, user, ent, dept_id, body.user_id)
+    except PermissionError as e:
+        raise HTTPException(400, str(e))
     await session.commit()
     return {"ok": True}
 

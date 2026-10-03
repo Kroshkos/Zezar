@@ -76,11 +76,20 @@ async def create_entity(
                 DepartmentMember.department_id == owner_department_id))
         if not in_owner:
             owner_slot_user_id = None
-            # первое подразделение внешнего исполнителя (для слота и шэра)
-            external_resp_dept = await session.scalar(
+            # Подразделение внешнего исполнителя выбираем ДЕТЕРМИНИРОВАННО:
+            # 1) если исполнитель входит в share_with — берём именно это
+            #    подразделение (иначе у админа/координатора, состоящего в своём
+            #    пространстве, служебный слот открывался бы в его родном
+            #    департаменте и сущность просачивалась бы туда);
+            # 2) иначе — первое по id подразделение исполнителя + служебный шэр.
+            share_depts = {d for d, _ in (share_with or []) if d != owner_department_id}
+            resp_depts = (await session.scalars(
                 select(DepartmentMember.department_id).where(
                     DepartmentMember.user_id == responsible_user_id)
-                .order_by(DepartmentMember.id))
+                .order_by(DepartmentMember.id))).all()
+            external_resp_dept = next(
+                (d for d in resp_depts if d in share_depts),
+                resp_depts[0] if resp_depts else None)
     session.add(EntityResponsible(
         entity_id=ent.id, department_id=owner_department_id,
         user_id=owner_slot_user_id, is_primary=True))
@@ -155,7 +164,30 @@ async def assign_responsible(
     session: AsyncSession, user: User, ent: Entity,
     department_id: int, user_id: Optional[int],
 ) -> None:
-    """Назначение ответственного от конкретного подразделения (слот создаётся шерингом)."""
+    """Назначение ответственного от конкретного подразделения (слот создаётся шерингом).
+
+    Инварианты изоляции рабочих пространств:
+      - назначать можно только в подразделение-владельца либо в подразделение,
+        которому сущность реально расшарена (EntityShare);
+      - назначаемый пользователь обязан состоять в этом подразделении.
+    Иначе назначение открывало бы «лазейку» доступа к чужому пространству.
+    """
+    if user_id is not None:
+        member = await session.scalar(
+            select(DepartmentMember.id).where(
+                DepartmentMember.user_id == user_id,
+                DepartmentMember.department_id == department_id))
+        if not member:
+            raise PermissionError(
+                "Ответственный должен состоять в выбранном подразделении")
+        participates = department_id == ent.owner_department_id or await session.scalar(
+            select(EntityShare.id).where(
+                EntityShare.entity_id == ent.id,
+                EntityShare.target_department_id == department_id))
+        if not participates:
+            raise PermissionError(
+                "Нельзя назначить ответственного из подразделения, "
+                "которому сущность не принадлежит и не расшарена")
     row = await session.scalar(
         select(EntityResponsible).where(
             EntityResponsible.entity_id == ent.id,
