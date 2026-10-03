@@ -112,6 +112,7 @@ async def create_entity(
                 row = EntityResponsible(entity_id=ent.id,
                                         department_id=external_resp_dept)
                 session.add(row)
+                await session.flush()
             row.user_id = responsible_user_id
             if _perm_lt_local(resp_perm, Permission.EDIT):
                 # ответственный принимающей стороны >= EDIT (см. access.resolve_permission)
