@@ -118,7 +118,8 @@ async def main() -> None:
             _, a_cookie = await _create_task_as("admin@caesar.local", "Личная задача админа")
             r = await c.get("/api/core/departments", headers=a_cookie)
             admin_depts = {d["code"]: d["id"] for d in r.json()}
-            r = await c.get("/api/core/users", headers=a_cookie)
+            r = await c.get("/api/core/admin/users", headers=a_cookie)
+            assert r.status_code == 200, r.text
             users_by_email = {u["email"]: u["id"] for u in r.json()}
             r = await c.post("/api/tasks", headers=a_cookie, json={
                 "title": "Задача админа в dep-it без шеринга", "status_key": "new",
