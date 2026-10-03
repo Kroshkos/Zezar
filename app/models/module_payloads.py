@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Optional, List
 
-from sqlalchemy import ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -25,6 +25,7 @@ class TaskPayload(TimestampMixin, Base):
     checklist: Mapped[list] = mapped_column(JSON, default=list)       # [{text, done}]
     wf_kind: Mapped[Optional[str]] = mapped_column(String(50))        # тип согласования (demo: t.wf)
     result_of: Mapped[Optional[str]] = mapped_column(Text)            # результат/комментарий
+    cross_dept: Mapped[bool] = mapped_column(Boolean, default=False)  # признак межпространственного шеринга
 
 
 class MeetingPayload(TimestampMixin, Base):

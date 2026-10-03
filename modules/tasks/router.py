@@ -209,11 +209,16 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
     # ЯВНЫЙ SELECT: не читать ORM-коллекцию ent.shares — после add() pending-объектов
     # любое последующее flush-событие (autoflush) может откатить непрочитанную
     # коллекцию; только запрос к БД даёт достоверный факт шеринга.
+    await session.flush()  # гарантируем, что EntityShare уже физически в транзакции
     cross = bool(await session.scalar(
         select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
     session.add(TaskPayload(entity_id=ent.id, group_key=body.group_key,
                             project_entity_uid=body.project_entity_uid,
                             assignee_names=[], cross_dept=cross))
+    await session.flush()  # payload с cross_dept записан до commit — перечитаем для верификации
+    saved = await session.get(TaskPayload, ent.id)
+    if saved is not None and saved.cross_dept != cross:
+        saved.cross_dept = cross
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
