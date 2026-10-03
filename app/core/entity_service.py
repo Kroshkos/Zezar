@@ -17,9 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access
 from app.models.core import (
-    AuditLog, Entity, EntityKind, EntityShare, EntityResponsible, OutboxEvent,
-    Permission, SyncState, User,
+    AuditLog, DepartmentMember, Entity, EntityKind, EntityShare, EntityResponsible,
+    OutboxEvent, Permission, SyncState, User,
 )
+
+
+_PERM_ORDER = {Permission.READ: 0, Permission.EDIT: 1, Permission.FULL: 2}
+
+
+def _perm_lt_local(a: Permission, b: Permission) -> bool:
+    return _PERM_ORDER[a] < _PERM_ORDER[b]
 
 
 def _uid() -> str:
@@ -55,10 +62,63 @@ async def create_entity(
             session.add(EntityShare(
                 entity_id=ent.id, target_department_id=dept_id,
                 permission=perm, granted_by_user_id=user.id))
-    # ответственный от подразделения-владельца
+    # Ответственный от подразделения-владельца. ВАЖНО (изоляция пространств):
+    # если явный responsible — сотрудник ДРУГОГО подразделения (например, админ/
+    # координатор создаёт задачу в чужом workspace и назначает себя), слот
+    # владельца остаётся незаполненным (назначит head), а пользователь получает
+    # доступ к сущности через свой слот в принимающем подразделении (шэр).
+    owner_slot_user_id = responsible_user_id
+    external_resp_dept: int | None = None
+    if responsible_user_id is not None:
+        in_owner = await session.scalar(
+            select(DepartmentMember.id).where(
+                DepartmentMember.user_id == responsible_user_id,
+                DepartmentMember.department_id == owner_department_id))
+        if not in_owner:
+            owner_slot_user_id = None
+            # первое подразделение внешнего исполнителя (для слота и шэра)
+            external_resp_dept = await session.scalar(
+                select(DepartmentMember.department_id).where(
+                    DepartmentMember.user_id == responsible_user_id)
+                .order_by(DepartmentMember.id))
     session.add(EntityResponsible(
         entity_id=ent.id, department_id=owner_department_id,
-        user_id=responsible_user_id, is_primary=True))
+        user_id=owner_slot_user_id, is_primary=True))
+    if external_resp_dept is not None:
+        # Внешний ответственный: доступ к сущности даётся ТОЛЬКО через явный
+        # механизм шеринга (иначе нарушается изоляция пространств). Если
+        # принимающая сторона уже указана в share_with — назначаем его в слот
+        # этого подразделения; иначе открываем служебный шэр (READ) + слот.
+        resp_perm = None
+        for d, p in (share_with or []):
+            if d == external_resp_dept:
+                resp_perm = p
+                break
+        if resp_perm is not None:
+            row = await session.scalar(
+                select(EntityResponsible).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.department_id == external_resp_dept))
+            if row is None:
+                row = EntityResponsible(entity_id=ent.id,
+                                        department_id=external_resp_dept)
+                session.add(row)
+            row.user_id = responsible_user_id
+            if _perm_lt_local(resp_perm, Permission.EDIT):
+                # ответственный принимающей стороны >= EDIT (см. access.resolve_permission)
+                sh = await session.scalar(
+                    select(EntityShare).where(
+                        EntityShare.entity_id == ent.id,
+                        EntityShare.target_department_id == external_resp_dept))
+                if sh:
+                    sh.permission = Permission.EDIT
+        else:
+            session.add(EntityShare(
+                entity_id=ent.id, target_department_id=external_resp_dept,
+                permission=Permission.READ, granted_by_user_id=user.id))
+            session.add(EntityResponsible(
+                entity_id=ent.id, department_id=external_resp_dept,
+                user_id=responsible_user_id))
     await access.ensure_responsibles(session, ent)
     await _log_and_emit(session, user, "create", ent,
                         {"title": title, "responsible_user_id": responsible_user_id,
