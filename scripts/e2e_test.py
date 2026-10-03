@@ -192,10 +192,25 @@ async def main() -> None:
             r = await c.delete(f"/api/meetings/{m_uid}", headers=cookie)
             assert r.status_code == 200, r.text
 
-            # 12. healthz / реестр
+            # 12. модуль «Администрирование подразделения»: страница + права
+            r = await c.get("/admin_dept", headers=cookie)
+            assert r.status_code == 200 and "Участники" in r.text \
+                and "Модули рабочего пространства" in r.text, r.status_code
+            assert "admin_dept" in r.text  # пункт навигации/контекст страницы
+            # member не может управлять составом чужого пространства (HEAD-only для не-global)
+            r = await c.post("/api/core/departments/%d/members" % depts["dep-it"],
+                             headers=o_cookie, json={"user_id": 999, "role_in_dept": "MEMBER"})
+            assert r.status_code == 403, "member получил право управлять участниками!"
+            # toggle_module теперь через тело запроса (PUT .../modules/{key} {is_enabled})
+            r = await c.put(f"/api/core/departments/{depts['dep-it']}/modules/nonexistent",
+                            headers=cookie, json={"is_enabled": True})
+            assert r.status_code == 404, r.status_code  # не зарегистрирован в реестре
+
+            # 13. healthz / реестр
             r = await c.get("/healthz")
             hm = r.json()["modules"]
             assert "tasks" in hm and "dashboard" in hm and "meetings" in hm, hm
+            assert "admin_dept" in hm, f"модуль администрирования не авто-обнаружен: {hm}"
 
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
           "шеринг READ/изоляция, совещания(payload+ICS-время)")

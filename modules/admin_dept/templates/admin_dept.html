@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{# Страница «Администрирование подразделения»: участники, модули workspace, шеринг.
+   Права UI синхронизированы с API ядра: Admin/Coordinator — всё; Head — состав; Member — просмотр. #}
+{% set can_admin_modules = is_global_admin %}
+
+{% block actions %}
+{% if departments %}
+<select id="deptSel" onchange="location='/admin_dept?department_id='+this.value" style="min-width:220px">
+  {% for d in departments %}
+  <option value="{{ d.id }}" {% if d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
+  {% endfor %}
+</select>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+
+  <!-- Участники -->
+  <div class="card pad">
+    <h3 style="margin:0 0 10px">👥 Участники — {{ department.name }}
+      {% if not can_manage %}<span class="badge gray">👁 только просмотр</span>{% endif %}</h3>
+    <table class="tbl">
+      <thead><tr><th>Имя</th><th>Email</th><th>Роль в пространстве</th><th>Telegram</th>
+        {% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for m in members %}
+        <tr data-uid="{{ m.user_id }}">
+          <td>{{ m.name }}</td>
+          <td class="muted">{{ m.email }}</td>
+          <td>
+            {% if is_global_admin and m.global_role != 'ADMIN' %}
+            <select class="roleSel" style="padding:4px 8px">
+              <option value="MEMBER" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
+              <option value="HEAD"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
+            </select>
+            {% else %}
+            <span class="badge {{ 'purple' if m.dept_role=='HEAD' else 'gray' }}">
+              {{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+            {% endif %}
+          </td>
+          <td>{{ '✅' if m.tg_bound else '—' }}</td>
+          {% if can_manage %}
+          <td><button class="btn sm danger" onclick="removeMember({{ m.user_id }}, this)">✕</button></td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      {% if not members %}<tr><td colspan="5" class="muted">Нет участников</td></tr>{% endif %}
+      </tbody>
+    </table>
+    {% if can_manage %}
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <select id="addUser" style="flex:1;min-width:180px">
+        <option value="">— выбрать пользователя —</option>
+        {% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}
+      </select>
+      <select id="addRole" style="width:160px">
+        <option value="MEMBER">Участник</option>
+        {% if is_global_admin %}<option value="HEAD">Руководитель</option>{% endif %}
+      </select>
+      <button class="btn primary" onclick="addMember()">＋ Добавить</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Модули рабочего пространства -->
+  <div class="card pad">
+    <h3 style="margin:0 0 10px">🧩 Модули рабочего пространства</h3>
+    <table class="tbl">
+      <thead><tr><th>Модуль</th><th>Статус</th><th></th></tr></thead>
+      <tbody>
+      {% for mod in modules %}
+        <tr>
+          <td>{{ mod.icon }} {{ mod.title }}</td>
+          <td>
+            <span class="badge {{ 'green' if mod.enabled else 'gray' }}">
+              {{ 'включён' if mod.enabled else 'выключен' }}</span>
+            {% if mod.is_core %}<span class="muted" style="font-size:11px"> (базовый)</span>{% endif %}
+          </td>
+          <td style="text-align:right">
+            {% if can_admin_modules and not mod.is_core %}
+            <button class="btn sm" onclick="toggleModule('{{ mod.key }}', {{ 'false' if mod.enabled else 'true' }})">
+              {{ 'Выключить' if mod.enabled else 'Включить' }}</button>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px">Базовые модули отключить нельзя. Список формируется
+      динамически из реестра плагинов ядра — новый модуль появится здесь автоматически.</p>
+  </div>
+</div>
+
+<!-- Шеринг -->
+<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;align-items:start">
+  <div class="card pad">
+    <h3 style="margin:0 0 10px">📤 Расшарено нами (исходящее)</h3>
+    {% if shares_out %}
+    <table class="tbl">
+      <thead><tr><th>Сущность</th><th>Куда</th><th>Права</th></tr></thead>
+      <tbody>
+      {% for s in shares_out %}
+        <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
+            <td>{{ s.to_dept }}</td>
+            <td><span class="badge {{ 'orange' if s.permission=='edit' else 'blue' }}">{{ s.permission }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">Ничего не расшарено. Управляйте шерингом из карточек задач/совещаний/проектов.</p>{% endif %}
+  </div>
+  <div class="card pad">
+    <h3 style="margin:0 0 10px">📥 Получено от других подразделений</h3>
+    {% if shares_in %}
+    <table class="tbl">
+      <thead><tr><th>Сущность</th><th>Откуда</th><th>Права</th></tr></thead>
+      <tbody>
+      {% for s in shares_in %}
+        <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
+            <td>{{ s.from_dept }}</td>
+            <td><span class="badge {{ 'orange' if s.permission=='edit' else 'blue' }}">{{ s.permission }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">Входящих шерингов нет.</p>{% endif %}
+  </div>
+</div>
+
+<script id="admData" type="application/json">
+{{ {'department': department, 'can_manage': can_manage} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ADM = JSON.parse(document.getElementById('admData').textContent);
+const DEPT = ADM.department.id;
+
+async function addMember() {
+  const uid = +document.getElementById('addUser').value;
+  const role = document.getElementById('addRole').value;
+  if (!uid) return toast('Выберите пользователя', 'warn');
+  const r = await api(`/api/core/departments/${DEPT}/members`, 'POST',
+                      { user_id: uid, role_in_dept: role });
+  if (r.ok) { toast('Участник добавлен'); location.reload(); }
+  else toast('Ошибка доступа (' + r.status + ')', 'err');
+}
+
+async function removeMember(userId, btn) {
+  if (!confirm('Удалить участника из подразделения?')) return;
+  const r = await api(`/api/core/departments/${DEPT}/members/${userId}`, 'DELETE');
+  if (r.ok) { toast('Удалено'); btn.closest('tr').remove(); }
+  else toast('Ошибка доступа (' + r.status + ')', 'err');
+}
+
+async function toggleModule(key, enable) {
+  const r = await api(`/api/core/departments/${DEPT}/modules/${key}`, 'PUT', { is_enabled: enable });
+  if (r.ok) { toast('Модуль обновлён'); setTimeout(() => location.reload(), 400); }
+  else toast('Ошибка доступа (' + r.status + ')', 'err');
+}
+
+// Смена роли: POST members идемпотентен — обновляет роль существующего участника
+document.querySelectorAll('.roleSel').forEach(sel => {
+  sel.addEventListener('change', async () => {
+    const uid = +sel.closest('tr').dataset.uid;
+    const r = await api(`/api/core/departments/${DEPT}/members`, 'POST',
+                        { user_id: uid, role_in_dept: sel.value });
+    if (r.ok) toast('Роль обновлена');
+    else { toast('Ошибка доступа (' + r.status + ')', 'err'); location.reload(); }
+  });
+});
+</script>
+{% endblock %}
