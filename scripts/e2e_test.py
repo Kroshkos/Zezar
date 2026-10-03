@@ -132,9 +132,19 @@ async def main() -> None:
             strat_slot = [s for s in slots if s.get("department_code") == "dep-strat"]
             assert strat_slot, f"нет слота ответственного принимающего подразделения: {slots}"
 
-            # 10c. обычная задача админа (без share_with) по-прежнему изолирована
+            # 10c. обычная задача админа (без share_with) по-прежнему изолирована;
+            #      межпространственная задача видна ТОЛЬКО участникам шеринга:
+            #      у dep-strat она есть, у стороннего подразделения — нет
             assert all(t["uid"] != uid for t in lst2), \
                 "задача админа без share_with просочилась в чужое пространство"
+            assert any(t["uid"] == cross_uid and t["cross_dept"] for t in lst2), \
+                "у межпространственной задачи не проставлен признак cross_dept"
+            r = await c.get("/auth/dev-login?email=head-hr@caesar.local")
+            h_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
+            r = await c.get("/api/tasks/api-list", headers=h_cookie)
+            lst3 = r.json()
+            assert all(t["uid"] not in (uid, cross_uid) for t in lst3), \
+                "межпространственная задача просочилась подразделению, не участвующему в шеринге"
 
             # 11. healthz / реестр
             r = await c.get("/healthz")

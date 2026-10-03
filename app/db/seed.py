@@ -69,13 +69,15 @@ async def bootstrap(session: AsyncSession) -> None:
 
 
 DEMO_DEPTS = [("dep-strat", "Управление стратегических инициатив"),
-              ("dep-it", "Департамент цифрового развития")]
+              ("dep-it", "Департамент цифрового развития"),
+              ("dep-hr", "Управление кадров и организационного развития")]
 DEMO_USERS = [  # (email, name, role, dept_code)
     ("admin@caesar.local", "Иванов И.И.", Role.ADMIN, "dep-strat"),
     ("coord@caesar.local", "Петрова А.С.", Role.COORDINATOR, "dep-strat"),
     ("head-it@caesar.local", "Сидоров В.В.", Role.HEAD, "dep-it"),
     ("member-it@caesar.local", "Кузнецов Д.А.", Role.MEMBER, "dep-it"),
     ("member-strat@caesar.local", "Смирнова Е.П.", Role.MEMBER, "dep-strat"),
+    ("head-hr@caesar.local", "Морозова Т.И.", Role.HEAD, "dep-hr"),
 ]
 
 

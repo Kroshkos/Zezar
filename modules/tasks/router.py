@@ -47,6 +47,8 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "status_key": ent.status_key, "priority_key": ent.priority_key,
         "due_date": ent.due_date, "tags": ent.tags or [],
         "department_id": ent.owner_department_id,
+        # признак «межпространственная»: задача видна не только подразделению-владельцу
+        "cross_dept": bool(ent.shares),
         "project_entity_uid": payload.project_entity_uid if payload else None,
         "group_key": payload.group_key if payload else None,
         "checklist": (payload.checklist if payload else []) or [],
@@ -128,6 +130,12 @@ async def list_tasks(user: User = Depends(get_current_user),
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
+            continue
+        # Инвариант изоляции рабочих пространств: сущность без шеринга видна ТОЛЬКО
+        # подразделению-владельцу. Админ/координатор — исключение (агрегированное
+        # представление всех пространств по ТЗ).
+        if not ctx.is_global and not ent.shares \
+                and ent.owner_department_id not in ctx.department_ids:
             continue
         out.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
                               await _resp_names(session, ent)))

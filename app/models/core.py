@@ -202,7 +202,7 @@ class Entity(TimestampMixin, Base):
     responsibles: Mapped[List["EntityResponsible"]] = relationship(
         back_populates="entity", cascade="all, delete-orphan", lazy="selectin")
     shares: Mapped[List["EntityShare"]] = relationship(
-        back_populates="entity", cascade="all, delete-orphan",
+        back_populates="entity", cascade="all, delete-orphan", lazy="selectin",
         foreign_keys="EntityShare.entity_id")
 
 
@@ -238,7 +238,7 @@ class EntityShare(TimestampMixin, Base):
         ForeignKey("departments.id", ondelete="CASCADE"), index=True)
     permission: Mapped[Permission] = mapped_column(Enum(Permission), default=Permission.READ)
 
-    entity: Mapped[Entity] = relationship(back_populates="shares", foreign_keys=[entity_id])
+    entity: Mapped[Entity] = relationship(back_populates="shares", foreign_keys=[entity_id], lazy="raise")
     target_department: Mapped[Department] = relationship(foreign_keys=[target_department_id])
 
 

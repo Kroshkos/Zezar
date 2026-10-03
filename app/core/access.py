@@ -58,10 +58,13 @@ def entity_filter(ctx: AccessContext):
         .where(EntityShare.target_department_id.in_(ctx.department_ids or [-1]))
     )
     conds.append(Entity.id.in_(shared))
-    # я ответственный (даже если подразделение сменилось)
+    # я НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа);
+    # доступ через это условие возможен только для шерингнутых сущностей —
+    # «свой» ответственный всегда в пространстве-владельце
     resp = (
         select(EntityResponsible.entity_id)
-        .where(EntityResponsible.user_id == ctx.user.id)
+        .where(EntityResponsible.user_id == ctx.user.id,
+               EntityResponsible.entity_id.in_(shared))
     )
     conds.append(Entity.id.in_(resp))
     return or_(*conds)
@@ -71,16 +74,24 @@ async def resolve_permission(session: AsyncSession, ctx: AccessContext, entity: 
     """Максимальный уровень прав пользователя на конкретную сущность (None = нет доступа)."""
     if ctx.is_global:
         return Permission.FULL
-    if entity.owner_department_id in ctx.department_ids:
-        # внутри своего пространства: head/участник с ролью head_in_dept — edit+, member — edit своих
-        return Permission.EDIT
+    # Инвариант изоляции рабочих пространств: без шеринга доступ есть только
+    # подразделению-владельцу и НАЗНАЧЕННОМУ ответственному. Создатель/грантер
+    # сам по себе доступ не даёт (иначе задача админа «просачивалась» бы во все
+    # пространства, где он состоит).
+    related = (entity.owner_department_id in ctx.department_ids
+               or any(r.user_id == ctx.user.id for r in entity.responsibles))
     share = await session.scalar(
         select(EntityShare).where(
             EntityShare.entity_id == entity.id,
             EntityShare.target_department_id.in_(ctx.department_ids or [-1]),
         )
     )
-    perm = share.permission if share else None
+    if not related and share is None:
+        return None
+    if entity.owner_department_id in ctx.department_ids:
+        # внутри своего пространства: head/участник с ролью head_in_dept — edit+, member — edit своих
+        return Permission.EDIT
+    perm = share.permission if share else Permission.READ
     # ответственный из принимающего подразделения >= EDIT
     if perm is not None and _perm_lt(perm, Permission.EDIT):
         is_resp = await session.scalar(
