@@ -37,6 +37,7 @@ class TaskIn(BaseModel):
     department_id: int | None = None          # для админа/координатора: чьё пространство
     project_entity_uid: str | None = None
     group_key: str | None = None
+    share_with: list[int] = []               # межпространственный контекст (проект): dept_id[]
 
 
 def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None,
@@ -133,31 +134,48 @@ async def list_tasks(user: User = Depends(get_current_user),
     return out
 
 
-async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> int:
-    if body.department_id:
-        if user.role not in (Role.ADMIN, Role.COORDINATOR):
-            raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
-        return body.department_id
-    # НЕ используем ленивую связь user.memberships (lazy-load в async недопустим) —
-    # только явный SELECT; иначе MissingGreenlet / неопределённое первое подразделение
+async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> tuple[int, list[int]]:
+    """Возвращает (dept_id для создания, dept_ids пользователя)."""
     dept_ids = (await session.scalars(
         select(DepartmentMember.department_id).where(DepartmentMember.user_id == user.id)
         .order_by(DepartmentMember.id))).all()
+    if body.department_id:
+        if user.role not in (Role.ADMIN, Role.COORDINATOR):
+            raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
+        return body.department_id, list(dept_ids)
+    # НЕ используем ленивую связь user.memberships (lazy-load в async недопустим) —
+    # только явный SELECT; иначе MissingGreenlet / неопределённое первое подразделение
     if not dept_ids:
         raise HTTPException(400, "Вы не состоите ни в одном подразделении — попросите администратора")
-    return dept_ids[0]
+    return dept_ids[0], list(dept_ids)
 
 
 @router.post("")
 async def create_task(body: TaskIn, user: User = Depends(get_current_user),
                       session: AsyncSession = Depends(session_dep)):
-    dept_id = await _pick_department(session, user, body)
+    dept_id, user_dept_ids = await _pick_department(session, user, body)
+    # межпространственный контекст: задача проекта, в котором участвуют несколько
+    # подразделений -> расшариваем всем участникам проекта (кроме владельца).
+    # Права принимающей стороны: EDIT (могут вести свои подзадачи и назначать своего
+    # ответственного — инвариант «несколько ответственных» из ТЗ).
+    share_with: list[tuple[int, Permission]] = []
+    if body.share_with:
+        own = set(user_dept_ids) if user.role not in (Role.ADMIN, Role.COORDINATOR) else None
+        for d in dict.fromkeys(body.share_with):
+            if d == dept_id:
+                continue
+            if not await session.get(Department, d):
+                raise HTTPException(404, f"Подразделение {d} не найдено")
+            if own is not None and d not in own:
+                raise HTTPException(403, "Можно расшаривать только своим подразделениям-участникам")
+            share_with.append((d, Permission.EDIT))
     ent = await entity_service.create_entity(
         session, user, kind=EntityKind.TASK, module_key=MODULE_KEY,
         owner_department_id=dept_id, title=body.title.strip(),
         description=body.description or None, status_key=body.status_key,
         priority_key=body.priority_key, due_date=body.due_date or None,
         tags=[], responsible_user_id=body.responsible_user_id or user.id,
+        share_with=share_with,
     )
     session.add(TaskPayload(entity_id=ent.id, group_key=body.group_key,
                             project_entity_uid=body.project_entity_uid,
