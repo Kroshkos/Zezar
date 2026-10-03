@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «Документы»: карточная сетка как renderDocs() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="docFormModal()">＋ Новый документ</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="dq" placeholder="🔍 Поиск по названию, номеру, виду…" style="flex:1;min-width:220px" oninput="renderDocCards()">
+    <span id="dchips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglD(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="dcards"></div>
+<div class="empty" id="dempty" hidden>📄<p>Документов нет. Нажмите «＋ Новый документ».</p></div>
+
+<script id="docData" type="application/json">
+{{ {'docs': docs, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/docs.js"></script>
+{% endblock %}

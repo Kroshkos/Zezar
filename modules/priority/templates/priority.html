@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «Приоритетные показатели»: карточная сетка как renderPc() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="prioFormModal()">＋ Новый показатель</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="pq" placeholder="🔍 Поиск по направлению, показателю…" style="flex:1;min-width:220px" oninput="renderPrioCards()">
+    <span id="pchips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglP(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="pcards"></div>
+<div class="empty" id="pempty" hidden>🎯<p>Показателей нет. Нажмите «＋ Новый показатель».</p></div>
+
+<script id="prioData" type="application/json">
+{{ {'indicators': indicators, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/priority.js"></script>
+{% endblock %}

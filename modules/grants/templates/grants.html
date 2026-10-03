@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «Гранты»: карточная сетка как renderGrants() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="grantFormModal()">＋ Новый грант</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="gq" placeholder="🔍 Поиск по теме, программе…" style="flex:1;min-width:220px" oninput="renderGrantCards()">
+    <span id="gchips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglG(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="gcards"></div>
+<div class="empty" id="gempty" hidden>💰<p>Грантов нет. Нажмите «＋ Новый грант».</p></div>
+
+<script id="grantData" type="application/json">
+{{ {'grants': grants, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/grants.js"></script>
+{% endblock %}
