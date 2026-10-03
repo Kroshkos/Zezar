@@ -216,10 +216,40 @@ async def main() -> None:
             assert r.status_code == 200 and "Участники" in r.text \
                 and "Модули рабочего пространства" in r.text, r.status_code
             assert "admin_dept" in r.text  # пункт навигации/контекст страницы
-            # member не может управлять составом чужого пространства (HEAD-only для не-global)
+            # RBAC состава: member НЕ может читать/менять чужое пространство;
+            # head — только СВОЁ пространство и только роль MEMBER (HEAD-назначение — admin);
+            # admin — может назначать роль HEAD
+            hr_users = [u for u in users_by_email if "hr@" in u]
+            new_head_id = users_by_email[hr_users[0]]
+            r = await c.get("/api/core/departments/%d/members" % depts["dep-it"],
+                            headers=o_cookie)
+            assert r.status_code == 403, "member прочитал состав чужого пространства!"
+            # member-strat пытается МЕНЯТЬ чужое пространство dep-it -> 403
             r = await c.post("/api/core/departments/%d/members" % depts["dep-it"],
-                             headers=o_cookie, json={"user_id": 999, "role_in_dept": "MEMBER"})
-            assert r.status_code == 403, "member получил право управлять участниками!"
+                             headers=o_cookie,
+                             json={"user_id": new_head_id, "role_in_dept": "member"})
+            assert r.status_code == 403, "member получил право менять чужое пространство!"
+            # head-hr пытается управлять ЧУЖИМ пространством dep-it -> 403
+            r = await c.post("/api/core/departments/%d/members" % depts["dep-it"],
+                             headers=h_cookie,
+                             json={"user_id": new_head_id, "role_in_dept": "member"})
+            assert r.status_code == 403, "head получил право менять чужое пространство!"
+            # head в своём пространстве не может назначать роль выше MEMBER -> 403
+            r = await c.get("/api/core/departments", headers=h_cookie)
+            hr_depts = {d["code"]: d["id"] for d in r.json()} if r.status_code == 200 else {}
+            if "dep-hr" in hr_depts:
+                r = await c.post("/api/core/departments/%d/members" % hr_depts["dep-hr"],
+                                 headers=h_cookie,
+                                 json={"user_id": new_head_id, "role_in_dept": "head"})
+                assert r.status_code == 403, "head назначил HEAD-роль вне своих прав!"
+            r = await c.post("/api/core/departments/%d/members" % depts["dep-it"],
+                             headers=cookie,
+                             json={"user_id": new_head_id, "role_in_dept": "head"})
+            assert r.status_code == 200, f"admin не смог назначить HEAD: {r.status_code} {r.text}"
+            r = await c.get("/api/core/departments/%d/members" % depts["dep-it"],
+                            headers=cookie)
+            assert any(m["user_id"] == new_head_id and m["role_in_dept"] == "head"
+                       for m in r.json()), r.json()
             # toggle_module теперь через тело запроса (PUT .../modules/{key} {is_enabled})
             r = await c.put(f"/api/core/departments/{depts['dep-it']}/modules/nonexistent",
                             headers=cookie, json={"is_enabled": True})
