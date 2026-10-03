@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «ПО и разработки»: карточная сетка как renderSofts() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="softFormModal()">＋ Новая разработка</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="sq" placeholder="🔍 Поиск по названию, типу, окружению…" style="flex:1;min-width:220px" oninput="renderSoftCards()">
+    <span id="schips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglS(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="scards"></div>
+<div class="empty" id="sempty" hidden>💻<p>Записей нет. Нажмите «＋ Новая разработка».</p></div>
+
+<script id="softData" type="application/json">
+{{ {'softs': softs, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/softs.js"></script>
+{% endblock %}

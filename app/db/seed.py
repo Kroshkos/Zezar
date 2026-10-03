@@ -39,6 +39,48 @@ PROJECT_STATUSES = [
     ("done", "Завершён", "b-green", 4),
     ("canceled", "Остановлен", "b-red", 5),
 ]
+# статусы документооборота (docs из прототипа)
+DOC_STATUSES = [
+    ("draft", "Проект", "b-gray", 0),
+    ("signed", "Подписан", "b-green", 1),
+    ("in_work", "В работе", "b-blue", 2),
+    ("archived", "В архиве", "b-amber", 3),
+    ("canceled", "Аннулирован", "b-red", 4),
+]
+# статусы проектной работы / ПО (softs из прототипа)
+SOFT_STATUSES = [
+    ("backlog", "Бэклог", "b-gray", 0),
+    ("dev", "Разработка", "b-blue", 1),
+    ("test", "Тестирование", "b-amber", 2),
+    ("prod", "В эксплуатации", "b-green", 3),
+    ("support", "Поддержка", "b-gray", 4),
+    ("deprecated", "Устарело", "b-red", 5),
+]
+# статусы грантов (grants из прототипа)
+GRANT_STATUSES = [
+    ("prep", "Подготовка", "b-gray", 0),
+    ("submitted", "Подана", "b-blue", 1),
+    ("won", "Выигран", "b-green", 2),
+    ("exec", "Исполняется", "b-amber", 3),
+    ("closed", "Закрыт", "b-gray", 4),
+    ("rejected", "Отклонена", "b-red", 5),
+]
+# статусы стипендий (schols из прототипа)
+SCHOLAR_STATUSES = [
+    ("nomination", "Номинация", "b-gray", 0),
+    ("approved", "Одобрена", "b-green", 1),
+    ("paid", "Выплачивается", "b-blue", 2),
+    ("terminated", "Прекращена", "b-red", 3),
+]
+# статусы показателей приоритетных проектов (priority из прототипа)
+PRIORITY_STATUSES = [
+    ("plan", "Плановое", "b-gray", 0),
+    ("track", "На контроле", "b-blue", 1),
+    ("risk", "Риск отставания", "b-amber", 2),
+    ("achieved", "Достигнуто", "b-green", 3),
+    ("missed", "Не достигнуто", "b-red", 4),
+]
+
 PRIORITIES = [
     ("critical", "Критическая", "b-red", 30),
     ("high", "Высокая", "b-amber", 20),
@@ -52,7 +94,9 @@ async def bootstrap(session: AsyncSession) -> None:
 
     # --- справочники (глобальные наборы) ---
     for kind, rows in ((EntityKind.TASK, TASK_STATUSES), (EntityKind.MEETING, MEETING_STATUSES),
-                       (EntityKind.PROJECT, PROJECT_STATUSES)):
+                       (EntityKind.PROJECT, PROJECT_STATUSES), (EntityKind.DOC, DOC_STATUSES),
+                       (EntityKind.SOFT, SOFT_STATUSES), (EntityKind.GRANT, GRANT_STATUSES),
+                       (EntityKind.SCHOL, SCHOLAR_STATUSES), (EntityKind.PRIORITY, PRIORITY_STATUSES)):
         cnt = await session.scalar(
             select(func.count(StatusSet.id)).where(StatusSet.kind == kind)) or 0
         if not cnt:

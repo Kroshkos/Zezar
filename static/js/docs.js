@@ -1,0 +1,100 @@
+/* Модуль «Документы»: карточки как renderDocs() из прототипа, данные с сервера. */
+"use strict";
+const DD = JSON.parse(document.getElementById('docData').textContent);
+const DS = new Set();
+const dstOf = k => DD.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
+const dfmt = d => d ? d.split('-').reverse().join('.') : '—';
+
+function tglD(el){const k=el.dataset.k;
+  if(DS.has(k)){DS.delete(k);el.style.outline=''}else{DS.add(k);el.style.outline='2px solid #818cf8'}
+  renderDocCards();}
+
+function renderDocCards(){
+  const q=(document.getElementById('dq').value||'').toLowerCase();
+  let list=DD.docs.filter(d=>{
+    if(q && !(d.title+' '+(d.number||'')+' '+(d.doc_type||'')).toLowerCase().includes(q))return false;
+    if(DS.size && !DS.has(d.status_key))return false;
+    return true;
+  });
+  document.getElementById('dempty').hidden=list.length>0;
+  document.getElementById('dcards').innerHTML=list.map(d=>{
+    const st=dstOf(d.status_key);
+    return '<div class="card pad">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
+      +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
+      +'<span style="color:var(--muted);font-size:12px">'+(d.number?'№ '+esc(d.number):'без номера')+'</span></div>'
+      +'<h3 style="margin:11px 0 5px">'+esc(d.title||'Документ')+'</h3>'
+      +'<div style="color:var(--muted);font-size:12.5px">📅 '+dfmt(d.due_date)
+      +(d.doc_type?' · 📑 '+esc(d.doc_type):'')
+      +(d.issued_at?' · выдан '+dfmt(d.issued_at):'')+'</div>'
+      +(d.responsibles.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(d.responsibles.join(', '))+'</div>':'')
+      +'<div class="link-chips" style="margin-top:11px">'
+      +(d.file_ref?'<a class="lchip" href="'+esc(d.file_ref)+'" target="_blank" rel="noopener">📎 файл</a>':'')
+      +(d.cross_dept?'<span class="lchip">🔗 межпространственный</span>':'')
+      +(d.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')
+      +'</div>'
+      +'<div style="display:flex;gap:7px;margin-top:14px;flex-wrap:wrap">'
+      +(d.can_edit?'<button class="btn sm primary" onclick="docFormModal(\''+d.uid+'\')">✏️ Изменить</button>':'')
+      +(d.can_share?'<button class="icobtn" title="Расшарить" onclick="shareDoc(\''+d.uid+'\')">🔗</button>':'')
+      +(d.can_edit?'<button class="icobtn" onclick="delDoc(\''+d.uid+'\')">🗑</button>':'')
+      +'</div></div>';
+  }).join('');
+}
+
+async function delDoc(uid){
+  const d=DD.docs.find(x=>x.uid===uid);
+  askConfirm('Удалить документ «'+d.title+'»? Событие будет удалено из календарей.',async()=>{
+    await api('/api/docs/'+uid,{method:'DELETE'});
+    DD.docs=DD.docs.filter(x=>x.uid!==uid);renderDocCards();toast('Удалено');});
+}
+
+function docFormModal(uid){
+  const d=uid?DD.docs.find(x=>x.uid===uid):null;
+  const statSel=DD.statuses.map(s=>'<option value="'+s.key+'" '+(d&&d.status_key===s.key?'selected':(!d&&s.key==='draft'?'selected':''))+'>'+esc(s.label)+'</option>').join('');
+  let deptSel='';
+  if(DD.departments.length&&!d){deptSel='<div><label>Подразделение</label><select name="department_id">'
+    +DD.departments.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select></div>';}
+  const body='<label>Название документа *</label><input name="title" required value="'+esc(d?d.title:'')+'">'
+    +'<div class="frow">'
+    +'<div><label>Дата (календарь)</label><input type="date" name="due_date" value="'+(d&&d.due_date||'')+'"></div>'
+    +'<div><label>Номер</label><input name="number" value="'+esc(d&&d.number||'')+'"></div>'
+    +'<div><label>Вид документа</label><input name="doc_type" value="'+esc(d&&d.doc_type||'')+'"></div>'
+    +'</div><div class="frow">'
+    +'<div><label>Выдан/зарегистрирован</label><input type="date" name="issued_at" value="'+esc(d&&d.issued_at||'')+'"></div>'
+    +'<div><label>Ссылка на файл</label><input name="file_ref" placeholder="https://…" value="'+esc(d&&d.file_ref||'')+'"></div>'
+    +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
+    +'</div>'+deptSel
+    +'<label>Описание / комментарий</label><textarea name="description" rows="2">'+esc(d?d.description:'')+'</textarea>';
+  openModal(d?'Редактирование документа':'Новый документ',body,async(fd,f)=>{
+    if(!fd.title.trim()){toast('Укажите название документа');return}
+    const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
+              status_key:fd.status_key,number:fd.number,doc_type:fd.doc_type,
+              issued_at:fd.issued_at||null,file_ref:fd.file_ref};
+    if(f.department_id)pl.department_id=+f.department_id.value;
+    if(d){
+      await api('/api/docs/'+d.uid,{method:'PATCH',body:JSON.stringify(pl)});
+      Object.assign(d,pl);
+      toast('Сохранено · событие обновится в календарях');
+    }else{
+      const r=await api('/api/docs',{method:'POST',body:JSON.stringify(pl)});
+      DD.docs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[]},pl));
+      toast('Документ создан');
+    }
+    closeModal();renderDocCards();
+  });
+}
+
+async function shareDoc(uid){
+  if(!DD.departments.length){toast('Нет подразделений');return}
+  const body='<label>Подразделение</label><select name="target_department_id">'
+    +DD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
+    +'<label>Права принимающей стороны</label><select name="permission">'
+    +'<option value="read">Только чтение</option><option value="edit">Редактирование</option></select>';
+  openModal('Шеринг документа',body,async(fd)=>{
+    await api('/api/core/entities/'+uid+'/shares',{method:'POST',
+      body:JSON.stringify({target_department_id:+fd.target_department_id,permission:fd.permission})});
+    closeModal();toast('Расшарено · у принимающего открыт слот ответственного');
+  });
+}
+
+document.addEventListener('DOMContentLoaded',renderDocCards);

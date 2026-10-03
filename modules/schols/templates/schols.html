@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «Стипендии»: карточная сетка как renderSchols() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="scholFormModal()">＋ Новое назначение</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="xq" placeholder="🔍 Поиск по ФИО, виду стипендии…" style="flex:1;min-width:220px" oninput="renderScholCards()">
+    <span id="xchips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglX(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="xcards"></div>
+<div class="empty" id="xempty" hidden>🎓<p>Назначений нет. Нажмите «＋ Новое назначение».</p></div>
+
+<script id="scholData" type="application/json">
+{{ {'schols': schols, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/schols.js"></script>
+{% endblock %}
