@@ -74,7 +74,8 @@ async def lifespan(app: FastAPI):
             await t
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, lifespan=lifespan, docs_url="/api/docs-openapi",
+              redoc_url=None, openapi_url="/api/openapi.json")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():

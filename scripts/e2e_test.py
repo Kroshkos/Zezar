@@ -261,8 +261,59 @@ async def main() -> None:
             assert "tasks" in hm and "dashboard" in hm and "meetings" in hm, hm
             assert "admin_dept" in hm, f"модуль администрирования не авто-обнаружен: {hm}"
 
+            # 14. все модули прототипа зарегистрированы динамическим реестром
+            for mk in ("projects", "docs", "softs", "grants", "schols", "priority"):
+                assert mk in hm, f"модуль {mk} не в реестре: {hm}"
+
+            # 15. «Документооборот»: HTML + payload (doc_type/number) + изоляция пространств
+            r = await c.get("/docs", headers=cookie)
+            assert r.status_code == 200 and "Новый документ" in r.text, r.status_code
+            r = await c.post("/api/docs", headers=cookie, json={
+                "title": "Приказ о создании рабочей группы", "status_key": "draft",
+                "due_date": "2026-10-15", "doc_type": "Приказ", "number": "123-ОД",
+                "department_id": depts["dep-it"],
+                "share_with": [depts["dep-strat"]]})
+            assert r.status_code == 200, r.text
+            d_uid = r.json()["uid"]
+            r = await c.get("/api/docs/api-list", headers=m_cookie)   # member-it видит своё ws
+            dl = [d for d in r.json() if d["uid"] == d_uid]
+            assert dl and dl[0]["number"] == "123-ОД" and dl[0]["doc_type"] == "Приказ", dl
+            r = await c.get("/api/docs/api-list", headers=o_cookie)   # strat — видит по шерингу
+            ds = [d for d in r.json() if d["uid"] == d_uid]
+            assert ds and ds[0]["cross_dept"], \
+                "расшаренный документ не виден принимающему пространству"
+            r = await c.patch(f"/api/docs/{d_uid}", headers=o_cookie,
+                              json={"number": "хакр"})               # EDIT-шеринг: запись ок
+            assert r.status_code == 200, r.text
+            # сторонний участник dep-hr: в сценарии 12 head-hr был повышен админом
+            # до HEAD в dep-it (легален — видит сущности своего пространства), поэтому
+            # берём ЧИСТОГО member-hr, который не участвует ни во владельце, ни в шеринге
+            r = await c.get("/auth/dev-login?email=member-hr@caesar.local")
+            x_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
+            r = await c.get("/api/docs/api-list", headers=x_cookie)
+            assert all(d["uid"] != d_uid for d in r.json()), \
+                "документ просочился подразделению вне шеринга"
+
+            # 16. остальные модули: страница рендерится, CRUD работает через ядро (RBAC/шэры)
+            for mk, api_path, title in (
+                    ("projects", "/api/projects", "Проект"),
+                    ("softs", "/api/softs", "Программ"),
+                    ("grants", "/api/grants", "Грант"),
+                    ("schols", "/api/schols", "Стипенди"),
+                    ("priority", "/api/priority", "Приоритет")):
+                r = await c.get(f"/{mk}", headers=cookie)
+                assert r.status_code == 200, f"{mk}: страница {r.status_code}"
+                r = await c.post(api_path, headers=cookie, json={
+                    "title": f"E2E {mk} сущность", "status_key": "new",
+                    "department_id": depts["dep-it"]})
+                assert r.status_code == 200, f"{mk}: create {r.status_code} {r.text[:200]}"
+                e_uid = r.json()["uid"]
+                r = await c.get(f"{api_path}/api-list", headers=m_cookie)
+                assert any(x["uid"] == e_uid for x in r.json()), f"{mk}: не видно участнику ws"
+
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
-          "шеринг READ/изоляция, совещания(payload+ICS-время)")
+          "шеринг READ/изоляция, совещания(payload+ICS-время), docs/softs/grants/schols/"
+          "priority/projects (реестр+payload+изоляция)")
 
 
 async def _pending_events():
