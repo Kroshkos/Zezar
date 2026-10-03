@@ -107,10 +107,8 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
         ent.sync_state = SyncState.PENDING
         return
     # пишем событие в календари ответственных (по одному событию на человека — см. ТЗ)
-    # для совещаний прицепляем payload -> хук календаря возьмёт точное время/место
-    if ent.kind == EntityKind.MEETING:
-        from app.models.module_payloads import MeetingPayload
-        ent._cal_payload = await session.get(MeetingPayload, ent.id)
+    # прицепляем payload модуля -> хук календаря возьмёт точное время/место
+    ent._cal_payload = await _attach_payload(session, ent)
     resp_rows = (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
                                         EntityResponsible.user_id != None))).all()  # noqa: E711
@@ -133,6 +131,27 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     if any_fail and ent.sync_state != SyncState.SYNCED:
         ent.sync_state = SyncState.ERROR
         raise RuntimeError(f"calendar upsert failed for entity {ent.uid}")
+
+
+async def _attach_payload(session, ent: Entity):
+    """Payload-таблица модуля для хука календаря (точное время совещаний и т.п.)."""
+    from app.models.module_payloads import (DocPayload, GrantPayload, MeetingPayload,
+                                            PriorityPayload, ProjectPayload, ScholarPayload,
+                                            SoftPayload, TaskPayload)
+    mapping = {
+        EntityKind.TASK: TaskPayload,
+        EntityKind.MEETING: MeetingPayload,
+        EntityKind.PROJECT: ProjectPayload,
+        EntityKind.DOC: DocPayload,
+        EntityKind.SOFT: SoftPayload,
+        EntityKind.GRANT: GrantPayload,
+        EntityKind.SCHOL: ScholarPayload,
+        EntityKind.PRIORITY: PriorityPayload,
+    }
+    model = mapping.get(ent.kind)
+    if model is None:
+        return None
+    return await session.get(model, ent.id)
 
 
 _cal_path_cache: dict[int, str] = {}

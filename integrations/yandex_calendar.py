@@ -79,20 +79,26 @@ def _window(ent) -> tuple[str, str]:
     Совещания: точное время из payload.start_at/end_at (или date+time_);
     остальные сущности: 09:00–18:00 дня срока (due_date).
     """
-    tzid = "Europe/Moscow"
     p = getattr(ent, "_cal_payload", None)
-    if ent.kind.value == "meeting" and p is not None:
+    # kind может быть строкой (raw SQL) или Enum — сравниваем значение толерантно
+    kind_val = ent.kind.value if hasattr(ent.kind, "value") else str(ent.kind or "")
+    if kind_val == "meeting" and p is not None:
         start = getattr(p, "start_at", None) or ""
         end = getattr(p, "end_at", None) or ""
-        # ISO 'YYYY-MM-DDTHH:MM' — приводим к ICS-формату
+
         def fmt_iso(v: str) -> str | None:
+            """'YYYY-MM-DDTHH:MM[:SS]' -> 'YYYYMMDDTHHMM00';None если не распознано."""
             v = (v or "").strip()
-            if len(v) >= 16 and v[4] == "-" and v[8] == "-":
-                d = v[:10].replace("-", "")
-                t = v[11:16].replace(":", "")
-                return f"{d}T{t}00"
-            return None
+            try:
+                from datetime import datetime as _dtn
+                dt = _dtn.fromisoformat(v)
+                return dt.strftime("%Y%m%dT%H%M%S")
+            except ValueError:
+                return None
         s, e = fmt_iso(start), fmt_iso(end)
+        if not s and ent.due_date:
+            # fallback: payload.start_at не задан, но есть date+time_ из карточки демо
+            s = fmt_iso(f"{ent.due_date}T{getattr(p, 'time_', '') or ''}")
         if s:
             if not e:  # конец = +2 часа (ограниченно) или 18:00 того же дня
                 try:
