@@ -108,16 +108,27 @@ async def main() -> None:
             assert r.status_code == 403, "READ-шеринг дал право на запись!"
 
             # 10. изоляция: посторонний участник не видит чужие задачи (созданные НЕ им);
-            #     расшаренную задачу он видеть ДОЛЖЕН (межпространственный контекст)
+            #     расшаренную задачу он видеть ДОЛЖЕН (межпространственный контекст).
+            # ВАЖНО: «задача админа» (uid) расшарена dep-it на чтение (шаг 8), поэтому для
+            # проверки утечки берём бесхозную сущность админа БЕЗ share_with — leak_uid.
+            _, a_cookie = await _create_task_as("admin@caesar.local", "Личная задача админа")
+            r = await c.post("/api/tasks", headers=a_cookie, json={
+                "title": "Задача админа без шеринга", "status_key": "new",
+                "priority_key": "medium"})
+            assert r.status_code == 200, r.text
+            leak_uid = r.json()["uid"]
             own_uid, _ = await _create_task_as("member-strat@caesar.local",
                                                "Своя задача участника страт.")
             r = await c.get("/auth/dev-login?email=member-strat@caesar.local")
             o_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=o_cookie)
             lst = r.json()
-            assert all(t["uid"] != uid for t in lst), \
+            assert all(t["uid"] != leak_uid for t in lst), \
                 "задача админа без share_with просочилась в чужое пространство"
-            assert any(t["uid"] == own_uid for t in lst), "участник не видит собственную задачу"
+            assert any(t["uid"] == uid for t in lst), \
+                "участник не видит READ-расшаренную в его пространство задачу"
+            assert any(t["uid"] == own_uid for t in lst), \
+                "участник не видит собственную задачу"
 
             # 10b. межпространственная задача (из 8b) видна принимающему подразделению
             #      на запись, и у неё есть слот ответственного от dep-strat
@@ -135,7 +146,7 @@ async def main() -> None:
             # 10c. обычная задача админа (без share_with) по-прежнему изолирована;
             #      межпространственная задача видна ТОЛЬКО участникам шеринга:
             #      у dep-strat она есть, у стороннего подразделения — нет
-            assert all(t["uid"] != uid for t in lst2), \
+            assert all(t["uid"] != leak_uid for t in lst2), \
                 "задача админа без share_with просочилась в чужое пространство"
             assert any(t["uid"] == cross_uid and t["cross_dept"] for t in lst2), \
                 "у межпространственной задачи не проставлен признак cross_dept"
@@ -143,8 +154,8 @@ async def main() -> None:
             h_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=h_cookie)
             lst3 = r.json()
-            assert all(t["uid"] not in (uid, cross_uid) for t in lst3), \
-                "межпространственная задача просочилась подразделению, не участвующему в шеринге"
+            assert all(t["uid"] not in (uid, leak_uid, cross_uid) for t in lst3), \
+                "задача просочилась подразделению, не участвующему в шеринге"
 
             # 11. модуль «Совещания»: CRUD + карточная страница + payload-календарь
             r = await c.get("/meetings", headers=cookie)

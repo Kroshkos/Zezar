@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access, entity_service
@@ -93,11 +94,16 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
     ctx = await access.build_context(session, user)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.MEETING, access.entity_filter(ctx))
+        .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
         .order_by(Entity.due_date.desc()))).all()
     items = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
+            continue
+        # Инвариант изоляции пространств (см. list_meetings)
+        if not ctx.is_global and not ent.shares \
+                and ent.owner_department_id not in ctx.department_ids:
             continue
         resp_names = []
         for r in ent.responsibles:
@@ -132,7 +138,8 @@ async def list_meetings(user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
     ents = (await session.scalars(
-        select(Entity).where(Entity.kind == EntityKind.MEETING, access.entity_filter(ctx)))).all()
+        select(Entity).where(Entity.kind == EntityKind.MEETING, access.entity_filter(ctx))
+        .options(selectinload(Entity.shares), selectinload(Entity.responsibles)))).all()
     out = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)

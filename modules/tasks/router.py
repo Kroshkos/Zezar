@@ -11,13 +11,15 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access, entity_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, Entity, EntityKind, Permission, PriorityLevel, Role, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, Permission,
+    PriorityLevel, Role, StatusSet, User,
 )
 from app.models.module_payloads import TaskPayload
 from app.ui import render_page
@@ -83,11 +85,17 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
     ctx = await access.build_context(session, user)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx))
+        .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
         .order_by(Entity.created_at.desc()))).all()
     items = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
+            continue
+        # Инвариант изоляции (см. list_tasks): сущность без шеринга видна только
+        # подразделению-владельцу; админ/координатор — исключение по ТЗ.
+        if not ctx.is_global and not ent.shares \
+                and ent.owner_department_id not in ctx.department_ids:
             continue
         items.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
                                 await _resp_names(session, ent)))
@@ -125,7 +133,8 @@ async def list_tasks(user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
     ents = (await session.scalars(
-        select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx)))).all()
+        select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx))
+        .options(selectinload(Entity.shares), selectinload(Entity.responsibles)))).all()
     out = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
