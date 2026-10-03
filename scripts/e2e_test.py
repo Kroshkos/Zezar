@@ -219,7 +219,7 @@ async def main() -> None:
             # RBAC состава: member НЕ может читать/менять чужое пространство;
             # head — только СВОЁ пространство и только роль MEMBER (HEAD-назначение — admin);
             # admin — может назначать роль HEAD
-            hr_users = [u for u in users_by_email if "hr@" in u]
+            hr_users = [u for u in users_by_email if u.startswith("head-hr@")]
             new_head_id = users_by_email[hr_users[0]]
             r = await c.get("/api/core/departments/%d/members" % depts["dep-it"],
                             headers=o_cookie)
