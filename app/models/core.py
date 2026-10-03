@@ -200,7 +200,7 @@ class Entity(TimestampMixin, Base):
 
     owner_department: Mapped[Department] = relationship()
     responsibles: Mapped[List["EntityResponsible"]] = relationship(
-        back_populates="entity", cascade="all, delete-orphan")
+        back_populates="entity", cascade="all, delete-orphan", lazy="selectin")
     shares: Mapped[List["EntityShare"]] = relationship(
         back_populates="entity", cascade="all, delete-orphan",
         foreign_keys="EntityShare.entity_id")
