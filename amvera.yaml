@@ -15,15 +15,16 @@
 #  4) PORT: на Amvera порт задаётся ТОЛЬКО параметром containerPort (переменная
 #     PORT платформой не инжектируется) — в команде указан фиксированный 8080,
 #     совпадающий с containerPort;
-#  5) ХРАНИЛИЩЕ: у параметра persistenceMount есть строгое ограничение из доки —
-#     "монтирование доступно только для Node.js окружений". Для python/pip его
-#     использовать НЕЛЬЗЯ (валидатор платформы отклоняет конфиг — это и была
-#     ошибка деплоя). Вместо него включаем диск через build.diskSizeGb: 10 —
-#     при сборке создаётся папка /var/opt/persistent-data, симлинк на неё
-#     (/srv/opt/persistent-data) доступен и в процессе сборки, и в рантайме.
-#     Путь БД задаём переменной окружения DATABASE_PATH в панели Amvera:
-#         DATABASE_PATH=/srv/opt/persistent-data/caesar.db
-#     Данные переживают перезапуски и пересборки (диск привязан к приложению).
+#  5) ХРАНИЛИЩЕ: параметр run.persistenceMount по документации Amvera доступен
+#     ТОЛЬКО для Node.js-окружений — для python/pip он запрещён (валидатор
+#     отклоняет конфиг). Параметр build.diskSizeGb также ОТКЛОНЯЕТСЯ валидатором
+#     Amvera для python/pip-приложений ("unknown fields: diskSizeGb in build
+#     section") — секция build убрана. Постоянное хранилище на Amvera подключается
+#     НЕ через amvera.yaml, а через панель управления проектом (раздел
+#     «Настройки» → «Хранилище/Диски», см. docs/DEPLOY.md, п. 10). Стандартный
+#     путь БД — /data/caesar.db (значение по умолчанию в коде): примонтируйте
+#     постоянный диск панели именно к /data; при другой точке монтирования
+#     укажите её в переменной окружения DATABASE_PATH («Переменные и секреты»).
 #
 # Примечания:
 #  • Dockerfile в репозитории остаётся для self-hosted VPS (docker run/compose);
@@ -42,17 +43,15 @@ meta:
     name: pip
     version: "3.12"
 
-build:
-  # Диск persistent-data (по доке: diskSizeGb от 10 до 50). Создаёт папку
-  # /var/opt/persistent-data и симлинк /srv/opt/persistent-data — доступны
-  # и при сборке, и в рантайме. Туда кладём SQLite (см. DATABASE_PATH ниже).
-  diskSizeGb: 10
+# Секция build намеренно ОТСУТСТВУЕТ: валидатор Amvera для python/pip
+# отклоняет поле build.diskSizeGb ("unknown fields: diskSizeGb in build section").
+# Постоянный диск подключается через панель управления проектом (docs/DEPLOY.md, п. 10).
 
 run:
   command: uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app
   containerPort: 8080
   # ВНИМАНИЕ: persistenceMount здесь НЕ используется — по документации Amvera
   # он доступен только для Node.js-окружений (для python/pip это ошибка конфига).
-  # Постоянное хранилище реализовано через build.diskSizeGb + переменную
-  # окружения DATABASE_PATH=/srv/opt/persistent-data/caesar.db (задать в панели
-  # Amvera → «Переменные и секреты»; полный список env — docs/DEPLOY.md, п. 10).
+  # Стандартный путь БД — /data/caesar.db (дефолт в коде): подключите постоянный
+  # диск через панель Amvera с точкой монтирования /data. При другой точке
+  # задайте DATABASE_PATH в панели «Переменные и секреты» (docs/DEPLOY.md, п. 10).
