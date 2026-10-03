@@ -68,14 +68,15 @@ class Settings(BaseSettings):
 
         errors = []
         # Защита данных: БД обязана лежать в постоянном хранилище, а не в ephemeral-папке.
-        # Стандартный путь — /data (дефолт): на VPS это docker volume, на Amvera — диск,
-        # примонтированный к /data через панель управления («Настройки» → «Хранилище»).
+        # Стандартный путь — /data (дефолт): на VPS это docker volume, на Amvera — папка
+        # постоянного хранилища Data, монтируемая в run.persistenceMount (по умолчанию /data;
+        # см. https://docs.amvera.ru/applications/storage.html).
         if self.is_production and str(self.database_path).startswith("/tmp"):
             errors.append(
                 "DATABASE_PATH указывает в /tmp — данные будут потеряны при перезапуске! "
                 "Используйте стандартный путь /data (DATABASE_PATH=/data/caesar.db), "
                 "убедившись, что он примонтирован как постоянное хранилище "
-                "(docker volume /data на VPS; диск через панель Amvera)."
+                "(docker volume /data на VPS; persistenceMount: /data на Amvera)."
             )
         if self.secret_key in ("", "change-me"):
             errors.append("SECRET_KEY не задан (используется значение по умолчанию 'change-me')")
@@ -90,12 +91,14 @@ class Settings(BaseSettings):
 
         # Предупреждение (не блокирует запуск): /data — стандартный путь БД. Убедитесь,
         # что он примонтирован как постоянное хранилище: docker volume /data на VPS;
-        # на Amvera — диск из панели «Настройки» → «Хранилище», смонтированный к /data.
+        # на Amvera — папка Data из run.persistenceMount (по умолчанию /data), см. доки
+        # https://docs.amvera.ru/applications/storage.html.
         dpath = str(self.database_path)
         if self.is_production and dpath.startswith("/data"):
             print("[ЦЕЗАРЬ] DATABASE_PATH=" + dpath + " (стандартный путь) — проверьте, что /data"
-                  " примонтирован как постоянное хранилище (docker volume на VPS; диск через"
-                  " панель Amvera). Без этого база ephemeral и сотрётся при пересборке.", file=sys.stderr)
+                  " примонтирован как постоянное хранилище (docker volume на VPS; на Amvera —"
+                  " persistenceMount: /data в amvera.yaml). Без этого база ephemeral и сотрётся"
+                  " при пересборке.", file=sys.stderr)
 
         if errors:
             msg = "\n".join("  - " + e for e in errors)
