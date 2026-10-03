@@ -67,6 +67,15 @@ class Settings(BaseSettings):
         import sys
 
         errors = []
+        # Защита данных: БД обязана лежать в постоянном хранилище, а не в ephemeral-папке.
+        # На Amvera (python/pip) persistenceMount недоступен — постоянное хранилище даёт
+        # build.diskSizeGb: /srv/opt/persistent-data; на VPS — docker volume, монтируемый в /data.
+        if self.is_production and str(self.database_path).startswith("/tmp"):
+            errors.append(
+                "DATABASE_PATH указывает в /tmp — данные будут потеряны при перезапуске! "
+                "Для Amvera задайте DATABASE_PATH=/srv/opt/persistent-data/caesar.db "
+                "(диск включён параметром build.diskSizeGb в amvera.yaml); для Docker — путь внутри volume /data."
+            )
         if self.secret_key in ("", "change-me"):
             errors.append("SECRET_KEY не задан (используется значение по умолчанию 'change-me')")
         if len(self.secret_key) < 32:
@@ -77,6 +86,15 @@ class Settings(BaseSettings):
             errors.append("SEED_DEMO_DATA=true в продакшене — будут созданы демо-пользователи с детерминированными id")
         if not self.yandex_client_id or not self.yandex_client_secret:
             errors.append("YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET не заданы — OAuth-вход невозможен")
+
+        # Предупреждение (не блокирует запуск): на Amvera дефолтный /data ephemeral —
+        # данные переживут перезапуск, но НЕ пересборку. Правильный путь задаётся env
+        # DATABASE_PATH=/srv/opt/persistent-data/caesar.db (диск build.diskSizeGb).
+        dpath = str(self.database_path)
+        if self.is_production and dpath.startswith("/data"):
+            print("[ЦЕЗАРЬ] ВНИМАНИЕ: DATABASE_PATH=" + dpath + " — убедитесь, что этот путь является"
+                  " постоянным хранилищем (docker volume /data на VPS). На Amvera (python/pip)"
+                  " ephemeral: задайте DATABASE_PATH=/srv/opt/persistent-data/caesar.db", file=sys.stderr)
 
         if errors:
             msg = "\n".join("  - " + e for e in errors)
