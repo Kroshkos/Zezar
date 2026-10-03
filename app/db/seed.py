@@ -30,6 +30,15 @@ MEETING_STATUSES = [
     ("postponed", "Перенесено", "b-amber", 2),
     ("canceled", "Отменено", "b-red", 3),
 ]
+# статусы проектной работы — по образцу wfTemplates/statusSets прототипа
+PROJECT_STATUSES = [
+    ("init", "Инициация", "b-gray", 0),
+    ("planning", "Планирование", "b-blue", 1),
+    ("exec", "Выполнение", "b-amber", 2),
+    ("monitor", "Мониторинг", "b-blue", 3),
+    ("done", "Завершён", "b-green", 4),
+    ("canceled", "Остановлен", "b-red", 5),
+]
 PRIORITIES = [
     ("critical", "Критическая", "b-red", 30),
     ("high", "Высокая", "b-amber", 20),
@@ -42,7 +51,8 @@ async def bootstrap(session: AsyncSession) -> None:
     s = get_settings()
 
     # --- справочники (глобальные наборы) ---
-    for kind, rows in ((EntityKind.TASK, TASK_STATUSES), (EntityKind.MEETING, MEETING_STATUSES)):
+    for kind, rows in ((EntityKind.TASK, TASK_STATUSES), (EntityKind.MEETING, MEETING_STATUSES),
+                       (EntityKind.PROJECT, PROJECT_STATUSES)):
         cnt = await session.scalar(
             select(func.count(StatusSet.id)).where(StatusSet.kind == kind)) or 0
         if not cnt:
