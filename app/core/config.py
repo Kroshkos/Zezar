@@ -34,6 +34,44 @@ class Settings(BaseSettings):
     workers_enabled: bool = True          # фоновые воркеры в lifespan (в прод-контейнере можно вынести в ARQ)
     dev_login_enabled: bool = False       # вход по email без Яндекса (локальная разработка/тесты)
 
+    # Продакшен-харденинг
+    seed_demo_data: bool = False          # демо-пользователи/подразделения при пустой БД (только dev)
+    cookie_secure: bool | None = None     # None => авто: secure в продакшене, иначе http-only без Secure
+
+    @property
+    def is_production(self) -> bool:
+        import os
+        return os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        """Явное значение из .env; если не задано — Secure только в продакшене."""
+        if self.cookie_secure is not None:
+            return self.cookie_secure
+        return self.is_production
+
+    def require_production_settings(self) -> None:
+        """Fail-fast при запуске с дефолтными/небезопасными значениями (ENVIRONMENT=production)."""
+        import sys
+
+        errors = []
+        if self.secret_key in ("", "change-me"):
+            errors.append("SECRET_KEY не задан (используется значение по умолчанию 'change-me')")
+        if len(self.secret_key) < 32:
+            errors.append("SECRET_KEY слишком короткий (минимум 32 символа)")
+        if self.dev_login_enabled:
+            errors.append("DEV_LOGIN_ENABLED=true в продакшене — закрытая регистрация обходится входом по email")
+        if self.seed_demo_data:
+            errors.append("SEED_DEMO_DATA=true в продакшене — будут созданы демо-пользователи с детерминированными id")
+        if not self.yandex_client_id or not self.yandex_client_secret:
+            errors.append("YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET не заданы — OAuth-вход невозможен")
+
+        if errors:
+            msg = "\n".join("  - " + e for e in errors)
+            print(f"[ЦЕЗАРЬ] КРИТИЧЕСКИЕ ОШИБКИ КОНФИГУРАЦИИ (ENVIRONMENT=production):\n{msg}\n"
+                  f"Приложение не запущено. Заполните .env или запускайте с ENVIRONMENT=development.", file=sys.stderr)
+            raise SystemExit(1)
+
     @property
     def database_url(self) -> str:
         # гарантируем существование папки /data (volume контейнера)

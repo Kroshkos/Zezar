@@ -116,7 +116,9 @@ async def bootstrap(session: AsyncSession) -> None:
                                    role=Role.ADMIN, code=secrets.token_hex(4)))
 
     # --- демо-данные для локальной разработки (как в прототипе) ---
-    if s.dev_login_enabled:
+    # В продакшене запрещены (fail-fast в main.py), но дополнительно защищаемся и здесь:
+    # seed включается только явным флагом SEED_DEMO_DATA=true (или dev-режимом).
+    if (s.seed_demo_data or s.dev_login_enabled) and not s.is_production:
         await _demo(session)
 
     await session.commit()

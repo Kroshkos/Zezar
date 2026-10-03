@@ -1,0 +1,16 @@
+# Ядро: FastAPI + async SQLAlchemy + SQLite(aiosqlite)
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+sqlalchemy==2.1.3
+aiosqlite==0.22.1
+alembic==1.20.0
+
+# Шаблоны / валидация / конфиг
+Jinja2==3.1.6
+pydantic==2.11.7
+pydantic-settings==2.10.1
+python-multipart==0.0.20
+
+# HTTP-клиент (OAuth Яндекс ID, Telegram Bot API, CalDAV WebDAV) и шифрование app-паролей
+httpx==0.28.1
+cryptography==45.0.5

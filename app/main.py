@@ -25,6 +25,10 @@ from app.db.engine import SessionLocal, engine
 log = logging.getLogger("caesar")
 settings = get_settings()
 
+# Fail-fast: не даём поднять продакшен с дефолтным секретом / dev-входом / демо-сидом
+if settings.is_production:
+    settings.require_production_settings()
+
 
 def _import_all_models() -> None:
     """Ядро + payload-таблицы должны быть импортированы до create_all."""
@@ -76,6 +80,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan, docs_url="/api/docs-openapi",
               redoc_url=None, openapi_url="/api/openapi.json")
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Базовые заголовки безопасности (без CDN-зависимостей, CSP под локальные ресурсы)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'",
+    )
+    return response
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():

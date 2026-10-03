@@ -28,7 +28,8 @@ router = APIRouter()
 def _login_redirect(user: User) -> RedirectResponse:
     resp = RedirectResponse("/", status_code=302)
     resp.set_cookie(SESSION_COOKIE, create_session_token({"uid": user.id}),
-                    httponly=True, samesite="lax", max_age=86400 * 14)
+                    httponly=True, samesite="lax", max_age=86400 * 14,
+                    secure=get_settings().session_cookie_secure)
     return resp
 
 

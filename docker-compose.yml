@@ -1,0 +1,32 @@
+services:
+  caesar:
+    build: .
+    image: caesar:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: production
+      DATA_DIR: /data
+      DATABASE_PATH: /data/caesar.db
+      # Секреты — только через .env рядом с compose-файлом (не коммитить!)
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY обязателен}
+      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:?обязателен для OAuth}
+      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:?обязателен для OAuth}
+      YANDEX_REDIRECT_URI: ${YANDEX_REDIRECT_URI:-https://example.org/auth/callback}
+      BOOTSTRAP_ADMIN_YA_IDS: ${BOOTSTRAP_ADMIN_YA_IDS:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_NOTIFY_ENABLED: ${TELEGRAM_NOTIFY_ENABLED:-true}
+      YANDEX_CAL_ENABLED: ${YANDEX_CAL_ENABLED:-true}
+      SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-300}
+      WORKERS_ENABLED: "true"
+      DEV_LOGIN_ENABLED: "false"
+      SEED_DEMO_DATA: "false"
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    volumes:
+      # SQLite строго в /data — данные переживают пересоздание контейнера
+      - caesar-data:/data
+    # Для продакшена добавьте reverse-proxy с TLS перед этим сервисом (nginx/traefik)
+
+volumes:
+  caesar-data:
