@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -181,7 +183,11 @@ async def create_meeting(body: MeetingIn, user: User = Depends(get_current_user)
         due_date=body.due_date or None,
         responsible_user_id=body.responsible_user_id or user.id,
     )
-    start_at = f"{body.due_date}T{body.time_}" if body.due_date and body.time_ else None
+    # нормализуем 'HH:MM' -> 'HH:MM:00', иначе fmt_iso в ICS-хуке не распознает значение
+    t = (body.time_ or "").strip()
+    if re.fullmatch(r"\d{2}:\d{2}", t):
+        t += ":00"
+    start_at = f"{body.due_date}T{t}" if body.due_date and t else None
     session.add(MeetingPayload(
         entity_id=ent.id, num=body.num or None, chair=body.chair or None,
         secretary=body.secretary or None, attendees=body.attendees or None,
@@ -218,7 +224,9 @@ async def patch_meeting(uid: str, body: dict, user: User = Depends(get_current_u
                 setattr(payload, f, body[f])
         if "time_" in body or "due_date" in body:
             d = body.get("due_date", ent.due_date)
-            t = body.get("time_", payload.time_)
+            t = (body.get("time_", payload.time_) or "").strip()
+            if re.fullmatch(r"\d{2}:\d{2}", t):
+                t += ":00"
             payload.start_at = f"{d}T{t}" if d and t else None
     await session.commit()
     return {"ok": True}
