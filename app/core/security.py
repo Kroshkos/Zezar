@@ -13,6 +13,7 @@ import time
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, status
+from sqlalchemy import select
 
 from app.core.config import get_settings
 
@@ -76,15 +77,25 @@ SESSION_COOKIE = "caesar_session"
 
 async def get_current_user(request: Request):
     """Возвращает User из session-cookie или 401. Импортирует модели лениво,
-    чтобы модуль безопасности не зависел от порядка загрузки ORM."""
+    чтобы модуль безопасности не зависел от порядка загрузки ORM.
+
+    Сессия закрывается с expire_on_commit=False, а отношения (memberships и др.)
+    подгружаются eagerly — иначе роутеры получают DetachedInstanceError на lazy-load.
+    """
+    from sqlalchemy.orm import selectinload
+
     from app.db.engine import SessionLocal
-    from app.models.core import User
+    from app.models.core import DepartmentMember, User
 
     data = read_session_token(request.cookies.get(SESSION_COOKIE))
     if not data or "uid" not in data:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не авторизован")
     async with SessionLocal() as session:
-        user = await session.get(User, data["uid"])
+        user = await session.scalar(
+            select(User).options(selectinload(User.memberships)).where(User.id == data["uid"]))
+        if user is not None:
+            for m in user.memberships:
+                _ = m.department_id  # скаляр уже загружен; связь department не трогаем
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись заблокирована")
     return user

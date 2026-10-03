@@ -34,7 +34,9 @@ def _import_all_models() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Схема БД (SQLite строго в /data — путь из .env)
+    # 1. Схема БД (SQLite строго в /data — путь из .env). Модели импортируем ДО create_all,
+    #    иначе payload-таблицы модулей не попадут в метаданные.
+    _import_all_models()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -42,7 +44,6 @@ async def lifespan(app: FastAPI):
     registry.autodiscover("modules")
     registry.mount(app)
     registry.mount_pages(app)
-    _import_all_models()
     from app.db.seed import bootstrap
     async with SessionLocal() as s:
         await registry.sync_table(s)

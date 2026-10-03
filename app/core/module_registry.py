@@ -14,6 +14,7 @@ import importlib
 from typing import Callable, Optional
 
 from fastapi import APIRouter, FastAPI
+from sqlalchemy import select
 
 
 @dataclasses.dataclass

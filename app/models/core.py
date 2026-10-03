@@ -320,6 +320,7 @@ class OutboxEvent(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/done/error
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
 
 # ======================= Закрытая регистрация (допуски) =======================
