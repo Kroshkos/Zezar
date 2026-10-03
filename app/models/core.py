@@ -206,9 +206,12 @@ class Entity(TimestampMixin, Base):
     # создании сущности), не имеют identity и orphan-детектор SQLAlchemy
     # помечал их к удалению — шеринг терялся, инвариант ответственных
     # нарушался, признак cross_dept в списках был всегда False.
+    # viewonly=True: ORM-механику шерингов НЕ трогаем (pending-объекты до flush
+    # не имеют identity, и любой sync-процесс коллекции их откатывал — шеринг
+    # терялся). read-only коллекция для selectinload; запись — только через
+    # session.add(EntityShare(...)) + явные SELECT-запросы.
     shares: Mapped[List["EntityShare"]] = relationship(
-        back_populates="entity", lazy="selectin",
-        foreign_keys="EntityShare.entity_id")
+        lazy="selectin", foreign_keys="EntityShare.entity_id", viewonly=True)
 
 
 class EntityResponsible(TimestampMixin, Base):
@@ -243,7 +246,7 @@ class EntityShare(TimestampMixin, Base):
         ForeignKey("departments.id", ondelete="CASCADE"), index=True)
     permission: Mapped[Permission] = mapped_column(Enum(Permission), default=Permission.READ)
 
-    entity: Mapped[Entity] = relationship(back_populates="shares", foreign_keys=[entity_id], lazy="raise")
+    entity: Mapped[Entity] = relationship(foreign_keys=[entity_id], lazy="raise")
     target_department: Mapped[Department] = relationship(foreign_keys=[target_department_id])
 
 
@@ -309,7 +312,8 @@ class AuditLog(Base):
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     action: Mapped[str] = mapped_column(String(50))          # create/update/status/reassign/share
-    entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), index=True)
+    entity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL"), index=True)
     details_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 

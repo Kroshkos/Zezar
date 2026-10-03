@@ -158,6 +158,18 @@ async def update_entity(
 
 async def delete_entity(session: AsyncSession, user: User, ent: Entity) -> None:
     await _log_and_emit(session, user, "delete", ent, {"title": ent.title})
+    # Явное удаление зависимых строк ПЕРЕД удалением сущности. ORM-коллекция
+    # shares — viewonly (защита от orphan-откатов pending-объектов), поэтому
+    # каскад по relationship не срабатывает; на уровне БД включён PRAGMA
+    # foreign_keys=ON и часть payload-таблиц ссылается без ondelete=CASCADE.
+    from sqlalchemy import delete as _del
+    from app.models.module_payloads import (
+        DocPayload, GrantPayload, MeetingPayload, PriorityPayload,
+        ProjectPayload, ScholarPayload, SoftPayload, TaskPayload)
+    for payload_model in (TaskPayload, MeetingPayload, ProjectPayload, DocPayload,
+                          SoftPayload, GrantPayload, ScholarPayload, PriorityPayload):
+        await session.execute(_del(payload_model).where(payload_model.entity_id == ent.id))
+    await session.execute(_del(EntityShare).where(EntityShare.entity_id == ent.id))
     await session.delete(ent)
 
 
