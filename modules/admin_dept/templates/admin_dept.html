@@ -14,6 +14,11 @@
 {% endblock %}
 
 {% block content %}
+<!-- Баннер: какое рабочее пространство сейчас открыто (для Admin/Coordinator — с подсказкой про переключатель) -->
+<div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
+  Вы просматриваете рабочее пространство: <b>{{ department.name }}</b>
+  {% if departments %}<span style="color:#5b6b82"> — сменить можно выпадающим списком справа вверху.</span>{% endif %}
+</div>
 <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
 
   <!-- Участники -->

@@ -36,13 +36,28 @@ MODULE_KEY = "admin_dept"
 
 async def _pick_department(session: AsyncSession, ctx: access.AccessContext,
                            dept_id: int | None) -> Department:
-    """Выбор управляемого подразделения с проверкой прав (изоляция пространств)."""
+    """Выбор управляемого подразделения с проверкой прав (изоляция пространств).
+
+    Если department_id не передан — подразделение определяется по контексту:
+    HEAD/MEMBER — своё единственное членство; ADMIN/COORDINATOR — первое из своих
+    членств, а если членств нет — самое раннее активное подразделение системы.
+    Переключить пространство админ/координатор может выпадающим списком на странице.
+    """
     if dept_id is None:
-        if ctx.is_global:
-            raise HTTPException(400, "Админу/координатору укажите department_id")
-        if not ctx.department_ids:
+        if ctx.department_ids:
+            dept_id = next(iter(sorted(ctx.department_ids)))
+        elif ctx.is_global:
+            dept_id = await session.scalar(
+                select(Department.id)
+                .where(Department.is_active == True)  # noqa: E712
+                .order_by(Department.id).limit(1))
+            if dept_id is None:
+                raise HTTPException(
+                    400,
+                    "Подразделений ещё нет — создайте первое («+ Подразделение»)",
+                )
+        else:
             raise HTTPException(403, "Вы не состоите ни в одном подразделении")
-        dept_id = next(iter(ctx.department_ids))
     dept = await session.get(Department, dept_id)
     if dept is None or not dept.is_active:
         raise HTTPException(404, "Подразделение не найдено")
