@@ -101,7 +101,7 @@ PYTHONPATH=. python scripts/e2e_test.py
 
 | Вариант | Файлы | Особенности |
 |---|---|---|
-| **Amvera** (облачный PaaS) | `amvera.yaml` (окружение `python`/toolchain `pip`) | сборка через venv+pip по `requirements.txt`; ASGI-запуск uvicorn на порту 8080 (`containerPort`); стандартный путь БД `/data/caesar.db` — постоянный диск подключается секцией `build.diskSizeGb: 10` в `amvera.yaml` (если валидатор платформы отклонит поле — подключить диск к `/data` через панель «Хранилище»). `Dockerfile` — для self-hosted. Инструкция — DEPLOY.md, п. 10 |
+| **Amvera** (облачный PaaS) | `amvera.yaml` (окружение `python`/toolchain `pip`) | сборка через venv+pip по `requirements.txt`; ASGI-запуск uvicorn на порту 8080 (`containerPort`); стандартный путь БД `/data/caesar.db` — постоянное хранилище монтируется в `/data` параметром `run.persistenceMount` (по доке [Хранилище и пути](https://docs.amvera.ru/applications/storage.html)). `Dockerfile` — для self-hosted. Инструкция — DEPLOY.md, п. 10 |
 | **Self-hosted VPS** | `docker-compose.yml` + `Dockerfile` | свой nginx/TLS, volume `caesar-data:/data` |
 
 Инструкция для конечных пользователей: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.

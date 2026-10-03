@@ -1,38 +1,32 @@
-# Конфигурация деплоя на Amvera
-# Документация: https://docs.amvera.ru/applications/environments/python-pip.html
-#               https://docs.amvera.ru/applications/configuration/config-file.html
+# Конфигурация деплоя на Amvera.
+# Документация (проверено):
+#   • Хранилище и пути:            https://docs.amvera.ru/applications/storage.html
+#       Папка постоянного хранилища Data монтируется в контейнер при ЗАПУСКЕ
+#       в путь из run.persistenceMount (по умолчанию /data). Файлы БД SQLite,
+#       логи и прочие данные приложения должны писаться по АБСОЛЮТНОМУ пути
+#       внутри этой точки (/data/<filename>). Содержимое Code и Artifacts
+#       (/app) непостоянно: теряется при пересборке/заморозке проекта.
+#   • Python Pip («Секция run»):   https://docs.amvera.ru/applications/environments/python-pip.html
+#       Для python/pip допустимые параметры run: scriptName | command
+#       (взаимоисключающие), persistenceMount (по умолчанию /data), containerPort.
+#       Секция build для python содержит только requirementsPath/кеш — поля
+#       diskSizeGb там нет (валидатор отклонял: "unknown fields: diskSizeGb").
+#   • Файл конфигурации:           https://docs.amvera.ru/applications/configuration/config-file.html
 #
-# Исправленные ошибки предыдущей версии:
-#  1) meta.environment был "python-pip" — неверно; по доке значение "python",
-#     а "pip" указывается в toolchain.name;
-#  2) была секция build.dockerfile + run.command/args — противоречие режимов сборки:
-#     наличие amvera.yaml переводит платформу в сборку через toolchain (venv +
-#     pip install -r requirements.txt), Dockerfile при этом игнорируется. Для
-#     python-окружения секция build факультативна (requirementsPath по умолчанию
-#     = requirements.txt) — убрана;
-#  3) run.command теперь соответствует официальному рецепту «ASGI-приложение
-#     (FastAPI)» из доки: единая строка без args (scriptName/command взаимоисключающи);
-#  4) PORT: на Amvera порт задаётся ТОЛЬКО параметром containerPort (переменная
-#     PORT платформой не инжектируется) — в команде указан фиксированный 8080,
-#     совпадающий с containerPort;
-#  5) ХРАНИЛИЩЕ: секция build с diskSizeGb возвращена по требованию владельца
-#     проекта — стандартный путь БД /data на постоянном диске. ВНИМАНИЕ: ранее
-#     валидатор Amvera отклонял build.diskSizeGb для python/pip
-#     ("unknown fields: diskSizeGb in build section"). Если деплой снова упадёт
-#     с этой ошибкой — удалите секцию build и подключите постоянный диск к /data
-#     через панель управления («Настройки» → «Хранилище»), см. docs/DEPLOY.md, п. 10.
-#     run.persistenceMount не используется — по доке доступен только Node.js.
+# Соответствие архитектуре сервиса (стандартный путь БД /data/caesar.db):
+#   run.persistenceMount: /data  ← точка монтирования постоянного хранилища;
+#   DATABASE_PATH можно НЕ задавать — дефолт в app/core/config.py совпадает с
+#   ней (важно: в коде используется только абсолютный путь, как требует дока).
 #
 # Примечания:
-#  • Dockerfile в репозитории остаётся для self-hosted VPS (docker run/compose);
-#    на Amvera используется именно эта конфигурация python/pip.
+#  • Dockerfile остаётся в репозитории для self-hosted VPS (docker run/compose);
+#    наличие amvera.yaml означает сборку через toolchain python/pip.
 #  • Alembic входит в requirements.txt; схема создаётся приложением в lifespan
-#    (create_all идемпотентен). Точечный запуск миграций — `alembic upgrade head`
-#    из корня репозитория (см. docs/DEPLOY.md, п. 10).
+#    (create_all идемпотентен). Точечный запуск миграций — `alembic upgrade head`.
 #  • PYTHONPATH корня репозитория достаточно для импортов app/modules/integrations.
 #  • Переменные окружения (SECRET_KEY, YANDEX_*, TELEGRAM_* и др.) задаются в
 #    панели Amvera: раздел приложения → «Переменные и секреты» (не в git!).
-#    Полный список и порядок действий — docs/DEPLOY.md, раздел 10.
+#    Полный список — docs/DEPLOY.md, раздел 10.
 
 meta:
   environment: python
@@ -40,17 +34,10 @@ meta:
     name: pip
     version: "3.12"
 
-build:
-  # Постоянный диск под стандартный путь БД /data/caesar.db (дефолт в коде).
-  # ВНИМАНИЕ: см. примечание 5 выше — при отказе валидатора Amvera эту секцию
-  # нужно удалить и подключить диск к /data через панель управления проектом.
-  diskSizeGb: 10
-
 run:
+  # ASGI-рецепт из документации Amvera (FastAPI). Команда запускается из /app.
   command: uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app
   containerPort: 8080
-  # ВНИМАНИЕ: persistenceMount здесь НЕ используется — по документации Amvera
-  # он доступен только для Node.js-окружений (для python/pip это ошибка конфига).
-  # Стандартный путь БД — /data/caesar.db (дефолт в коде): подключите постоянный
-  # диск через панель Amvera с точкой монтирования /data. При другой точке
-  # задайте DATABASE_PATH в панели «Переменные и секреты» (docs/DEPLOY.md, п. 10).
+  # Постоянное хранилище (папка Data) монтируется сюда при каждом запуске
+  # контейнера и НЕ очищается при пересборках. Путь БД: /data/caesar.db.
+  persistenceMount: /data
