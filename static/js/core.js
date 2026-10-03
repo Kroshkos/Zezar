@@ -34,8 +34,11 @@ function askConfirm(msg,onYes){
 async function logout(){await api('/auth/logout',{method:'POST'});location.href='/login'}
 async function openSettings(){
   const me=await api('/auth/me');
+  const st=await api('/api/profile/integrations').catch(()=>({}));
+  const calId=(st.email||'').split('@')[0];
   let body='<p style="font-size:13px;color:var(--muted)">Привязка интеграций. Telegram: напишите боту <code>/start ваш_код</code>.</p>'
-   +'<label>Яндекс.Календарь — app-пароль (<a target=_blank href="https://id.yandex.ru/security/app-passwords">создать</a>)</label>'
+   +(calId?'<p style="font-size:12px;color:var(--muted)">Логин CalDAV (аккаунт Яндекса): <b>'+esc(calId)+'</b></p>':'')
+   +'<label>Яндекс.Календарь — app-пароль (<a target=_blank href="https://id.yandex.ru/security/app-passwords">создать</a>, сервис «Другие»)</label>'
    +'<input name="cal_password" type="password" placeholder="app-пароль">'
    +'<label>Имя календаря</label><input name="cal_name" value="default">';
   openModal('Мои интеграции · '+esc(me.name),body,async(fd,f)=>{

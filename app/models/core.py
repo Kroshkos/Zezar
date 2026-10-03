@@ -72,6 +72,8 @@ class User(TimestampMixin, Base):
     yandex_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # sub из Яндекс ID
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(160))   # «ФИО» из виджета people прототипа
+    # Логин аккаунта Яндекса (поле `login` из userinfo) — CalDAV Basic auth требует его, а не email.
+    yandex_login: Mapped[Optional[str]] = mapped_column(String(255), index=True)
     initials: Mapped[Optional[str]] = mapped_column(String(8))
     color: Mapped[Optional[str]] = mapped_column(String(16))  # цвет аватара как в демо
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)

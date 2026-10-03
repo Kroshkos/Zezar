@@ -33,6 +33,7 @@ class YandexUser:
     display_name: str
     email: str | None
     default_email: str | None
+    login: str | None = None   # логин аккаунта — нужен для CalDAV Basic auth
 
 
 def authorize_url() -> str:
@@ -81,6 +82,7 @@ async def fetch_userinfo(access_token: str) -> YandexUser:
         display_name=j.get("real_name") or j.get("display_name") or j.get("default_email") or "Без имени",
         email=(j.get("default_email") or (emails[0] if emails else None)),
         default_email=j.get("default_email"),
+        login=j.get("login"),
     )
 
 

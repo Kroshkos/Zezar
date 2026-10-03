@@ -76,6 +76,7 @@ async def callback(request: Request, code: str = "", state: str = "",
                 f"/login?error=not_allowed&ya_id={ya.yandex_id}", status_code=302)
         user = User(yandex_id=ya.yandex_id, email=ya.email,
                     display_name=inv.display_name or ya.display_name,
+                    yandex_login=ya.login,
                     role=inv.role, initials=_initials(inv.display_name or ya.display_name))
         session.add(user)
         await session.flush()
@@ -88,6 +89,7 @@ async def callback(request: Request, code: str = "", state: str = "",
         return RedirectResponse("/login?error=disabled", status_code=302)
     else:
         user.email = user.email or ya.email
+        user.yandex_login = ya.login or user.yandex_login  # CalDAV требует актуальный логин
         await session.commit()
     return _login_redirect(user)
 

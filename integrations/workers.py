@@ -82,12 +82,12 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                             EntityResponsible.user_id != None))).all()  # noqa: E711
         for r in resp_rows:
             u = await session.get(User, r.user_id)
-            if not u or not u.yandex_cal_app_password_enc or not u.email:
+            if not u or not u.yandex_cal_app_password_enc or not _cal_login(u):
                 continue
             try:
                 client_path = await _cal_path(u)
                 if client_path:
-                    await yc.delete_event(u.email or "", u.yandex_cal_app_password_enc,
+                    await yc.delete_event(_cal_login(u), u.yandex_cal_app_password_enc,
                                           client_path, ent.cal_uid)
             except Exception as e:  # noqa: BLE001
                 log.warning("cal delete failed user=%s: %s", u.id, e)
@@ -115,13 +115,13 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     any_fail = False
     for r in resp_rows:
         u = await session.get(User, r.user_id)
-        if not u or not u.yandex_cal_app_password_enc or not u.email:
+        if not u or not u.yandex_cal_app_password_enc or not _cal_login(u):
             continue  # пользователь не привязал календарь — ждём, не считаем ошибкой
         path = await _cal_path(u)
         if not path:
             any_fail = True
             continue
-        ok = await yc.upsert_event(u.email, u.yandex_cal_app_password_enc, path, ent,
+        ok = await yc.upsert_event(_cal_login(u), u.yandex_cal_app_password_enc, path, ent,
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
@@ -157,6 +157,20 @@ async def _attach_payload(session, ent: Entity):
 _cal_path_cache: dict[int, str] = {}
 
 
+
+def _cal_login(u: User) -> str | None:
+    """Логин аккаунта Яндекса для CalDAV Basic auth.
+
+    Яндекс принимает в качестве имени пользователя логин аккаунта (поле `login`
+    из OAuth userinfo). Email тоже работает, но только если он основной и совпадает
+    с логином; при @yandex.ru/-доменах это одно и то же значение до @.
+    """
+    if u.yandex_login:
+        return u.yandex_login
+    if u.email:
+        return u.email.split("@")[0]
+    return None
+
 async def _cal_path(u: User) -> str | None:
     """Путь CalDAV-коллекции «Цезарь» пользователя (создаётся при первом обращении)."""
     if u.id in _cal_path_cache:
@@ -167,7 +181,7 @@ async def _cal_path(u: User) -> str | None:
         return None
     try:
         async with __import__("httpx").AsyncClient(timeout=20) as client:
-            path = await yc.ensure_calendar(client, u.email or "", apw,
+            path = await yc.ensure_calendar(client, _cal_login(u) or "", apw,
                                             u.yandex_cal_name or "Цезарь")
         _cal_path_cache[u.id] = path
         return path

@@ -58,11 +58,18 @@ async def save_calendar(body: CalIn, request: Request,
                         session: AsyncSession = Depends(session_dep)):
     """Сохраняем app-пароль (Fernet) после проверки WebDAV-доступа; статус синхронизации сбрасываем на pending."""
     from integrations import yandex_calendar as yc
-    if not user.email:
-        return JSONResponse({"detail": "В профиле Яндекса нет email — привяжите аккаунт с почтой"}, 400)
-    ok = await yc.verify_credentials(user.email, body.app_password)
+    # CalDAV Basic auth: имя пользователя = ЛОГИН аккаунта Яндекса (не email!).
+    login = user.yandex_login or (user.email.split("@")[0] if user.email else None)
+    if not login:
+        return JSONResponse({"detail": "Не удалось определить логин Яндекс-аккаунта — войдите заново через Яндекс ID"}, 400)
+    ok, code = await yc.verify_credentials(login, body.app_password)
     if not ok:
-        return JSONResponse({"detail": "Яндекс отклонил app-пароль"}, 400)
+        detail = {
+            401: "Яндекс отклонил app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток",
+            403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
+            404: "CalDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
+        }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
+        return JSONResponse({"detail": detail}, 400)
     user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
     user.yandex_cal_name = body.calendar_name or "Цезарь"
     await session.commit()
