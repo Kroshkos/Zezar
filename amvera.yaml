@@ -15,16 +15,13 @@
 #  4) PORT: на Amvera порт задаётся ТОЛЬКО параметром containerPort (переменная
 #     PORT платформой не инжектируется) — в команде указан фиксированный 8080,
 #     совпадающий с containerPort;
-#  5) ХРАНИЛИЩЕ: параметр run.persistenceMount по документации Amvera доступен
-#     ТОЛЬКО для Node.js-окружений — для python/pip он запрещён (валидатор
-#     отклоняет конфиг). Параметр build.diskSizeGb также ОТКЛОНЯЕТСЯ валидатором
-#     Amvera для python/pip-приложений ("unknown fields: diskSizeGb in build
-#     section") — секция build убрана. Постоянное хранилище на Amvera подключается
-#     НЕ через amvera.yaml, а через панель управления проектом (раздел
-#     «Настройки» → «Хранилище/Диски», см. docs/DEPLOY.md, п. 10). Стандартный
-#     путь БД — /data/caesar.db (значение по умолчанию в коде): примонтируйте
-#     постоянный диск панели именно к /data; при другой точке монтирования
-#     укажите её в переменной окружения DATABASE_PATH («Переменные и секреты»).
+#  5) ХРАНИЛИЩЕ: секция build с diskSizeGb возвращена по требованию владельца
+#     проекта — стандартный путь БД /data на постоянном диске. ВНИМАНИЕ: ранее
+#     валидатор Amvera отклонял build.diskSizeGb для python/pip
+#     ("unknown fields: diskSizeGb in build section"). Если деплой снова упадёт
+#     с этой ошибкой — удалите секцию build и подключите постоянный диск к /data
+#     через панель управления («Настройки» → «Хранилище»), см. docs/DEPLOY.md, п. 10.
+#     run.persistenceMount не используется — по доке доступен только Node.js.
 #
 # Примечания:
 #  • Dockerfile в репозитории остаётся для self-hosted VPS (docker run/compose);
@@ -43,9 +40,11 @@ meta:
     name: pip
     version: "3.12"
 
-# Секция build намеренно ОТСУТСТВУЕТ: валидатор Amvera для python/pip
-# отклоняет поле build.diskSizeGb ("unknown fields: diskSizeGb in build section").
-# Постоянный диск подключается через панель управления проектом (docs/DEPLOY.md, п. 10).
+build:
+  # Постоянный диск под стандартный путь БД /data/caesar.db (дефолт в коде).
+  # ВНИМАНИЕ: см. примечание 5 выше — при отказе валидатора Amvera эту секцию
+  # нужно удалить и подключить диск к /data через панель управления проектом.
+  diskSizeGb: 10
 
 run:
   command: uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app
