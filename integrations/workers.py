@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.db.engine import SessionLocal
-from app.models.core import Entity, EntityResponsible, OutboxEvent, SyncState, User
+from app.models.core import Entity, EntityKind, EntityResponsible, OutboxEvent, SyncState, User
 from integrations import telegram_service as tg
 from integrations import yandex_calendar as yc
 
@@ -107,6 +107,10 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
         ent.sync_state = SyncState.PENDING
         return
     # пишем событие в календари ответственных (по одному событию на человека — см. ТЗ)
+    # для совещаний прицепляем payload -> хук календаря возьмёт точное время/место
+    if ent.kind == EntityKind.MEETING:
+        from app.models.module_payloads import MeetingPayload
+        ent._cal_payload = await session.get(MeetingPayload, ent.id)
     resp_rows = (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
                                         EntityResponsible.user_id != None))).all()  # noqa: E711

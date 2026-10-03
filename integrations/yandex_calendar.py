@@ -73,20 +73,62 @@ def _propfind(props: list[str]) -> bytes:
     return body.encode()
 
 
-def ics_for_entity(ent, responsible_name: str) -> str:
-    """DTSTART=09:00 дня срока, DTEND=18:00; UID стабильный (cal_uid) — повторные записи обновляют."""
-    due = ent.due_date  # 'YYYY-MM-DD'
+def _window(ent) -> tuple[str, str]:
+    """Кортеж (DTSTART, DTEND) без префиксов TZID.
+
+    Совещания: точное время из payload.start_at/end_at (или date+time_);
+    остальные сущности: 09:00–18:00 дня срока (due_date).
+    """
     tzid = "Europe/Moscow"
+    p = getattr(ent, "_cal_payload", None)
+    if ent.kind.value == "meeting" and p is not None:
+        start = getattr(p, "start_at", None) or ""
+        end = getattr(p, "end_at", None) or ""
+        # ISO 'YYYY-MM-DDTHH:MM' — приводим к ICS-формату
+        def fmt_iso(v: str) -> str | None:
+            v = (v or "").strip()
+            if len(v) >= 16 and v[4] == "-" and v[8] == "-":
+                d = v[:10].replace("-", "")
+                t = v[11:16].replace(":", "")
+                return f"{d}T{t}00"
+            return None
+        s, e = fmt_iso(start), fmt_iso(end)
+        if s:
+            if not e:  # конец = +2 часа (ограниченно) или 18:00 того же дня
+                try:
+                    from datetime import datetime as _dt, timedelta as _td
+                    e = (_dt.strptime(s, "%Y%m%dT%H%M%S") + _td(hours=2)).strftime("%Y%m%dT%H%M%S")
+                except ValueError:
+                    e = s[:8] + "T180000"
+            return s, e
+    due = ent.due_date  # 'YYYY-MM-DD'
     dt = due.replace("-", "")
+    return f"{dt}T090000", f"{dt}T180000"
+
+
+def ics_for_entity(ent, responsible_name: str) -> str:
+    """UID стабильный (cal_uid) — повторные записи обновляют событие."""
+    tzid = "Europe/Moscow"
+    s, e = _window(ent)
+    dtstamp = s[:8] + "T000000Z"
+    summary = f"[{ent.module_key}] {ent.title}"
+    desc = f"Статус: {ent.status_key or '—'}; ответственный: {responsible_name}"
+    extra = []
+    p = getattr(ent, "_cal_payload", None)
+    if p is not None and getattr(p, "location", None):
+        extra.append(f"LOCATION:{p.location}")
+    if p is not None and getattr(p, "chair", None):
+        desc += f"; председатель: {p.chair}"
     return "\r\n".join([
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Caesar//RU",
         "BEGIN:VEVENT",
         f"UID:{ent.cal_uid}",
-        f"DTSTAMP:{dt}T000000Z",
-        f"DTSTART;TZID={tzid}:{dt}T090000",
-        f"DTEND;TZID={tzid}:{dt}T180000",
-        f"SUMMARY:[{ent.module_key}] {ent.title}",
-        f"DESCRIPTION:Статус: {ent.status_key or '—'}; ответственный: {responsible_name}",
+        f"DTSTAMP:{dtstamp}",
+        f"DTSTART;TZID={tzid}:{s}",
+        f"DTEND;TZID={tzid}:{e}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{desc}",
+        *extra,
         "END:VEVENT", "END:VCALENDAR",
     ])
 
