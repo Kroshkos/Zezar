@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ page_title }} · ЦЕЗАРЬ</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="tile">🏛️</span><div><b>ЦЕЗАРЬ</b><span>Управление стратегических инициатив и проектов</span></div></div>
+    <nav id="nav">
+      {# Навигация строится из реестра модулей + включений workspace (как NAV[] в демо) #}
+      {% for m in nav_modules %}
+      <button class="nv {{ 'on' if m.key == active_module else '' }}" onclick="location.href='{{ m.url }}'">
+        <span>{{ m.icon }}</span>{{ m.title }}{% if m.count is not none %}<span class="cnt">{{ m.count }}</span>{% endif %}
+      </button>
+      {% endfor %}
+    </nav>
+    <div class="side-foot">
+      <button onclick="openSettings()">⚙️ Мои интеграции</button>
+      <button onclick="logout()">🚪 Выход</button>
+      <div class="hint">{{ user.display_name }} · {{ {'admin':'Администратор','coordinator':'Координатор','head':'Руководитель','member':'Участник'}[user.role.value] }}</div>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div><h1 id="vt">{{ page_title }}</h1><div class="sub" id="vs">{{ page_sub }}</div></div>
+      <div id="ta" style="display:flex;gap:9px;flex-wrap:wrap">{% block actions %}{% endblock %}</div>
+    </header>
+    <div id="content" class="content anim">{% block content %}{% endblock %}</div>
+  </main>
+</div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+<script src="/static/js/core.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
