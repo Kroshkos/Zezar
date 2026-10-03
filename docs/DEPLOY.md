@@ -209,7 +209,7 @@ workers изолированы).
 | Зависимости ставятся из `requirements.txt` (`build.requirementsPath` по умолчанию) | секция `build` не нужна; все пакеты (fastapi, uvicorn[standard], alembic…) зафиксированы в `requirements.txt` |
 | ASGI-приложение запускается через `run.command` (официальный рецепт «FastAPI» из доки) | `uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app` |
 | Порт задаётся **только** параметром `containerPort` (переменная `PORT` платформой не инжектируется) | `containerPort: 8080` = тот же порт в команде uvicorn |
-| Постоянное хранилище — путь из `run.persistenceMount` (по умолчанию `/data`) | `persistenceMount: /data`, ровно там лежит SQLite (`DATABASE_PATH=/data/caesar.db`) — данные переживают перезапуски/пересборки |
+| Постоянное хранилище: `persistenceMount` на Amvera **доступен только для Node.js** — для python/pip диск даёт `build.diskSizeGb` (10–50 ГБ): папка `/var/opt/persistent-data` + симлинк `/srv/opt/persistent-data`, доступные и при сборке, и в рантайме | `amvera.yaml` → `build.diskSizeGb: 10`; SQLite задаётся переменной `DATABASE_PATH=/srv/opt/persistent-data/caesar.db` — данные переживают перезапуски/пересборки |
 | `docker-compose.yml` **не поддерживается** | compose остаётся только для self-hosted VPS; на Amvera используется `amvera.yaml` |
 | TLS терминируется платформой (внутрь контейнера приходит HTTP) | `--proxy-headers` + `TRUST_PROXY_HEADERS=true`; cookies Secure/HttpOnly |
 
@@ -234,11 +234,17 @@ workers изолированы).
    BOOTSTRAP_ADMIN_YA_IDS=<ваш yandex sub>
    COOKIE_SECURE=false        # см. пояснение ниже
    TRUST_PROXY_HEADERS=true
-   DATABASE_PATH=/data/caesar.db
+   DATABASE_PATH=/srv/opt/persistent-data/caesar.db
    ```
 
    Переменная `PORT` **не требуется**: порт жёстко задан в `amvera.yaml`
    (`containerPort: 8080` и та же цифра в команде uvicorn).
+
+   ⚠️ Важно про путь БД: на Amvera `DATABASE_PATH` **обязательно** должен указывать
+   в папку постоянного диска `/srv/opt/persistent-data/...` (создаётся параметром
+   `build.diskSizeGb: 10` в `amvera.yaml`). Если оставить дефолт `/data/caesar.db`,
+   база будет лежать в ephemeral-слое контейнера и **сотрётся при каждой пересборке**.
+   Приложение само создаёт недостающие папки по пути к файлу БД.
 
    Важно про cookies: Amvera терминирует TLS на своём балансировщике и внутрь
    контейнера отдаёт HTTP. Флаг `Secure` у session-cookie в этом случае безопасен
@@ -258,8 +264,10 @@ workers изолированы).
 - **Ресурсы**: бесплатного тарифа хватает на пилот (~десятки пользователей); SQLite WAL
   на одном экземпляре контейнера — обязательное условие (Amvera и так запускает один
   контейнер на приложение).
-- **Бэкапы**: скачивайте содержимое `/data` из панели Amvera (или `VACUUM INTO` через
-  exec) — том persistence изолирован от образа и живёт между деплоями.
+- **Бэкапы**: скачивайте файл из `/srv/opt/persistent-data` (диск persistent-data виден
+  в панели Amvera / доступен из exec-сессии) или делайте `VACUUM INTO` через exec — диск
+  изолирован от образа и живёт между деплоями. Для локальной копии удобно
+  `amvera app fs download <appId> /srv/opt/persistent-data/caesar.db ./backup.db`.
 - **Telegram long-polling и воркеры календаря** работают внутри lifespan того же
   контейнера — дополнительных сервисов (как в compose-варианте) разворачивать не нужно.
 - **Alembic-миграции подключены**: базовая ревизия создаёт всю схему, а `entrypoint.sh`
