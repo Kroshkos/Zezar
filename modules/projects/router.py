@@ -113,7 +113,8 @@ async def _visible_entities(session: AsyncSession, ctx: access.AccessContext,
         if perm is None:
             continue
         # Инвариант изоляции пространств: без шеринга видна только владельцу.
-        cross = await _has_shares(session, ent)
+        cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue

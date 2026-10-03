@@ -108,7 +108,8 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         if perm is None:
             continue
         # Инвариант изоляции пространств (см. list_meetings)
-        cross = await _has_shares(session, ent)
+        cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
@@ -153,7 +154,8 @@ async def list_meetings(user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
-        cross = await _has_shares(session, ent)
+        cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
