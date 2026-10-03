@@ -107,14 +107,24 @@ async def main() -> None:
             r = await c.patch(f"/api/tasks/{uid}", headers=m_cookie, json={"title": "хакр" * 3})
             assert r.status_code == 403, "READ-шеринг дал право на запись!"
 
-            # 10. изоляция: посторонний участник не видит чужие задачи (созданные НЕ им);
-            #     расшаренную задачу он видеть ДОЛЖЕН (межпространственный контекст).
-            # ВАЖНО: «задача админа» (uid) расшарена dep-it на чтение (шаг 8), поэтому для
-            # проверки утечки берём бесхозную сущность админа БЕЗ share_with — leak_uid.
+            # 10. изоляция: посторонний участник НЕ видит задачи ЧУЖИХ пространств.
+            #     member-strat (dep-strat) не должен видеть задачу, созданную в dep-it.
+            #     Задача админа создаётся в dep-it с внешним ответственным = head-it —
+            #     это легитимный сценарий «админ поручает задачу подразделению», при
+            #     котором служебный слот открывается В департаменте исполнителя (dep-it),
+            #     а не в родном пространстве админа (dep-strat). Иначе любой выбор
+            #     пространства админом автоматически расшаривал бы сущность обратно
+            #     в его домашнее подразделение (утечка между пространствами).
             _, a_cookie = await _create_task_as("admin@caesar.local", "Личная задача админа")
+            r = await c.get("/api/core/departments", headers=a_cookie)
+            admin_depts = {d["code"]: d["id"] for d in r.json()}
+            r = await c.get("/api/core/users", headers=a_cookie)
+            users_by_email = {u["email"]: u["id"] for u in r.json()}
             r = await c.post("/api/tasks", headers=a_cookie, json={
-                "title": "Задача админа без шеринга", "status_key": "new",
-                "priority_key": "medium"})
+                "title": "Задача админа в dep-it без шеринга", "status_key": "new",
+                "priority_key": "medium",
+                "department_id": admin_depts["dep-it"],
+                "responsible_user_id": users_by_email["head-it@caesar.local"]})
             assert r.status_code == 200, r.text
             leak_uid = r.json()["uid"]
             own_uid, _ = await _create_task_as("member-strat@caesar.local",

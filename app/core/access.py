@@ -35,8 +35,12 @@ class AccessContext:
 
 
 async def build_context(session: AsyncSession, user: User) -> AccessContext:
+    # DISTINCT: пользователь может иметь несколько членств в одном подразделении —
+    # дубликаты ломали SQL-условия IN (...) и сравнения множеств в RBAC.
     rows = await session.execute(
-        select(DepartmentMember.department_id).where(DepartmentMember.user_id == user.id)
+        select(DepartmentMember.department_id)
+        .where(DepartmentMember.user_id == user.id)
+        .distinct()
     )
     dept_ids = [r for r in rows.scalars().all()]
     return AccessContext(
@@ -58,21 +62,29 @@ def entity_filter(ctx: AccessContext):
         .where(EntityShare.target_department_id.in_(ctx.department_ids or [-1]))
     )
     conds.append(Entity.id.in_(shared))
-    # я НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа).
+    # Я — НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа).
     # ВАЖНО (изоляция пространств): ответственность даёт доступ ТОЛЬКО если моё
-    # подразделение участвует в сущности — является владельцем или получателем
-    # шэра. Иначе случайный/служебный слот просачивал бы чужие сущности в
-    # пространство пользователя на уровне SQL-фильтра. Точная проверка прав
-    # всегда выполняется в resolve_permission (минимум прав).
+    # подразделение участвует в сущности легально:
+    #   1) я состою в подразделении-владельце И это мой primary-слот, ИЛИ
+    #   2) моё подразделение реально получило шэр (EntityShare) и слот открыт в нём.
+    # Служебные слоты внешних исполнителей (is_primary=False в чужом пространстве)
+    # доступ НЕ открывают — иначе «личная» сущность админа просачивалась бы в его
+    # родное пространство через первичный слот чужого подразделения.
     resp = (
         select(EntityResponsible.entity_id)
         .where(EntityResponsible.user_id == ctx.user.id)
         .where(or_(
-            EntityResponsible.department_id.in_(ctx.department_ids or [-1]),
-            select(EntityShare.id).where(
-                EntityShare.entity_id == EntityResponsible.entity_id,
-                EntityShare.target_department_id == EntityResponsible.department_id,
-            ).exists(),
+            and_(
+                EntityResponsible.is_primary.is_(True),
+                EntityResponsible.department_id.in_(ctx.department_ids or [-1]),
+            ),
+            and_(
+                EntityResponsible.department_id.in_(ctx.department_ids or [-1]),
+                select(EntityShare.id).where(
+                    EntityShare.entity_id == EntityResponsible.entity_id,
+                    EntityShare.target_department_id == EntityResponsible.department_id,
+                ).exists(),
+            ),
         ))
     )
     conds.append(Entity.id.in_(resp))
@@ -101,7 +113,17 @@ async def resolve_permission(session: AsyncSession, ctx: AccessContext, entity: 
         return Permission.FULL
     my_depts = set(ctx.department_ids)
     share = next((s for s in shares if s.target_department_id in my_depts), None)
-    is_owner_dept = entity.owner_department_id in my_depts
+    # Инвариант «по одному ответственному от подразделения»: доступ как
+    # «подразделение-владелец» даёт ТОЛЬКО заполненный PRIMARY-слот (is_primary=True,
+    # user_id=наш). Служебные слоты внешних исполнителей (is_primary=False),
+    # открываемые при межпространственном назначении, не должны трактоваться
+    # как членство в подразделении-владельце — иначе исполнитель получал бы
+    # EDIT вместо прав шэра, а его родное пространство видело бы чужие сущности.
+    is_owner_dept = entity.owner_department_id in my_depts or await session.scalar(
+        select(EntityResponsible.id).where(
+            EntityResponsible.entity_id == entity.id,
+            EntityResponsible.user_id == ctx.user.id,
+            EntityResponsible.is_primary.is_(True)))
     my_resp = await session.scalar(
         select(EntityResponsible).where(
             EntityResponsible.entity_id == entity.id,
@@ -112,15 +134,21 @@ async def resolve_permission(session: AsyncSession, ctx: AccessContext, entity: 
     if not is_owner_dept and share is None:
         return None
     # роль в пространстве: HEAD — полный доступ к сущностям своего подразделения,
-    # MEMBER — редактирование (своих и поручений пространства)
-    role_in_dept = await session.scalar(
+    # MEMBER — редактирование (своих и поручений пространства).
+    # ВАЖНО: права владельца пространства вычисляются строго по ФАКТУ членства в
+    # подразделении-владельце, а не по «is_owner_dept» (которое может быть открыто
+    # primary-слотом внешнего исполнителя) — иначе исполнитель из другого
+    # пространства получал бы FULL/EDIT как «владелец».
+    member_role = await session.scalar(
         select(DepartmentMember.role_in_dept).where(
             DepartmentMember.user_id == ctx.user.id,
-            DepartmentMember.department_id == entity.owner_department_id)) \
-        if is_owner_dept else None
-    if role_in_dept == Role.HEAD:
-        return Permission.FULL
-    if is_owner_dept:
+            DepartmentMember.department_id == entity.owner_department_id))
+    if entity.owner_department_id in my_depts:
+        if member_role == Role.HEAD:
+            return Permission.FULL
+        return Permission.EDIT
+    if share is None:
+        # доступ только через заполненный primary-слот (см. is_owner_dept выше)
         return Permission.EDIT
     perm = share.permission
     # ответственный из принимающего подразделения >= EDIT
