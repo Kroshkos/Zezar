@@ -196,22 +196,33 @@ workers изолированы).
 
 ---
 
-## 10. Деплой на хостинг Amvera (docker-окружение)
+## 10. Деплой на хостинг Amvera (PaaS, python/pip-окружение)
 
-Подготовлен под требования платформы (https://docs.amvera.ru/applications/configuration/docker.html):
+Подготовлен под требования платформы. Amvera поддерживает два взаимоисключающих
+режима: **Dockerfile** или **файл конфигурации `amvera.yaml`** (toolchain-сборка).
+В проекте выбран второй режим — конфигурация окружения `python` + toolchain `pip`
+(докa: https://docs.amvera.ru/applications/environments/python-pip.html):
 
 | Требование Amvera | Как выполнено в проекте |
 |---|---|
-| `docker-compose.yml` **не поддерживается**, только классический `Dockerfile` | Основной образ — `Dockerfile` в корне; compose остаётся только для self-hosted VPS |
-| Постоянное хранилище монтируется по пути из `run.persistenceMount` | `amvera.yaml` → `persistenceMount: /data`, ровно там лежит SQLite (`DATABASE_PATH=/data/caesar.db`) — данные переживают пересборки контейнера |
-| Порт приложения задаётся через `run.containerPort` (по умолчанию 80) | `containerPort: 8000`; uvicorn слушает `${PORT:-8000}` (совместимо и с другими платформами, отдающими переменную `PORT`) |
-| Запуск через `run.command`/`run.args` | `amvera.yaml` явно задаёт `uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"` |
+| Секция `meta`: `environment: python`, `toolchain.name: pip`, версия Python | `amvera.yaml` → `python` / `pip` / `3.12` |
+| Зависимости ставятся из `requirements.txt` (`build.requirementsPath` по умолчанию) | секция `build` не нужна; все пакеты (fastapi, uvicorn[standard], alembic…) зафиксированы в `requirements.txt` |
+| ASGI-приложение запускается через `run.command` (официальный рецепт «FastAPI» из доки) | `uvicorn --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' app.main:app` |
+| Порт задаётся **только** параметром `containerPort` (переменная `PORT` платформой не инжектируется) | `containerPort: 8080` = тот же порт в команде uvicorn |
+| Постоянное хранилище — путь из `run.persistenceMount` (по умолчанию `/data`) | `persistenceMount: /data`, ровно там лежит SQLite (`DATABASE_PATH=/data/caesar.db`) — данные переживают перезапуски/пересборки |
+| `docker-compose.yml` **не поддерживается** | compose остаётся только для self-hosted VPS; на Amvera используется `amvera.yaml` |
+| TLS терминируется платформой (внутрь контейнера приходит HTTP) | `--proxy-headers` + `TRUST_PROXY_HEADERS=true`; cookies Secure/HttpOnly |
+
+> **Про Dockerfile:** он нужен для self-hosted VPS (`docker build`/compose). На Amvera
+> при наличии `amvera.yaml` сборка идёт через venv+pip. Если предпочитаете docker-режим
+> платформы — создайте приложение типа «Docker» и удалите `amvera.yaml` из корня
+> репозитория (порт 8000 из CMD тогда потребует `run.containerPort: 8000`).
 
 ### Шаги деплоя
 
-1. **Создайте приложение** в панели Amvera типа «Docker» и привяжите git-репозиторий
+1. **Создайте приложение** в панели Amvera и привяжите git-репозиторий
    (`https://github.com/Kroshkos/Zezar`). Файл `amvera.yaml` в корне будет подхвачен
-   автоматически; при сборке используется `Dockerfile`.
+   автоматически; конфигурация берётся из него.
 2. **Переменные окружения** — добавьте в настройках приложения (не в git!):
 
    ```
@@ -223,8 +234,11 @@ workers изолированы).
    BOOTSTRAP_ADMIN_YA_IDS=<ваш yandex sub>
    COOKIE_SECURE=false        # см. пояснение ниже
    TRUST_PROXY_HEADERS=true
-   PORT=8000
+   DATABASE_PATH=/data/caesar.db
    ```
+
+   Переменная `PORT` **не требуется**: порт жёстко задан в `amvera.yaml`
+   (`containerPort: 8080` и та же цифра в команде uvicorn).
 
    Важно про cookies: Amvera терминирует TLS на своём балансировщике и внутрь
    контейнера отдаёт HTTP. Флаг `Secure` у session-cookie в этом случае безопасен

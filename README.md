@@ -101,7 +101,7 @@ PYTHONPATH=. python scripts/e2e_test.py
 
 | Вариант | Файлы | Особенности |
 |---|---|---|
-| **Amvera** (облачный PaaS, docker) | `amvera.yaml` + `Dockerfile` | compose на платформе не поддерживается; постоянное хранилище монтируется в `/data` (`persistenceMount`), порт 8000 (`containerPort`). Инструкция — DEPLOY.md, п. 10 |
+| **Amvera** (облачный PaaS) | `amvera.yaml` (окружение `python`/toolchain `pip`) | сборка через venv+pip по `requirements.txt`; ASGI-запуск uvicorn на порту 8080 (`containerPort`); постоянное хранилище монтируется в `/data` (`persistenceMount`). `Dockerfile` — для self-hosted. Инструкция — DEPLOY.md, п. 10 |
 | **Self-hosted VPS** | `docker-compose.yml` + `Dockerfile` | свой nginx/TLS, volume `caesar-data:/data` |
 
 Инструкция для конечных пользователей: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
