@@ -172,16 +172,22 @@ def can_manage_sharing(perm: Permission | None) -> bool:
 async def ensure_responsibles(session: AsyncSession, entity: Entity) -> None:
     """Инвариант «по одному ответственному от каждого участвующего подразделения»:
     при шеринге создаём запись-слот для принимающего подразделения (назначает head),
-    при снятии шеринга — удаляем слот этого подразделения."""
+    при снятии шеринга — удаляем слот этого подразделения.
+
+    ВАЖНО: списки читаем ЯВНЫМИ SELECT'ами и materialize'руем в списки до любых
+    add/delete. Иначе autoflush перед новым SELECT удаляет pending-объекты
+    EntityShare, созданные вызывающим кодом (share_with при создании сущности),
+    что приводило к потере шеринга и нарушению инварианта ответственных.
+    """
     dept_ids = {entity.owner_department_id}
-    shares = await session.scalars(
+    shares = list(await session.scalars(
         select(EntityShare).where(EntityShare.entity_id == entity.id)
-    )
+    ))
     for s in shares:
         dept_ids.add(s.target_department_id)
-    existing = await session.scalars(
+    existing = list(await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == entity.id)
-    )
+    ))
     have = {r.department_id for r in existing}
     for d in dept_ids - have:
         session.add(EntityResponsible(entity_id=entity.id, department_id=d, user_id=None))
