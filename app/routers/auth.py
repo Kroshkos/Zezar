@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger("caesar.auth")
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -62,7 +65,15 @@ async def callback(request: Request, code: str = "", state: str = "",
                                  ((Invite.email != None) & (Invite.email == ya.email)))  # noqa: E711
         )
         if inv is None:
-            return RedirectResponse("/login?error=not_allowed", status_code=302)
+            # Подсказка для bootstrap-администратора: на первом входе логин
+            # виден только ему (в браузере), поэтому по нему можно заполнить
+            # BOOTSTRAP_ADMIN_YA_IDS. Для чужих аккаунтов id не раскрываем —
+            # админ создаст Invite по email.
+            logger.warning(
+                "Yandex userinfo: id=%s default_email=%s login=%s — доступ закрыт",
+                ya.yandex_id, ya.default_email, ya.email)
+            return RedirectResponse(
+                f"/login?error=not_allowed&ya_id={ya.yandex_id}", status_code=302)
         user = User(yandex_id=ya.yandex_id, email=ya.email,
                     display_name=inv.display_name or ya.display_name,
                     role=inv.role, initials=_initials(inv.display_name or ya.display_name))
