@@ -59,6 +59,7 @@ class SyncState(str, enum.Enum):
     PENDING = "pending"        # сущность изменилась, нужна синхронизация
     SYNCED = "synced"
     ERROR = "error"
+    DELETED = "deleted"        # событие удалено из календарей (после calendar.remove)
 
 
 # ======================= Пользователи =======================
@@ -80,6 +81,8 @@ class User(TimestampMixin, Base):
     # Telegram-привязка
     telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     telegram_notify: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_bind_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True)  # /start <код>
+    telegram_optout: Mapped[Optional[str]] = mapped_column(String(20))  # NULL|'all' (/mute)
 
     # Яндекс.Календарь (app-пароль пользователя для WebDAV; шифруется на диске)
     yandex_cal_app_password_enc: Mapped[Optional[str]] = mapped_column(Text)

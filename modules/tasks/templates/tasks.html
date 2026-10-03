@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{# Страница «Задачи»: полная копия вёрстки renderTasks() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="taskFormModal()">＋ Задача</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="fq" placeholder="🔍 Поиск по тексту, описанию, исполнителю…" style="flex:1;min-width:220px" oninput="renderTaskTable()">
+    <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
+      <input type="checkbox" id="fover" style="width:auto" onchange="renderTaskTable()"> ⚠ только просроченные</label>
+    <span id="fchips"></span>
+  </div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }} fchip" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglF(this)">{{ s.label }}</button>{% endfor %}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for p in priorities %}<button class="badge {{ p.color }} fchip" data-k="{{ p.key }}" style="border:0;cursor:pointer" onclick="tglF(this)">{{ p.label }}</button>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card" style="overflow-x:auto">
+  <table class="tbl"><thead><tr>
+    <th>Задача</th><th>Исполнитель</th><th>Приоритет</th><th>Срок</th><th>Подразделение / доступ</th><th>Статус</th><th></th>
+  </tr></thead><tbody id="ttb"></tbody></table>
+  <div class="empty" id="tempty" hidden>✅<p>Ничего не найдено</p></div>
+</div>
+
+<script id="taskData" type="application/json">
+{{ {'tasks': tasks, 'statuses': statuses, 'priorities': priorities,
+    'departments': departments, 'people': people} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/tasks.js"></script>
+{% endblock %}

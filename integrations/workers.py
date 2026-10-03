@@ -68,13 +68,15 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     ent = await session.get(Entity, p.get("entity_id")) if p.get("entity_id") else None
     if ent is None:
         return
-    if topic == "calendar.remove" or ent.sync_state == SyncState.DELETED:
-        # удаляем из календаря каждого привязанного пользователя (грубо: у кого есть доступ)
-        users = (await session.scalars(select(User).where(
-            User.yandex_cal_app_password_enc != None,  # noqa: E711
-            User.is_active == True))).all()  # noqa: E712
-        for u in users:
-            path = u.yandex_cal_name or "Цезарь"
+    if topic == "calendar.remove":
+        # удаляем событие из календарей всех ответственных (им именно оно и показывалось)
+        resp_rows = (await session.scalars(
+            select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
+                                            EntityResponsible.user_id != None))).all()  # noqa: E711
+        for r in resp_rows:
+            u = await session.get(User, r.user_id)
+            if not u or not u.yandex_cal_app_password_enc or not u.email:
+                continue
             try:
                 client_path = await _cal_path(u)
                 if client_path:
@@ -82,6 +84,7 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                           client_path, ent.cal_uid)
             except Exception as e:  # noqa: BLE001
                 log.warning("cal delete failed user=%s: %s", u.id, e)
+        ent.sync_state = SyncState.DELETED
         return
     if not ent.due_date:
         ent.sync_state = SyncState.SYNCED
@@ -101,7 +104,7 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
-            ent.cal_last_sync_at = datetime.now(timezone.utc)
+            ent.cal_synced_at = datetime.now(timezone.utc)
 
 
 _cal_path_cache: dict[int, str] = {}

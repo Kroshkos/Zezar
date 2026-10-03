@@ -50,10 +50,34 @@ class ModuleRegistry:
         return self._specs.get(key)
 
     def mount(self, app: FastAPI) -> None:
-        """Динамическая регистрация в ядре: роутеры + запись в module_registry (БД)."""
+        """Динамическая регистрация в ядре: REST-роутеры на /api/<key>."""
         for spec in self.all():
             if spec.router is not None:
                 app.include_router(spec.router, prefix=f"/api/{spec.key}", tags=[spec.key])
+
+    def mount_pages(self, app: FastAPI) -> None:
+        """HTML-страницы модулей — на /<key> (тот же роутер плагина)."""
+        for spec in self.all():
+            if spec.router is not None:
+                app.include_router(spec.router, prefix=f"/{spec.key}",
+                                   tags=[f"page-{spec.key}"], include_in_schema=False)
+
+    async def sync_table(self, session) -> None:
+        """Синхронизирует реестр с таблицей module_registry (для UI администрирования)."""
+        from app.models.core import ModuleRegistry
+        existing = {r.key: r for r in (await session.scalars(select(ModuleRegistry))).all()}
+        changed = False
+        for spec in self.all():
+            row = existing.get(spec.key)
+            if row is None:
+                session.add(ModuleRegistry(key=spec.key, title=spec.title, icon=spec.icon,
+                                           order=spec.order, is_core=spec.is_core))
+                changed = True
+            else:
+                row.title, row.icon, row.order, row.is_core = (
+                    spec.title, spec.icon, spec.order, spec.is_core)
+        if changed:
+            await session.commit()
 
     def autodiscover(self, package: str = "modules") -> None:
         """Импорт modules.<pkg>.manifest, каждый manifest вызывает registry.register."""
