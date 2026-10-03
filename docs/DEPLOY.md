@@ -193,11 +193,68 @@ workers изолированы).
 
 ---
 
-## 10. Чек-лист перед вводом в эксплуатацию
+## 10. Деплой на хостинг Amvera (docker-окружение)
+
+Подготовлен под требования платформы (https://docs.amvera.ru/applications/configuration/docker.html):
+
+| Требование Amvera | Как выполнено в проекте |
+|---|---|
+| `docker-compose.yml` **не поддерживается**, только классический `Dockerfile` | Основной образ — `Dockerfile` в корне; compose остаётся только для self-hosted VPS |
+| Постоянное хранилище монтируется по пути из `run.persistenceMount` | `amvera.yaml` → `persistenceMount: /data`, ровно там лежит SQLite (`DATABASE_PATH=/data/caesar.db`) — данные переживают пересборки контейнера |
+| Порт приложения задаётся через `run.containerPort` (по умолчанию 80) | `containerPort: 8000`; uvicorn слушает `${PORT:-8000}` (совместимо и с другими платформами, отдающими переменную `PORT`) |
+| Запуск через `run.command`/`run.args` | `amvera.yaml` явно задаёт `uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"` |
+
+### Шаги деплоя
+
+1. **Создайте приложение** в панели Amvera типа «Docker» и привяжите git-репозиторий
+   (`https://github.com/Kroshkos/Zezar`). Файл `amvera.yaml` в корне будет подхвачен
+   автоматически; при сборке используется `Dockerfile`.
+2. **Переменные окружения** — добавьте в настройках приложения (не в git!):
+
+   ```
+   ENVIRONMENT=production
+   SECRET_KEY=<python -c "import secrets;print(secrets.token_hex(32))">
+   YANDEX_CLIENT_ID=...
+   YANDEX_CLIENT_SECRET=...
+   YANDEX_REDIRECT_URI=https://<ваш-домен>.amvera.app/auth/callback
+   BOOTSTRAP_ADMIN_YA_IDS=<ваш yandex sub>
+   COOKIE_SECURE=false        # см. пояснение ниже
+   TRUST_PROXY_HEADERS=true
+   PORT=8000
+   ```
+
+   Важно про cookies: Amvera терминирует TLS на своём балансировщике и внутрь
+   контейнера отдаёт HTTP. Флаг `Secure` у session-cookie в этом случае безопасен
+   (внешний трафик всегда HTTPS), но если браузер почему-то видит http-origin,
+   вход можно починить значением `COOKIE_SECURE=false`. Fail-fast продакшена при
+   этом сохраняется: без длинного `SECRET_KEY` и OAuth-кредов контейнер не стартует.
+3. **OAuth-консоль Яндекс ID**: зарегистрируйте приложение с redirect URI из п. 2
+   (см. раздел 4 этой инструкции). Домен `.amvera.app` выдаётся бесплатно после деплоя.
+4. **Деплой**: push в ветку → Amvera собирает образ и запускает контейнер.
+   Проверка готовности: `curl https://<домен>/healthz` → `{"ok": true, ...}`.
+5. **Первый вход**: откройте `/auth/login`, войдите через Яндекс ID — ваш `sub` из
+   `BOOTSTRAP_ADMIN_YA_IDS` получит роль ADMIN (далее очистите переменную и
+   перезадеплойте).
+
+### Ограничения платформы (учесть)
+
+- **Ресурсы**: бесплатного тарифа хватает на пилот (~десятки пользователей); SQLite WAL
+  на одном экземпляре контейнера — обязательное условие (Amvera и так запускает один
+  контейнер на приложение).
+- **Бэкапы**: скачивайте содержимое `/data` из панели Amvera (или `VACUUM INTO` через
+  exec) — том persistence изолирован от образа и живёт между деплоями.
+- **Telegram long-polling и воркеры календаря** работают внутри lifespan того же
+  контейнера — дополнительных сервисов (как в compose-варианте) разворачивать не нужно.
+- Alembic-миграции ещё не подключены: при изменении колонок на боевой БД выполните
+  одноразовый `ALTER TABLE` (exec в контейнере) либо временный `drop` файла БД + seed.
+
+---
+
+## 11. Чек-лист перед вводом в эксплуатацию
 
 - [ ] `SECRET_KEY` длинный случайный, ротация предусмотрена
 - [ ] `ENVIRONMENT=production`, dev-вход и демо-сид выключены (fail-fast проходит)
-- [ ] TLS включён, HSTS желателен, `COOKIE_SECURE=true`
+- [ ] TLS включён, HSTS желателен; на хостингах с TLS-терминированием (Amvera) — `COOKIE_SECURE=false`, см. п. 10
 - [ ] `YANDEX_REDIRECT_URI` = боевой домен, зарегистрирован в OAuth-консоли
 - [ ] `BOOTSTRAP_ADMIN_YA_IDS` заполнен; после создания админов — очищен
 - [ ] Telegram-токен проверен: бот отвечает `/help`

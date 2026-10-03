@@ -1,0 +1,19 @@
+# Не тащим в контекст сборки лишнее и секреты
+.git
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+data/
+*.db
+*.db-wal
+*.db-shm
+sipm_lite_v3.html
+README.md

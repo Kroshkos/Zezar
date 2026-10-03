@@ -6,6 +6,8 @@ services:
     ports:
       - "8000:8000"
     environment:
+      PORT: 8000
+      TRUST_PROXY_HEADERS: "true"
       ENVIRONMENT: production
       DATA_DIR: /data
       DATABASE_PATH: /data/caesar.db

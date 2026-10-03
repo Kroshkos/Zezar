@@ -1,0 +1,17 @@
+# Конфигурация деплоя на Amvera (https://docs.amvera.ru/applications/configuration/docker.html)
+#
+# Особенности платформы, учтённые здесь:
+#  • docker-compose.yml НЕ поддерживается — используется только классический Dockerfile;
+#  • persistenceMount примонтирует постоянное хранилище к /data — ровно туда,
+#    где лежит SQLite-файл (DATABASE_PATH=/data/caesar.db). Данные переживают
+#    пересборку/перезапуск контейнера;
+#  • containerPort = 8000 — порт, который слушает uvicorn в CMD нашего Dockerfile.
+
+build:
+  dockerfile: Dockerfile   # лежит в корне репозитория
+
+run:
+  command: uvicorn
+  args: app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"
+  containerPort: 8000
+  persistenceMount: /data

@@ -92,6 +92,13 @@ PYTHONPATH=. python scripts/e2e_test.py
 См. подробную инструкцию: **[docs/DEPLOY.md](docs/DEPLOY.md)**
 (OAuth Яндекс ID, Telegram-бот, TLS/reverse-proxy, миграция данных, бэкапы).
 
+Готовые варианты развёртывания:
+
+| Вариант | Файлы | Особенности |
+|---|---|---|
+| **Amvera** (облачный PaaS, docker) | `amvera.yaml` + `Dockerfile` | compose на платформе не поддерживается; постоянное хранилище монтируется в `/data` (`persistenceMount`), порт 8000 (`containerPort`). Инструкция — DEPLOY.md, п. 10 |
+| **Self-hosted VPS** | `docker-compose.yml` + `Dockerfile` | свой nginx/TLS, volume `caesar-data:/data` |
+
 Инструкция для конечных пользователей: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
 ## Безопасность

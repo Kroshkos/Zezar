@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # Продакшен-харденинг
     seed_demo_data: bool = False          # демо-пользователи/подразделения при пустой БД (только dev)
     cookie_secure: bool | None = None     # None => авто: secure в продакшене, иначе http-only без Secure
+    trust_proxy_headers: bool = False     # доверять X-Forwarded-Proto (Amvera/nginx и т.п. TLS-терминаторы)
+
+    @property
+    def forwarded_allow_ips(self) -> str:
+        """IP трафик-прокси для uvicorn --forwarded-allow-ips (из env FORWARDED_ALLOW_IPS)."""
+        import os
+        return os.getenv("FORWARDED_ALLOW_IPS", "*")
 
     @property
     def is_production(self) -> bool:
@@ -45,7 +52,12 @@ class Settings(BaseSettings):
 
     @property
     def session_cookie_secure(self) -> bool:
-        """Явное значение из .env; если не задано — Secure только в продакшене."""
+        """Явное значение из .env; если не задано — Secure только в продакшене.
+
+        Хостинги с TLS-терминированием на балансировщике (Amvera и т.п.) отдают
+        внутрь контейнера HTTP; там Secure-флаг ломает вход по cookie, поэтому
+        его можно явно выключить: COOKIE_SECURE=false TRUST_PROXY_HEADERS=true.
+        """
         if self.cookie_secure is not None:
             return self.cookie_secure
         return self.is_production
