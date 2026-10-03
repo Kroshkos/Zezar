@@ -42,11 +42,18 @@ async def _outbox_once() -> None:
                                       OutboxEvent.attempts < 8)
             .order_by(OutboxEvent.id).limit(50))).all()
         for ev in rows:
-            if ev.topic == "telegram.notify":
-                await _handle_tg_notify(session, ev.payload_json or {})
-            elif ev.topic in ("calendar.sync", "calendar.remove"):
-                await _handle_calendar(session, ev.topic, ev.payload_json or {})
-            ev.processed_at = datetime.now(timezone.utc)
+            ev.attempts += 1
+            try:
+                if ev.topic == "telegram.notify":
+                    await _handle_tg_notify(session, ev.payload_json or {})
+                elif ev.topic in ("calendar.sync", "calendar.remove"):
+                    await _handle_calendar(session, ev.topic, ev.payload_json or {})
+                ev.status = "done"
+                ev.processed_at = datetime.now(timezone.utc)
+            except Exception as e:  # noqa: BLE001
+                ev.status = "error"
+                ev.last_error = str(e)[:2000]
+                log.warning("outbox event %s failed (attempt %s): %s", ev.id, ev.attempts, e)
         await session.commit()
 
 
@@ -93,18 +100,25 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     resp_rows = (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
                                         EntityResponsible.user_id != None))).all()  # noqa: E711
+    any_fail = False
     for r in resp_rows:
         u = await session.get(User, r.user_id)
         if not u or not u.yandex_cal_app_password_enc or not u.email:
-            continue
+            continue  # пользователь не привязал календарь — ждём, не считаем ошибкой
         path = await _cal_path(u)
         if not path:
+            any_fail = True
             continue
         ok = await yc.upsert_event(u.email, u.yandex_cal_app_password_enc, path, ent,
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
             ent.cal_synced_at = datetime.now(timezone.utc)
+        else:
+            any_fail = True
+    if any_fail and ent.sync_state != SyncState.SYNCED:
+        ent.sync_state = SyncState.ERROR
+        raise RuntimeError(f"calendar upsert failed for entity {ent.uid}")
 
 
 _cal_path_cache: dict[int, str] = {}
