@@ -174,10 +174,14 @@ async def main() -> None:
             # 11. модуль «Совещания»: CRUD + карточная страница + payload-календарь
             r = await c.get("/meetings", headers=cookie)
             assert r.status_code == 200 and "Совещания" in r.text and "mcards" in r.text, r.status_code
+            # совещание создаётся ЯВНО в dep-it (домашнее пространство cookie-юзера) —
+            # иначе _pick_department детерминированно возьмёт первое членство и для
+            # админа это dep-strat, где member-it (проверка ниже) ничего не видит
             r = await c.post("/api/meetings", headers=cookie, json={
                 "title": "КС по дорожной карте ИС «Цезарь»", "status_key": "planned",
                 "due_date": "2026-10-20", "time": "14:00", "num": "17",
-                "chair": "Иванов И.И.", "location": "к. 412"})
+                "chair": "Иванов И.И.", "location": "к. 412",
+                "department_id": depts["dep-it"]})
             assert r.status_code == 200, r.text
             m_uid = r.json()["uid"]
             r = await c.get("/api/meetings/api-list", headers=cookie)
@@ -207,7 +211,8 @@ async def main() -> None:
             assert r.status_code == 200, r.text
 
             # 12. модуль «Администрирование подразделения»: страница + права
-            r = await c.get("/admin_dept", headers=cookie)
+            # admin/координатору страница требует department_id (управляет чужим ws)
+            r = await c.get(f"/admin_dept/?department_id={depts['dep-it']}", headers=cookie)
             assert r.status_code == 200 and "Участники" in r.text \
                 and "Модули рабочего пространства" in r.text, r.status_code
             assert "admin_dept" in r.text  # пункт навигации/контекст страницы
