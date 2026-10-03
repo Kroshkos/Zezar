@@ -1,9 +1,9 @@
 /* Модуль «Проектная работа»: карточки проектов (сетка .cards как в прототипе), данные с сервера. */
 "use strict";
-const PD = JSON.parse(document.getElementById('projData').textContent);
+const PRJ = JSON.parse(document.getElementById('projData').textContent);
 const PS = new Set();
-const pstOf = k => PD.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
-const prioOf = k => PD.priorities.find(p=>p.key===k)||{label:k||'—',color:'b-gray'};
+const pstOf = k => PRJ.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
+const prioOf = k => PRJ.priorities.find(p=>p.key===k)||{label:k||'—',color:'b-gray'};
 const pfmt = d => d ? d.split('-').reverse().join('.') : '—';
 
 function tglP(el){const k=el.dataset.k;
@@ -36,7 +36,7 @@ function collectStages(f){
 
 function renderProjCards(){
   const q=(document.getElementById('pq').value||'').toLowerCase();
-  let list=PD.projects.filter(p=>{
+  let list=PRJ.projects.filter(p=>{
     if(q && !(p.title+' '+(p.customer||'')+' '+(p.budget||'')).toLowerCase().includes(q))return false;
     if(PS.size && !PS.has(p.status_key))return false;
     return true;
@@ -68,19 +68,19 @@ function renderProjCards(){
 }
 
 async function delProj(uid){
-  const p=PD.projects.find(x=>x.uid===uid);
+  const p=PRJ.projects.find(x=>x.uid===uid);
   askConfirm('Удалить проект «'+p.title+'»? Этапы и ссылки будут потеряны.',async()=>{
     await api('/api/projects/'+uid,{method:'DELETE'});
-    PD.projects=PD.projects.filter(x=>x.uid!==uid);renderProjCards();toast('Удалено');});
+    PRJ.projects=PRJ.projects.filter(x=>x.uid!==uid);renderProjCards();toast('Удалено');});
 }
 
 function projFormModal(uid){
-  const p=uid?PD.projects.find(x=>x.uid===uid):null;
-  const statSel=PD.statuses.map(s=>'<option value="'+s.key+'" '+(p&&p.status_key===s.key?'selected':(!p&&s.key==='init'?'selected':''))+'>'+esc(s.label)+'</option>').join('');
-  const prioSel=PD.priorities.map(x=>'<option value="'+x.key+'" '+((p?p.priority_key:'medium')===x.key?'selected':'')+'>'+esc(x.label)+'</option>').join('');
+  const p=uid?PRJ.projects.find(x=>x.uid===uid):null;
+  const statSel=PRJ.statuses.map(s=>'<option value="'+s.key+'" '+(p&&p.status_key===s.key?'selected':(!p&&s.key==='init'?'selected':''))+'>'+esc(s.label)+'</option>').join('');
+  const prioSel=PRJ.priorities.map(x=>'<option value="'+x.key+'" '+((p?p.priority_key:'medium')===x.key?'selected':'')+'>'+esc(x.label)+'</option>').join('');
   let deptSel='';
-  if(PD.departments.length&&!p){deptSel='<div><label>Подразделение-владелец</label><select name="department_id">'
-    +PD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
+  if(PRJ.departments.length&&!p){deptSel='<div><label>Подразделение-владелец</label><select name="department_id">'
+    +PRJ.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
   const body='<label>Название проекта *</label><input name="title" required value="'+esc(p?p.title:'')+'">'
     +'<div class="frow">'
     +'<div><label>Заказчик</label><input name="customer" value="'+esc(p&&p.customer||'')+'"></div>'
@@ -108,7 +108,7 @@ function projFormModal(uid){
       toast('Сохранено · веха обновится в календарях');
     }else{
       const r=await api('/api/projects',{method:'POST',body:JSON.stringify(pl)});
-      PD.projects.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
+      PRJ.projects.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
         cross_dept:false,progress:0,stage_done:0,stage_total:0,stages:[],links:[]},pl));
       toast('Проект создан');
     }
@@ -117,9 +117,9 @@ function projFormModal(uid){
 }
 
 async function shareProj(uid){
-  if(!PD.departments.length){toast('Нет подразделений');return}
+  if(!PRJ.departments.length){toast('Нет подразделений');return}
   const body='<label>Подразделение-участник</label><select name="target_department_id">'
-    +PD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
+    +PRJ.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
     +'<label>Права принимающей стороны</label><select name="permission">'
     +'<option value="edit">Редактирование</option><option value="read">Только чтение</option></select>';
   openModal('Привлечь подразделение к проекту',body,async(fd)=>{

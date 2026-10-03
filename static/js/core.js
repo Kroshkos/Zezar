@@ -1,7 +1,10 @@
 /* Ядро фронтенда: toast/модалка/fetch — поведение как openModal/toast в прототипе */
 "use strict";
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Универсальный вызов API. Тело можно передать строкой (JSON) или объектом — как в core.js, так и в admin_dept.
 async function api(path,opts={}){
+  if(typeof opts==='string')opts={method:opts};
+  if(opts&&typeof opts.body==='object'&&opts.body!==null){opts={...opts,body:JSON.stringify(opts.body)};}
   const r=await fetch(path,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});
   if(r.status===401){location.href='/login';throw new Error('auth');}
   if(!r.ok){let d;try{d=(await r.json()).detail}catch(e){d=r.statusText}toast('⚠ '+d,true);throw new Error(d)}
