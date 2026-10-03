@@ -58,50 +58,74 @@ def entity_filter(ctx: AccessContext):
         .where(EntityShare.target_department_id.in_(ctx.department_ids or [-1]))
     )
     conds.append(Entity.id.in_(shared))
-    # я НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа);
-    # доступ через это условие возможен только для шерингнутых сущностей —
-    # «свой» ответственный всегда в пространстве-владельце
+    # я НАЗНАЧЕННЫЙ ответственный (user_id != NULL; пустые слоты-заготовки не дают доступа).
+    # ВАЖНО (изоляция пространств): ответственность даёт доступ ТОЛЬКО если моё
+    # подразделение участвует в сущности — является владельцем или получателем
+    # шэра. Иначе случайный/служебный слот просачивал бы чужие сущности в
+    # пространство пользователя на уровне SQL-фильтра. Точная проверка прав
+    # всегда выполняется в resolve_permission (минимум прав).
     resp = (
         select(EntityResponsible.entity_id)
-        .where(EntityResponsible.user_id == ctx.user.id,
-               EntityResponsible.entity_id.in_(shared))
+        .where(EntityResponsible.user_id == ctx.user.id)
+        .where(or_(
+            EntityResponsible.department_id.in_(ctx.department_ids or [-1]),
+            select(EntityShare.id).where(
+                EntityShare.entity_id == EntityResponsible.entity_id,
+                EntityShare.target_department_id == EntityResponsible.department_id,
+            ).exists(),
+        ))
     )
     conds.append(Entity.id.in_(resp))
     return or_(*conds)
 
 
 async def resolve_permission(session: AsyncSession, ctx: AccessContext, entity: Entity) -> Permission | None:
-    """Максимальный уровень прав пользователя на конкретную сущность (None = нет доступа)."""
+    """Максимальный уровень прав пользователя на конкретную сущность (None = нет доступа).
+
+    Единый источник истины для ВСЕХ точек входа (HTML, REST, TG, воркеры).
+    Права определяются СТРОГО фактом шеринга (EntityShare), а не членством:
+      - пользователь состоит в подразделении-владельце          -> EDIT;
+      - сущность расшарена одному из его подразделений          -> permission шэра;
+      - он назначенный ответственный принимающей стороны         -> не ниже EDIT;
+      - иначе                                                    -> None.
+    Особый случай: сущность «бесхозная» (подразделение-владелец удалено / данных
+    о членстве нет) и при этом НЕ имеет ни одного активного шэра — она видна
+    глобальным ролям (админ/координатор) и больше никому (иначе нарушается
+    изоляция пространств). Это же правило действует и для is_global: см. ниже.
+    """
+    shares = (await session.scalars(
+        select(EntityShare).where(EntityShare.entity_id == entity.id))).all()
     if ctx.is_global:
+        # Админ/координатор: полный доступ ко всем сущностям системы (по ТЗ),
+        # но бесхозная сущность без активных шэров остаётся доступна только им.
         return Permission.FULL
-    # Инвариант изоляции рабочих пространств: без шеринга доступ есть только
-    # подразделению-владельцу и НАЗНАЧЕННОМУ ответственному. Создатель/грантер
-    # сам по себе доступ не даёт (иначе задача админа «просачивалась» бы во все
-    # пространства, где он состоит).
-    related = (entity.owner_department_id in ctx.department_ids
-               or any(r.user_id == ctx.user.id for r in entity.responsibles))
-    share = await session.scalar(
-        select(EntityShare).where(
-            EntityShare.entity_id == entity.id,
-            EntityShare.target_department_id.in_(ctx.department_ids or [-1]),
-        )
-    )
-    if not related and share is None:
+    my_depts = set(ctx.department_ids)
+    share = next((s for s in shares if s.target_department_id in my_depts), None)
+    is_owner_dept = entity.owner_department_id in my_depts
+    my_resp = await session.scalar(
+        select(EntityResponsible).where(
+            EntityResponsible.entity_id == entity.id,
+            EntityResponsible.user_id == ctx.user.id))
+    # Инвариант изоляции рабочих пространств: доступ есть только подразделению-
+    # владельцу и подразделениям из списка шэров. Членство админа в каком-либо
+    # пространстве само по себе доступ к чужим сущностям не даёт.
+    if not is_owner_dept and share is None:
         return None
-    if entity.owner_department_id in ctx.department_ids:
-        # внутри своего пространства: head/участник с ролью head_in_dept — edit+, member — edit своих
+    # роль в пространстве: HEAD — полный доступ к сущностям своего подразделения,
+    # MEMBER — редактирование (своих и поручений пространства)
+    role_in_dept = await session.scalar(
+        select(DepartmentMember.role_in_dept).where(
+            DepartmentMember.user_id == ctx.user.id,
+            DepartmentMember.department_id == entity.owner_department_id)) \
+        if is_owner_dept else None
+    if role_in_dept == Role.HEAD:
+        return Permission.FULL
+    if is_owner_dept:
         return Permission.EDIT
-    perm = share.permission if share else Permission.READ
+    perm = share.permission
     # ответственный из принимающего подразделения >= EDIT
-    if perm is not None and _perm_lt(perm, Permission.EDIT):
-        is_resp = await session.scalar(
-            select(EntityResponsible).where(
-                EntityResponsible.entity_id == entity.id,
-                EntityResponsible.user_id == ctx.user.id,
-            )
-        )
-        if is_resp:
-            perm = Permission.EDIT
+    if my_resp is not None and _perm_lt(perm, Permission.EDIT):
+        perm = Permission.EDIT
     return perm
 
 

@@ -206,8 +206,11 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
                if k in {"title", "description", "status_key", "priority_key", "due_date", "tags"}}
     await entity_service.update_entity(session, user, ent, changes)
     if "responsible_user_id" in body:
-        await entity_service.assign_responsible(
-            session, user, ent, ent.owner_department_id, body["responsible_user_id"])
+        try:
+            await entity_service.assign_responsible(
+                session, user, ent, ent.owner_department_id, body["responsible_user_id"])
+        except PermissionError as e:
+            raise HTTPException(400, str(e))
     payload = await _load_payload(session, ent.id)
     if payload:
         for f in ("group_key", "project_entity_uid"):
