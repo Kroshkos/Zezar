@@ -146,12 +146,48 @@ async def main() -> None:
             assert all(t["uid"] not in (uid, cross_uid) for t in lst3), \
                 "межпространственная задача просочилась подразделению, не участвующему в шеринге"
 
-            # 11. healthz / реестр
+            # 11. модуль «Совещания»: CRUD + карточная страница + payload-календарь
+            r = await c.get("/meetings", headers=cookie)
+            assert r.status_code == 200 and "Совещания" in r.text and "mcards" in r.text, r.status_code
+            r = await c.post("/api/meetings", headers=cookie, json={
+                "title": "КС по дорожной карте ИС «Цезарь»", "status_key": "planned",
+                "due_date": "2026-10-20", "time": "14:00", "num": "17",
+                "chair": "Иванов И.И.", "location": "к. 412"})
+            assert r.status_code == 200, r.text
+            m_uid = r.json()["uid"]
+            r = await c.get("/api/meetings/api-list", headers=cookie)
+            ml = [m for m in r.json() if m["uid"] == m_uid]
+            assert ml and ml[0]["num"] == "17" and ml[0]["time"] == "14:00", ml
+            # точное время из payload попадает в ICS (хук календаря модуля)
+            from sqlalchemy import select as _sel
+            from app.db.engine import SessionLocal as _SL
+            from app.models.core import Entity as _E
+            from app.models.module_payloads import MeetingPayload as _MP
+            from integrations.yandex_calendar import ics_for_entity
+            async with _SL() as _s:
+                ent_obj = await _s.scalar(_sel(_E).where(_E.uid == m_uid))
+                ent_obj._cal_payload = await _s.get(_MP, ent_obj.id)
+                ics = ics_for_entity(ent_obj, "Админ")
+            assert "DTSTART;TZID=Europe/Moscow:20261020T140000" in ics, ics
+            assert "LOCATION:к. 412" in ics
+            # патч статуса -> outbox-события (telegram+calendar) идут через ядро
+            r = await c.patch(f"/api/meetings/{m_uid}", headers=cookie,
+                              json={"status_key": "held"})
+            assert r.status_code == 200, r.text
+            # member видит совещание своего подразделения
+            r = await c.get("/api/meetings/api-list", headers=m_cookie)
+            assert any(x["uid"] == m_uid for x in r.json()), "совещание не видно участнику пространства"
+            # удаление — событие calendar.remove уходит в outbox
+            r = await c.delete(f"/api/meetings/{m_uid}", headers=cookie)
+            assert r.status_code == 200, r.text
+
+            # 12. healthz / реестр
             r = await c.get("/healthz")
-            assert "tasks" in r.json()["modules"] and "dashboard" in r.json()["modules"]
+            hm = r.json()["modules"]
+            assert "tasks" in hm and "dashboard" in hm and "meetings" in hm, hm
 
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
-          "шеринг READ/изоляция")
+          "шеринг READ/изоляция, совещания(payload+ICS-время)")
 
 
 async def _pending_events():

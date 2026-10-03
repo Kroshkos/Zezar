@@ -33,6 +33,11 @@ class MeetingPayload(TimestampMixin, Base):
 
     entity_id: Mapped[int] = mapped_column(
         ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True)
+    num: Mapped[Optional[str]] = mapped_column(String(64))            # номер протокола (m.num из демо)
+    chair: Mapped[Optional[str]] = mapped_column(String(200))         # председатель
+    secretary: Mapped[Optional[str]] = mapped_column(String(200))     # секретарь
+    attendees: Mapped[Optional[str]] = mapped_column(Text)            # список участников (текст, как в демо)
+    time_: Mapped[Optional[str]] = mapped_column("time", String(16))  # время начала 'HH:MM'
     agenda: Mapped[list] = mapped_column(JSON, default=list)          # [{q, who, minutes}]
     decisions: Mapped[list] = mapped_column(JSON, default=list)       # [{text, who, due, taskId}]
     linked_task_uids: Mapped[list] = mapped_column(JSON, default=list)

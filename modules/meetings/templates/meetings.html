@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{# Страница «Совещания»: карточная сетка как renderMeetings() из sipm_lite_v3.html #}
+{% block actions %}
+<button class="btn primary" onclick="meetFormModal()">＋ Новое совещание</button>
+{% endblock %}
+
+{% block content %}
+<div class="card pad" style="margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <input id="mq" placeholder="🔍 Поиск по теме, номеру, месту, председателю…" style="flex:1;min-width:220px" oninput="renderMeetCards()">
+    <span id="mchips" style="display:flex;gap:6px;flex-wrap:wrap">
+      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglM(this)">{{ s.label }}</button>{% endfor %}
+    </span>
+  </div>
+</div>
+
+<div class="cards" id="mcards"></div>
+<div class="empty" id="mempty" hidden>🤝<p>Совещаний нет. Нажмите «＋ Новое совещание».</p></div>
+
+<script id="meetData" type="application/json">
+{{ {'meetings': meetings, 'statuses': statuses, 'departments': departments} | tojson }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/meetings.js"></script>
+{% endblock %}
