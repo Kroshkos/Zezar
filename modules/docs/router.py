@@ -43,6 +43,7 @@ class DocIn(BaseModel):
     description: str | None = ""
     department_id: int | None = None         # для админа/координатора: чьё пространство
     responsible_user_id: int | None = None
+    share_with: list[int] = []               # межпространственный контекст: dept_id[]
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> DocPayload | None:
@@ -169,6 +170,8 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
         description=body.description or None, status_key=body.status_key,
         due_date=body.due_date or None,
         responsible_user_id=body.responsible_user_id or user.id,
+        share_with=[(d, Permission.EDIT) for d in dict.fromkeys(body.share_with)]
+        if body.share_with else None,
     )
     session.add(DocPayload(
         entity_id=ent.id, doc_type=body.doc_type or None, number=body.number or None,
