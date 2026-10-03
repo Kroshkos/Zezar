@@ -317,3 +317,24 @@ class OutboxEvent(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/done/error
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
+
+
+# ======================= Закрытая регистрация (допуски) =======================
+
+class Invite(TimestampMixin, Base):
+    """Приглашение, созданное админом: пользователь с указанным yandex_id
+    (или email яндекс-аккаунта) после OAuth-входа получает указанную роль и
+    подразделение. Самостоятельная регистрация невозможна."""
+    __tablename__ = "invites"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    yandex_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    display_name: Mapped[str] = mapped_column(String(160))
+    role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    role_in_dept: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    code: Mapped[Optional[str]] = mapped_column(String(32))  # код привязки Telegram
