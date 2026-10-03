@@ -103,9 +103,9 @@ async def responsibles(uid: str, user: User = Depends(get_current_user),
     out = []
     for r in rows:
         u = await session.get(User, r.user_id) if r.user_id else None
-        d = await session.get(__import__("app.models.core", fromlist=["Department"]).Department,
-                              r.department_id)
+        d = await session.get(Department, r.department_id)
         out.append({"department_id": r.department_id, "department_name": d.name,
+                    "department_code": d.code,
                     "user_id": r.user_id, "user_name": u.display_name if u else None,
                     "is_primary": r.is_primary})
     return out

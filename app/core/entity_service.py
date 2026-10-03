@@ -32,7 +32,15 @@ async def create_entity(
     status_key: str | None = None, priority_key: str | None = None,
     due_date: str | None = None, tags: list | None = None,
     extra_json: dict | None = None, responsible_user_id: int | None = None,
+    share_with: list[tuple[int, Permission]] | None = None,
 ) -> Entity:
+    """Создание сущности.
+
+    share_with — межпространственный контекст (например, задача проекта,
+    в котором участвуют несколько подразделений): [(dept_id, permission), ...].
+    Для каждого участвующего подразделения создаётся свой ответственный/слот
+    (инвариант ТЗ «несколько ответственных» реализуется через ensure_responsibles).
+    """
     ent = Entity(
         uid=_uid(), kind=kind, module_key=module_key,
         owner_department_id=owner_department_id, title=title,
@@ -42,13 +50,19 @@ async def create_entity(
     )
     session.add(ent)
     await session.flush()
+    for dept_id, perm in (share_with or []):
+        if dept_id != owner_department_id:
+            session.add(EntityShare(
+                entity_id=ent.id, target_department_id=dept_id,
+                permission=perm, granted_by_user_id=user.id))
     # ответственный от подразделения-владельца
     session.add(EntityResponsible(
         entity_id=ent.id, department_id=owner_department_id,
         user_id=responsible_user_id, is_primary=True))
     await access.ensure_responsibles(session, ent)
     await _log_and_emit(session, user, "create", ent,
-                        {"title": title, "responsible_user_id": responsible_user_id})
+                        {"title": title, "responsible_user_id": responsible_user_id,
+                         "shared_with": [d for d, _ in (share_with or [])]})
     return ent
 
 

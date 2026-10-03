@@ -83,10 +83,20 @@ async def main() -> None:
 
             # 8. шеринг другому подразделению + слот ответственного
             r = await c.get("/api/core/departments", headers=cookie)
-            depts = {d["code"]: d["id"] for d in r.json()}
+            depts_all = {d["code"]: d["id"] for d in r.json()}
+            depts = depts_all
             r = await c.post(f"/api/core/entities/{uid}/shares", headers=cookie, json={
                 "target_department_id": depts["dep-it"], "permission": "read"})
             assert r.status_code == 200, r.text
+
+            # 8b. межпространственная задача проекта: создаётся СРАЗУ с контекстом
+            #     нескольких подразделений (share_with) — по одному ответственному от каждого
+            r = await c.post("/api/tasks", headers=cookie, json={
+                "title": "КС: интеграция страт+ИТ", "status_key": "new",
+                "priority_key": "high", "due_date": "2026-12-01",
+                "share_with": [depts["dep-strat"]]})
+            assert r.status_code == 200, r.text
+            cross_uid = r.json()["uid"]
 
             # 9. RBAC: member видит расшаренное только на чтение
             r = await c.get("/auth/dev-login?email=member-it@caesar.local")
@@ -97,15 +107,34 @@ async def main() -> None:
             r = await c.patch(f"/api/tasks/{uid}", headers=m_cookie, json={"title": "хакр" * 3})
             assert r.status_code == 403, "READ-шеринг дал право на запись!"
 
-            # 10. изоляция: посторонний участник не видит чужие задачи (созданные НЕ им)
+            # 10. изоляция: посторонний участник не видит чужие задачи (созданные НЕ им);
+            #     расшаренную задачу он видеть ДОЛЖЕН (межпространственный контекст)
             own_uid, _ = await _create_task_as("member-strat@caesar.local",
                                                "Своя задача участника страт.")
             r = await c.get("/auth/dev-login?email=member-strat@caesar.local")
             o_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=o_cookie)
             lst = r.json()
-            assert all(t["uid"] != uid for t in lst), "нарушена изоляция пространств"
+            assert all(t["uid"] != uid for t in lst), \
+                "задача админа без share_with просочилась в чужое пространство"
             assert any(t["uid"] == own_uid for t in lst), "участник не видит собственную задачу"
+
+            # 10b. межпространственная задача (из 8b) видна принимающему подразделению
+            #      на запись, и у неё есть слот ответственного от dep-strat
+            r = await c.get("/api/tasks/api-list", headers=o_cookie)
+            lst2 = r.json()
+            cross = [t for t in lst2 if t["uid"] == cross_uid]
+            assert cross and cross[0]["can_edit"], \
+                "межпространственная задача недоступна принимающему подразделению"
+            r = await c.get(f"/api/core/entities/{cross_uid}/responsibles", headers=o_cookie)
+            assert r.status_code == 200, r.text
+            slots = r.json()
+            strat_slot = [s for s in slots if s.get("department_code") == "dep-strat"]
+            assert strat_slot, f"нет слота ответственного принимающего подразделения: {slots}"
+
+            # 10c. обычная задача админа (без share_with) по-прежнему изолирована
+            assert all(t["uid"] != uid for t in lst2), \
+                "задача админа без share_with просочилась в чужое пространство"
 
             # 11. healthz / реестр
             r = await c.get("/healthz")
