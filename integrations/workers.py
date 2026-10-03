@@ -96,6 +96,16 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     if not ent.due_date:
         ent.sync_state = SyncState.SYNCED
         return
+    # нет ни одного привязанного календаря — держим PENDING (не ложный SYNCED),
+    # cron-проход досинхронизирует после привязки app-пароля
+    bound = [r for r in await session.scalars(
+        select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
+                                        EntityResponsible.user_id != None))  # noqa: E711
+             if (await session.get(User, r.user_id)) is not None
+             and (await session.get(User, r.user_id)).yandex_cal_app_password_enc]
+    if not bound:
+        ent.sync_state = SyncState.PENDING
+        return
     # пишем событие в календари ответственных (по одному событию на человека — см. ТЗ)
     resp_rows = (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,

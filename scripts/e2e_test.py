@@ -19,8 +19,21 @@ import httpx  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.db.engine import SessionLocal  # noqa: E402
-from app.models.core import Entity, OutboxEvent  # noqa: E402
+from app.models.core import Entity, OutboxEvent, User  # noqa: E402
 from integrations.workers import _outbox_once  # noqa: E402
+
+
+async def _create_task_as(email: str, title: str) -> tuple[str, dict]:
+    """Создать задачу от имени пользователя (через реальный HTTP-стек)."""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                 follow_redirects=False) as c:
+        r = await c.get(f"/auth/dev-login?email={email}")
+        ck = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
+        r = await c.post("/api/tasks", headers=ck, json={
+            "title": title, "status_key": "new", "priority_key": "medium"})
+        assert r.status_code == 200, r.text
+        return r.json()["uid"], ck
 
 
 async def main() -> None:
@@ -66,7 +79,7 @@ async def main() -> None:
             after = await _pending_events()
             assert before > 0, "outbox пуст — Transactional Outbox не работает"
             done = await _done_events()
-            assert done > 0, "ни одно событие не помечено done — воркер не обрабатывает очередь"
+            assert len(done) > 0, "ни одно событие не помечено done — воркер не обрабатывает очередь"
 
             # 8. шеринг другому подразделению + слот ответственного
             r = await c.get("/api/core/departments", headers=cookie)
@@ -84,11 +97,15 @@ async def main() -> None:
             r = await c.patch(f"/api/tasks/{uid}", headers=m_cookie, json={"title": "хакр" * 3})
             assert r.status_code == 403, "READ-шеринг дал право на запись!"
 
-            # 10. изоляция: посторонний не видит чужие задачи
+            # 10. изоляция: посторонний участник не видит чужие задачи (созданные НЕ им)
+            own_uid, _ = await _create_task_as("member-strat@caesar.local",
+                                               "Своя задача участника страт.")
             r = await c.get("/auth/dev-login?email=member-strat@caesar.local")
             o_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=o_cookie)
-            assert all(t["uid"] != uid for t in r.json()), "нарушена изоляция пространств"
+            lst = r.json()
+            assert all(t["uid"] != uid for t in lst), "нарушена изоляция пространств"
+            assert any(t["uid"] == own_uid for t in lst), "участник не видит собственную задачу"
 
             # 11. healthz / реестр
             r = await c.get("/healthz")

@@ -4,3 +4,4 @@ __pycache__/
 
 # Environment variables (common for Python projects)
 .env
+.env.local

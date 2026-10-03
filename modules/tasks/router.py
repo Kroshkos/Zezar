@@ -138,9 +138,14 @@ async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> i
         if user.role not in (Role.ADMIN, Role.COORDINATOR):
             raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
         return body.department_id
-    if not user.memberships:
+    # НЕ используем ленивую связь user.memberships (lazy-load в async недопустим) —
+    # только явный SELECT; иначе MissingGreenlet / неопределённое первое подразделение
+    dept_ids = (await session.scalars(
+        select(DepartmentMember.department_id).where(DepartmentMember.user_id == user.id)
+        .order_by(DepartmentMember.id))).all()
+    if not dept_ids:
         raise HTTPException(400, "Вы не состоите ни в одном подразделении — попросите администратора")
-    return user.memberships[0].department_id
+    return dept_ids[0]
 
 
 @router.post("")

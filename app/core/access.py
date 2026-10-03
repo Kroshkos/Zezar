@@ -17,7 +17,7 @@ from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
-    DepartmentMember, Entity, EntityShare, EntityResponsible, Permission, Role, User,
+    AuditLog, DepartmentMember, Entity, EntityShare, EntityResponsible, Permission, Role, User,
 )
 
 _PERM_ORDER = {Permission.READ: 0, Permission.EDIT: 1, Permission.FULL: 2}
