@@ -100,7 +100,8 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
-        cross = await _has_shares(session, ent)
+        cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
         # Инвариант изоляции (см. list_tasks): сущность без шеринга видна только
         # подразделению-владельцу; админ/координатор — исключение по ТЗ.
         if not ctx.is_global and not cross \
@@ -149,7 +150,8 @@ async def list_tasks(user: User = Depends(get_current_user),
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
-        cross = await _has_shares(session, ent)
+        cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
         # Инвариант изоляции рабочих пространств: сущность без шеринга видна ТОЛЬКО
         # подразделению-владельцу. Админ/координатор — исключение (агрегированное
         # представление всех пространств по ТЗ).
@@ -204,9 +206,14 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
         tags=[], responsible_user_id=body.responsible_user_id or user.id,
         share_with=share_with,
     )
+    # ЯВНЫЙ SELECT: не читать ORM-коллекцию ent.shares — после add() pending-объектов
+    # любое последующее flush-событие (autoflush) может откатить непрочитанную
+    # коллекцию; только запрос к БД даёт достоверный факт шеринга.
+    cross = bool(await session.scalar(
+        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
     session.add(TaskPayload(entity_id=ent.id, group_key=body.group_key,
                             project_entity_uid=body.project_entity_uid,
-                            assignee_names=[]))
+                            assignee_names=[], cross_dept=cross))
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
