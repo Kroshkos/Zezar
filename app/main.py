@@ -90,9 +90,11 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault(
+        # script-src 'unsafe-inline': интерфейс наследует вёрстку прототипа с inline-обработчиками
+        # onclick="..." (сохранены 1:1 по ТЗ); скрипты и данные — только локальные (/static, JSON-блоки).
         "Content-Security-Policy",
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
-        "img-src 'self' data:; connect-src 'self'",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
     )
     return response
 
