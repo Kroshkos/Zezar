@@ -24,10 +24,12 @@ git clone <repo-url> caesar && cd caesar
 docker compose build          # образ python:3.12-slim, non-root appuser, healthcheck /healthz
 ```
 
-Схема БД создаётся автоматически при старте (`Base.metadata.create_all`), отдельная
-инициализация не требуется. Для эволюции схемы на изменения колонок подготовьте
-миграцию Alembic (`alembic init` уже добавлен в зависимости; шаблон миграций — TODO
-при первом изменении модели).
+Схема БД управляется **Alembic-миграциями** (базовая ревизия `baseline` создаёт всю схему
+ядра и модулей). При запуске контейнера `entrypoint.sh` автоматически определяет состояние
+БД в `/data`: новая база — `alembic upgrade head`; легаси-база, созданная старым `create_all`
+без таблицы `alembic_version`, — безопасный `alembic stamp head` (данные не трогаются).
+Для локальной разработки без Docker схема по-прежнему создаётся `create_all` при старте
+приложения (идемпотентно поверх смитгрированной базы).
 
 ---
 
@@ -166,10 +168,11 @@ docker run --rm -v caesar_caesar-data:/data -v $(pwd):/out alpine cp /data/backu
 ```bash
 git pull && docker compose up -d --build
 ```
-Совместимость схемы: `create_all` добавляет новые таблицы, но **не изменяет существующие**.
-При релизе, содержащем новые колонки, выполните миграцию Alembic
-(после `alembic revision --autogenerate`) или одноразовый `ALTER TABLE` в
-`docker compose exec caesar python`, затем `alembic stamp head`.
+Совместимость схемы: при сборке новой колонки/таблицы выполните
+`alembic revision --autogenerate -m "<описание>"`, проверьте сгенерированный файл
+(для SQLite используется batch-режим) и коммитьте его вместе с моделью. Контейнер
+при старте сам применит `alembic upgrade head` (см. `entrypoint.sh`); легаси-БД без
+`alembic_version` будет автоматически «штампована» на базовую ревизию без потери данных.
 
 Масштабирование: сервис stateful-однопоточный по дизайну (SQLite + in-process воркеры).
 Запускать ровно **один** экземпляр контейнера; горизонтальное масштабирование нескольких

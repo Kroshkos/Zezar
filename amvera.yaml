@@ -11,7 +11,8 @@ build:
   dockerfile: Dockerfile   # лежит в корне репозитория
 
 run:
-  command: uvicorn
-  args: app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"
+  # Entrypoint сам выполняет миграции (см. ниже) и затем запускает uvicorn на ${PORT:-8000}
+  command: sh
+  args: /srv/app/entrypoint.sh
   containerPort: 8000
   persistenceMount: /data

@@ -90,7 +90,12 @@ PYTHONPATH=. python scripts/e2e_test.py
 ## Деплой в продакшен
 
 См. подробную инструкцию: **[docs/DEPLOY.md](docs/DEPLOY.md)**
-(OAuth Яндекс ID, Telegram-бот, TLS/reverse-proxy, миграция данных, бэкапы).
+(OAuth Яндекс ID, Telegram-бот, TLS/reverse-proxy, бэкапы).
+
+**Миграции схемы — Alembic**: базовая ревизия `alembic/versions/*baseline*` создаёт всю
+схему (ядро + payload-таблицы модулей); контейнер при старте сам применяет
+`alembic upgrade head` (легаси-БД автоматически штампуется через `stamp head`).
+Новая колонка в модели → `alembic revision --autogenerate -m "..."` вместе с кодом.
 
 Готовые варианты развёртывания:
 

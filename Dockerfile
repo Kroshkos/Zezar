@@ -15,9 +15,10 @@ COPY modules/ ./modules/
 COPY integrations/ ./integrations/
 COPY scripts/ ./scripts/
 COPY static/ ./static/
-# TODO(alembic): миграции ещё не созданы (схема — create_all). При переходе на Alembic
-# раскомментировать строку ниже и добавить `alembic upgrade head` в entrypoint.
-# COPY alembic.ini alembic/ ./
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
+COPY entrypoint.sh /srv/app/entrypoint.sh
+RUN chmod +x /srv/app/entrypoint.sh
 
 # Не-руководитель (root) не нужен — монтируем /data от своего uid при желании
 RUN useradd -m appuser && mkdir -p /data && chown -R appuser:appuser /data /srv/app
@@ -31,4 +32,4 @@ EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')" || exit 1
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-*}\""]
+CMD ["sh", "-c", "/srv/app/entrypoint.sh"]
