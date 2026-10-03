@@ -132,6 +132,7 @@ DEMO_USERS = [  # (email, name, role, dept_code)
     ("member-it@caesar.local", "Кузнецов Д.А.", Role.MEMBER, "dep-it"),
     ("member-strat@caesar.local", "Смирнова Е.П.", Role.MEMBER, "dep-strat"),
     ("head-hr@caesar.local", "Морозова Т.И.", Role.HEAD, "dep-hr"),
+    ("member-hr@caesar.local", "Гаврилов П.С.", Role.MEMBER, "dep-hr"),
 ]
 
 
