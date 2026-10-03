@@ -90,10 +90,13 @@ async def main() -> None:
             assert r.status_code == 200, r.text
 
             # 8b. межпространственная задача проекта: создаётся СРАЗУ с контекстом
-            #     нескольких подразделений (share_with) — по одному ответственному от каждого
+            #     нескольких подразделений (share_with) — по одному ответственному от каждого.
+            #     Владелец — dep-it, принимающая сторона — dep-strat (домашнее пространство
+            #     админа): семантически корректный кросс-шеринг между ДВУМЯ разными ws.
             r = await c.post("/api/tasks", headers=cookie, json={
                 "title": "КС: интеграция страт+ИТ", "status_key": "new",
                 "priority_key": "high", "due_date": "2026-12-01",
+                "department_id": depts["dep-it"],
                 "share_with": [depts["dep-strat"]]})
             assert r.status_code == 200, r.text
             cross_uid = r.json()["uid"]
