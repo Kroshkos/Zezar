@@ -165,43 +165,47 @@ async function createDept() {
   // DeptIn ожидает [a-z0-9_-], длина >= 2
   code = code.replace(/[^a-z0-9_-]/g, '-');
   if (code.length < 2) code = 'dept-' + code;
-  const r = await api('/api/core/departments', 'POST', { name, code });
-  if (r.ok) { toast('Подразделение создано'); location.href = '/admin_dept/'; }
-  else if (r.status === 409) toast('Код занят — укажите другой', 'err');
-  else toast('Ошибка (' + r.status + ')', 'err');
+  try {
+    await api('/api/core/departments', 'POST', { name, code });
+    toast('Подразделение создано'); location.href = '/admin_dept/';
+  } catch (e) { /* текст ошибки уже показан тостом в api() */ }
 }
 
 async function addMember() {
   const uid = +document.getElementById('addUser').value;
   const role = document.getElementById('addRole').value;
   if (!uid) return toast('Выберите пользователя', 'warn');
-  const r = await api(`/api/core/departments/${DEPT}/members`, 'POST',
-                      { user_id: uid, role_in_dept: role });
-  if (r.ok) { toast('Участник добавлен'); location.reload(); }
-  else toast('Ошибка доступа (' + r.status + ')', 'err');
+  try {
+    await api(`/api/core/departments/${DEPT}/members`, 'POST',
+              { user_id: uid, role_in_dept: role });
+    toast('Участник добавлен'); location.reload();
+  } catch (e) { /* тост показал api() */ }
 }
 
 async function removeMember(userId, btn) {
   if (!confirm('Удалить участника из подразделения?')) return;
-  const r = await api(`/api/core/departments/${DEPT}/members/${userId}`, 'DELETE');
-  if (r.ok) { toast('Удалено'); btn.closest('tr').remove(); }
-  else toast('Ошибка доступа (' + r.status + ')', 'err');
+  try {
+    await api(`/api/core/departments/${DEPT}/members/${userId}`, 'DELETE');
+    toast('Удалено'); btn.closest('tr').remove();
+  } catch (e) { /* тост показал api() */ }
 }
 
 async function toggleModule(key, enable) {
-  const r = await api(`/api/core/departments/${DEPT}/modules/${key}`, 'PUT', { is_enabled: enable });
-  if (r.ok) { toast('Модуль обновлён'); setTimeout(() => location.reload(), 400); }
-  else toast('Ошибка доступа (' + r.status + ')', 'err');
+  try {
+    await api(`/api/core/departments/${DEPT}/modules/${key}`, 'PUT', { is_enabled: enable });
+    toast('Модуль обновлён'); setTimeout(() => location.reload(), 400);
+  } catch (e) { /* тост показал api() */ }
 }
 
 // Смена роли: POST members идемпотентен — обновляет роль существующего участника
 document.querySelectorAll('.roleSel').forEach(sel => {
   sel.addEventListener('change', async () => {
     const uid = +sel.closest('tr').dataset.uid;
-    const r = await api(`/api/core/departments/${DEPT}/members`, 'POST',
-                        { user_id: uid, role_in_dept: sel.value });
-    if (r.ok) toast('Роль обновлена');
-    else { toast('Ошибка доступа (' + r.status + ')', 'err'); location.reload(); }
+    try {
+      await api(`/api/core/departments/${DEPT}/members`, 'POST',
+                { user_id: uid, role_in_dept: sel.value });
+      toast('Роль обновлена');
+    } catch (e) { location.reload(); }
   });
 });
 </script>

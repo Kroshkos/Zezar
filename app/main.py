@@ -136,7 +136,15 @@ async def security_headers(request, call_next):
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    class NoCacheStaticFiles(StaticFiles):
+        """Статика без кэша: после деплоя браузер сразу получает свежий JS/CSS
+        (иначе пользователи видят старый core.js из кэша — классика «кнопки не работают»)."""
+        async def get_response(self, path, scope):
+            resp = await super().get_response(path, scope)
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return resp
+
+    app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, pages, sharing  # noqa: E402
