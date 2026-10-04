@@ -1,26 +1,40 @@
 """
-Роутер аутентификации: OAuth Яндекс ID с ЗАКРЫТОЙ регистрацией.
+Роутер аутентификации «ЦЕЗАРЬ» — два независимых контура входа:
 
-  GET  /auth/login            -> редирект на Яндекс
-  GET  /auth/callback         -> код->токен->профиль; пользователь обязан быть в users/invites
-  POST /auth/logout           -> сброс cookie
-  GET  /auth/dev-login?email= -> DEV ONLY: вход без Яндекса (только если settings.dev_login_enabled)
+1) АДМИНИСТРАТОРЫ — локальный логин/пароль (без Яндекса):
+  POST /auth/admin-login   форма login+password; учётные записи синхронизируются
+                           из переменной окружения ADMIN_LOGINS при старте
+                           (app/db/seed.sync_admin_logins). Пароли — pbkdf2_sha256.
+
+2) УЧАСТНИКИ — OAuth Яндекс ID с закрытой регистрацией (по приглашению админа):
+  GET  /auth/login         -> редирект на Яндекс
+  GET  /auth/callback      -> код->токен->профиль; вход только если пользователь
+                              уже в users или есть Invite по yandex_id/email
+  POST /auth/logout        -> сброс cookie
+  GET  /auth/me            -> профиль текущей сессии
+
+Legacy-контур (BOOTSTRAP_ADMIN_YA_IDS) сохранён: ya_id из списка получает ADMIN
+прямо при OAuth-входе — совместимость с ранее выданными допусками.
 """
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 
 logger = logging.getLogger("caesar.auth")
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import yandex_oauth as yo
 from app.core.config import get_settings
-from app.core.security import SESSION_COOKIE, create_session_token, get_current_user
+from app.core.security import (
+    SESSION_COOKIE, create_session_token, get_current_user, verify_password,
+)
 from app.deps import session_dep
 from app.models.core import DepartmentMember, Invite, Role, User
 from app.core.yandex_oauth import STATE_COOKIE
@@ -36,6 +50,53 @@ def _login_redirect(user: User) -> RedirectResponse:
     return resp
 
 
+# ======================= Контур 1: администраторы (логин/пароль) =======================
+
+# Простейшая защита от перебора: не более 10 неудачных попыток с одного IP за 15 минут.
+_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_WINDOW_S = 900
+_MAX_FAILS = 10
+
+
+def _throttled(ip: str) -> bool:
+    now = time.time()
+    fails = [t for t in _ATTEMPTS[ip] if now - t < _WINDOW_S]
+    _ATTEMPTS[ip] = fails
+    return len(fails) >= _MAX_FAILS
+
+
+@router.post("/auth/admin-login")
+async def admin_login(request: Request, login: str = Form(""), password: str = Form(""),
+                      session: AsyncSession = Depends(session_dep)):
+    ip = request.client.host if request.client else "?"
+    if _throttled(ip):
+        logger.warning("admin-login: перебор паролей с %s — временная блокировка", ip)
+        return RedirectResponse("/login?error=too_many&mode=admin", status_code=302)
+
+    login_norm = (login or "").strip().lower()
+    user = await session.scalar(select(User).where(User.login == login_norm)) \
+        if login_norm else None
+    ok = bool(user and user.password_hash and verify_password(password or "", user.password_hash))
+    if not ok:
+        _ATTEMPTS[ip].append(time.time())
+        logger.info("admin-login: неудачная попытка '%s' с %s", login_norm[:40], ip)
+        return RedirectResponse("/login?error=bad_credentials&mode=admin", status_code=302)
+
+    if not user.is_active:
+        return RedirectResponse("/login?error=disabled&mode=admin", status_code=302)
+    # Гарантийство роли: админ-аккаунт обязан быть ADMIN (защита от ручного понижения
+    # в обход ADMIN_LOGINS — источник истины для локальных админов всё-таки env).
+    if user.role != Role.ADMIN:
+        user.role = Role.ADMIN
+        logger.info("admin-login: пользователю '%s' восстановлена роль ADMIN", user.login)
+    _ATTEMPTS.pop(ip, None)
+    logger.info("admin-login: успешный вход администратора '%s' (%s)", user.login, ip)
+    await session.commit()
+    return _login_redirect(user)
+
+
+# ======================= Контур 2: участники (OAuth Яндекс ID) =======================
+
 @router.get("/auth/login")
 async def login():
     url, state = yo.authorize_url()
@@ -48,22 +109,17 @@ async def login():
 async def callback(request: Request, code: str = "", state: str = "",
                    session: AsyncSession = Depends(session_dep)):
     if not code:
-        return RedirectResponse("/login?error=no_code", status_code=302)
+        return RedirectResponse("/login?error=no_code&mode=yandex", status_code=302)
     try:
         yo.check_state(request, state)
     except Exception:
-        return RedirectResponse("/login?error=state", status_code=302)
+        return RedirectResponse("/login?error=state&mode=yandex", status_code=302)
     tok = await yo.exchange_code(code)
     ya = await yo.fetch_userinfo(tok["access_token"])
 
-    # Диагностика bootstrap: видно ли в логах, что за id пришёл из Яндекса и что
-    # реально лежит в BOOTSTRAP_ADMIN_YA_IDS (включая «мусор»: пробелы, email,
-    # опечатки — сравнение идёт по точному совпадению sub).
     _st = get_settings()
-    logger.info(
-        "auth callback: ya_id=%s login=%s email=%s | BOOTSTRAP_ADMIN_YA_IDS=%r -> %s",
-        ya.yandex_id, ya.login, ya.email, _st.bootstrap_admin_ya_ids,
-        _st.bootstrap_ids or "ПУСТО — bootstrap-админ не задан")
+    logger.info("auth callback: ya_id=%s login=%s email=%s | bootstrap_ids=%s",
+                ya.yandex_id, ya.login, ya.email, _st.bootstrap_ids or "—")
 
     user = await session.scalar(select(User).where(User.yandex_id == ya.yandex_id))
     if user is None:
@@ -74,20 +130,15 @@ async def callback(request: Request, code: str = "", state: str = "",
                                  ((Invite.email != None) & (Invite.email == ya.email)))  # noqa: E711
         )
         if inv is None:
-            # Подсказка для bootstrap-администратора: на первом входе логин
-            # виден только ему (в браузере), поэтому по нему можно заполнить
-            # BOOTSTRAP_ADMIN_YA_IDS. Для чужих аккаунтов id не раскрываем —
-            # админ создаст Invite по email.
-            logger.warning(
-                "Yandex userinfo: id=%s default_email=%s login=%s — доступ закрыт",
-                ya.yandex_id, ya.default_email, ya.email)
+            # Подсказка: на первом входе свой id видит только сам входящий — по нему
+            # можно заполнить BOOTSTRAP_ADMIN_YA_IDS, если нужен доступ администратора.
+            logger.warning("Yandex userinfo: id=%s default_email=%s login=%s — доступа нет "
+                           "(нет Invite). Админ создаст допуск в разделе «Пользователи».",
+                           ya.yandex_id, ya.default_email, ya.email)
             return RedirectResponse(
-                f"/login?error=not_allowed&ya_id={ya.yandex_id}", status_code=302)
-        # Если id пользователя также в BOOTSTRAP_ADMIN_YA_IDS — вход даёт ADMIN,
-        # даже когда приглашение было найдено по email с ролью ниже (или invite
-        # создавал другой админ). Иначе получалось «зашёл, но админки нет».
-        bootstrap_ids = _st.bootstrap_ids
-        role = Role.ADMIN if ya.yandex_id.lower() in bootstrap_ids else inv.role
+                f"/login?error=not_allowed&ya_id={ya.yandex_id}&mode=yandex", status_code=302)
+        # Legacy-допуск: id также в BOOTSTRAP_ADMIN_YA_IDS -> ADMIN независимо от роли invite.
+        role = Role.ADMIN if ya.yandex_id.lower() in _st.bootstrap_ids else inv.role
         user = User(yandex_id=ya.yandex_id, email=ya.email,
                     display_name=inv.display_name or ya.display_name,
                     yandex_login=ya.login,
@@ -97,45 +148,18 @@ async def callback(request: Request, code: str = "", state: str = "",
         if inv.department_id:
             session.add(DepartmentMember(user_id=user.id, department_id=inv.department_id,
                                          role_in_dept=inv.role_in_dept))
-        # Bootstrap-приглашение (создано seed.bootstrap из BOOTSTRAP_ADMIN_YA_IDS)
-        # не помечаем использованным: идемпотентный bootstrap при следующем старте
-        # иначе его не пересоздаст (он ищет только used_at IS NULL), и админ,
-        # потерявший сессию, больше не сможет войти. Обычные приглашения — одноразовые.
-        if inv.created_by_id is None and inv.email is None:
-            await session.delete(inv)
-        else:
-            inv.used_at = datetime.now(timezone.utc)
+        inv.used_at = datetime.now(timezone.utc)
         await session.commit()
     elif not user.is_active:
-        return RedirectResponse("/login?error=disabled", status_code=302)
+        return RedirectResponse("/login?error=disabled&mode=yandex", status_code=302)
     else:
         user.email = user.email or ya.email
         user.yandex_login = ya.login or user.yandex_login  # CalDAV требует актуальный логин
-        # Идемпотентный bootstrap на лету: если id в BOOTSTRAP_ADMIN_YA_IDS, но
-        # учётная запись до сих пор не ADMIN (например, сервис не перезапускался
-        # после добавления id в .env, или роль была понижена вручную) — повышаем
-        # прямо при входе. Иначе «перезапустил, вошёл — а админки всё равно нет».
-        bootstrap_ids = _st.bootstrap_ids
-        if ya.yandex_id.lower() in bootstrap_ids and user.role != Role.ADMIN:
+        # Идемпотентный legacy-bootstrap на лету: id в списке -> ADMIN при входе.
+        if ya.yandex_id.lower() in _st.bootstrap_ids and user.role != Role.ADMIN:
             user.role = Role.ADMIN
             logger.info("auth callback: пользователю %s (ya_id=%s) восстановлена роль ADMIN "
                         "по BOOTSTRAP_ADMIN_YA_IDS", user.display_name, ya.yandex_id)
-        elif not bootstrap_ids:
-            logger.warning(
-                "auth callback: пользователь %s (ya_id=%s) вошёл с ролью %s, а "
-                "BOOTSTRAP_ADMIN_YA_IDS ПУСТО (raw=%r). Проверьте, что переменная задана "
-                "ИМЕННО как переменная окружения приложения (на Amvera — в настройках "
-                "приложения, не только в amvera.yaml) и что это числовой id из Яндекса.",
-                user.display_name, ya.yandex_id, user.role.value,
-                _st.bootstrap_admin_ya_ids)
-        elif user.role != Role.ADMIN:
-            # Пользователь НЕ из bootstrap-списка и не админ — фиксируем в логе
-            # его реальный id: если человек рассчитывал на админку, это значит,
-            # что в BOOTSTRAP_ADMIN_YA_IDS прописан другой (неверный) id.
-            logger.info("auth callback: пользователь %s (ya_id=%s) вошёл с ролью %s; "
-                        "его id отсутствует в BOOTSTRAP_ADMIN_YA_IDS — добавьте туда "
-                        "именно этот ya_id, если нужен доступ администратора",
-                        user.display_name, ya.yandex_id, user.role.value)
         await session.commit()
     return _login_redirect(user)
 
@@ -150,6 +174,7 @@ async def logout():
 @router.get("/auth/me")
 async def me(user: User = Depends(get_current_user)):
     return {"id": user.id, "name": user.display_name, "role": user.role.value,
+            "account": "local" if user.login else "yandex",
             "telegram_linked": bool(user.telegram_chat_id),
             "calendar_linked": bool(user.yandex_cal_app_password_enc)}
 

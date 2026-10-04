@@ -19,15 +19,17 @@ templates = core_templates
 
 ERRORS = {"no_code": "Яндекс не вернул код", "state": "Сессия входа истекла, попробуйте ещё раз",
           "not_allowed": "Доступ закрыт: обратитесь к администратору за приглашением",
-          "disabled": "Учётная запись заблокирована"}
+          "disabled": "Учётная запись заблокирована",
+          "bad_credentials": "Неверный логин или пароль",
+          "too_many": "Слишком много неудачных попыток — подождите 15 минут"}
 
 
 @router.get("/login")
 async def login_page(request: Request, error: str = "", ya_id: str = ""):
     from app.core.config import get_settings
     msg = ERRORS.get(error, "Ошибка входа")
-    # Bootstrap-подсказка: свой Yandex sub видит только сам пользователь
-    # (тот, кто прошёл OAuth), поэтому его безопасно показать на странице.
+    # Подсказка: свой Yandex sub видит только сам пользователь (тот, кто прошёл OAuth),
+    # поэтому его безопасно показать на странице — по нему админ создаст приглашение.
     if error == "not_allowed" and ya_id:
         msg += f". Ваш Yandex ID (sub): {ya_id} — сообщите его администратору."
     return templates.TemplateResponse(request, "login.html",

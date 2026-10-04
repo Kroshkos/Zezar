@@ -69,11 +69,15 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    yandex_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # sub из Яндекс ID
+    yandex_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)  # sub из Яндекс ID; NULL для локальных админ-аккаунтов
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(160))   # «ФИО» из виджета people прототипа
     # Логин аккаунта Яндекса (поле `login` из userinfo) — CalDAV Basic auth требует его, а не email.
     yandex_login: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    # Локальная учётная запись администратора (вход по логину/паролю из ADMIN_LOGINS).
+    # yandex_id у таких аккаунтов NULL — OAuth-колбэк их никогда не создаёт/не трогает.
+    login: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(Text)  # pbkdf2_sha256$итерации$salt$hash
     initials: Mapped[Optional[str]] = mapped_column(String(8))
     color: Mapped[Optional[str]] = mapped_column(String(16))  # цвет аватара как в демо
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
