@@ -59,10 +59,11 @@ async def callback(request: Request, code: str = "", state: str = "",
     # Диагностика bootstrap: видно ли в логах, что за id пришёл из Яндекса и что
     # реально лежит в BOOTSTRAP_ADMIN_YA_IDS (включая «мусор»: пробелы, email,
     # опечатки — сравнение идёт по точному совпадению sub).
-    _raw_bootstrap = get_settings().bootstrap_admin_ya_ids
+    _st = get_settings()
     logger.info(
-        "auth callback: ya_id=%s login=%s email=%s | BOOTSTRAP_ADMIN_YA_IDS=%r",
-        ya.yandex_id, ya.login, ya.email, _raw_bootstrap)
+        "auth callback: ya_id=%s login=%s email=%s | BOOTSTRAP_ADMIN_YA_IDS=%r -> %s",
+        ya.yandex_id, ya.login, ya.email, _st.bootstrap_admin_ya_ids,
+        _st.bootstrap_ids or "ПУСТО — bootstrap-админ не задан")
 
     user = await session.scalar(select(User).where(User.yandex_id == ya.yandex_id))
     if user is None:
@@ -85,9 +86,8 @@ async def callback(request: Request, code: str = "", state: str = "",
         # Если id пользователя также в BOOTSTRAP_ADMIN_YA_IDS — вход даёт ADMIN,
         # даже когда приглашение было найдено по email с ролью ниже (или invite
         # создавал другой админ). Иначе получалось «зашёл, но админки нет».
-        bootstrap_ids = [x.strip() for x in get_settings().bootstrap_admin_ya_ids.split(",")
-                         if x.strip()]
-        role = Role.ADMIN if ya.yandex_id in bootstrap_ids else inv.role
+        bootstrap_ids = _st.bootstrap_ids
+        role = Role.ADMIN if ya.yandex_id.lower() in bootstrap_ids else inv.role
         user = User(yandex_id=ya.yandex_id, email=ya.email,
                     display_name=inv.display_name or ya.display_name,
                     yandex_login=ya.login,
@@ -115,12 +115,19 @@ async def callback(request: Request, code: str = "", state: str = "",
         # учётная запись до сих пор не ADMIN (например, сервис не перезапускался
         # после добавления id в .env, или роль была понижена вручную) — повышаем
         # прямо при входе. Иначе «перезапустил, вошёл — а админки всё равно нет».
-        bootstrap_ids = [x.strip() for x in get_settings().bootstrap_admin_ya_ids.split(",")
-                         if x.strip()]
-        if ya.yandex_id in bootstrap_ids and user.role != Role.ADMIN:
+        bootstrap_ids = _st.bootstrap_ids
+        if ya.yandex_id.lower() in bootstrap_ids and user.role != Role.ADMIN:
             user.role = Role.ADMIN
             logger.info("auth callback: пользователю %s (ya_id=%s) восстановлена роль ADMIN "
                         "по BOOTSTRAP_ADMIN_YA_IDS", user.display_name, ya.yandex_id)
+        elif not bootstrap_ids:
+            logger.warning(
+                "auth callback: пользователь %s (ya_id=%s) вошёл с ролью %s, а "
+                "BOOTSTRAP_ADMIN_YA_IDS ПУСТО (raw=%r). Проверьте, что переменная задана "
+                "ИМЕННО как переменная окружения приложения (на Amvera — в настройках "
+                "приложения, не только в amvera.yaml) и что это числовой id из Яндекса.",
+                user.display_name, ya.yandex_id, user.role.value,
+                _st.bootstrap_admin_ya_ids)
         elif user.role != Role.ADMIN:
             # Пользователь НЕ из bootstrap-списка и не админ — фиксируем в логе
             # его реальный id: если человек рассчитывал на админку, это значит,
