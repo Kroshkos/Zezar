@@ -50,6 +50,33 @@ def gen_confirm_code() -> str:
     return secrets.token_hex(4)
 
 
+# ---------- Пароли локальных администраторов (pbkdf2_sha256, stdlib) ----------
+# Формат хранения: pbkdf2_sha256$<итерации>$<salt-hex>$<hash-hex>.
+# Реализация на hashlib + hmac.compare_digest — без внешних зависимостей
+# (passlib/bcrypt не входят в образ; pbkdf2 с 240k итераций соответствует OWASP).
+
+PBKDF2_ITERATIONS = 240_000
+
+
+def hash_password(plain: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(plain: str, stored: str | None) -> bool:
+    if not stored or not plain:
+        return False
+    try:
+        scheme, iters_s, salt_hex, hash_hex = stored.split("$", 3)
+        if scheme != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), bytes.fromhex(salt_hex), int(iters_s))
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except (ValueError, TypeError):
+        return False
+
+
 # ---------- шифрование secrets (app-пароль календаря и т.п.) ----------
 
 def _fernet() -> Fernet:

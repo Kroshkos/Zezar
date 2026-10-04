@@ -2,13 +2,31 @@
 <html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Вход · ЦЕЗАРЬ</title><link rel="stylesheet" href="/static/css/app.css"></head>
 <body style="display:grid;place-items:center;min-height:100vh">
-<div class="card" style="width:min(420px,92vw);padding:34px;text-align:center">
+<div class="card" style="width:min(440px,92vw);padding:34px;text-align:center">
   <div style="font-size:44px">🏛️</div>
   <h2 style="margin:6px 0 2px">ЦЕЗАРЬ</h2>
   <p style="color:var(--muted);font-size:13px;margin-bottom:22px">Управление стратегических инициатив и проектов</p>
   {% if error %}<p class="badge b-red" style="margin-bottom:14px">{{ error_msg }}</p>{% endif %}
-  <a class="btn primary" style="display:inline-block;text-decoration:none" href="/auth/login">Войти через Яндекс ID</a>
-  <p style="color:var(--muted);font-size:12px;margin-top:18px">Регистрация закрыта — доступ выдаёт администратор.</p>
+
+  {# ---------- Контур администраторов: логин/пароль (ADMIN_LOGINS) ---------- #}
+  <form method="post" action="/auth/admin-login" style="display:flex;flex-direction:column;gap:8px;text-align:left">
+    <label style="font-size:12px;color:var(--muted)">Администратор — вход по логину и паролю</label>
+    <input name="login" placeholder="Логин администратора" autocomplete="username" required
+           style="padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit">
+    <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required
+           style="padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit">
+    <button class="btn primary" type="submit">Войти как администратор</button>
+  </form>
+
+  <div style="display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--muted);font-size:11px">
+    <span style="flex:1;border-top:1px solid var(--line)"></span>или<span style="flex:1;border-top:1px solid var(--line)"></span>
+  </div>
+
+  {# ---------- Контур участников: OAuth Яндекс ID ---------- #}
+  <a class="btn" style="display:inline-block;text-decoration:none" href="/auth/login">Войти через Яндекс ID</a>
+  <p style="color:var(--muted);font-size:12px;margin-top:14px">
+    Вход через Яндекс — для участников системы. Регистрация закрыта: доступ выдаёт администратор
+    (приглашение по email/Яндекс-ID в разделе «Пользователи»).</p>
   {% if dev %}<hr style="margin:18px 0;border:0;border-top:1px solid var(--line)">
   <form method="get" action="/auth/dev-login" style="display:flex;gap:8px">
     <input name="email" placeholder="email (dev)" style="flex:1">

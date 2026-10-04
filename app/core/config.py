@@ -22,6 +22,30 @@ class Settings(BaseSettings):
     # иначе случайный/дефолтный id мог бы получить ADMIN (см. _bootstrap_ids).
     bootstrap_admin_ya_ids: str = ""
 
+    # ---------- Логины администраторов (вход по логину/паролю, без Яндекса) ----------
+    # Формат: "логин:хеш:ФИО", несколько записей через ';'. Хеш — pbkdf2_sha256,
+    # сгенерировать: python scripts/gen_admin_password.py <логин>
+    # Логин-ключи нормализуются к lower(); сравнение пароля — hmac.compare_digest.
+    admin_logins: str = ""
+
+    @property
+    def admin_login_entries(self) -> list[tuple[str, str, str]]:
+        """ADMIN_LOGINS как [(login_lower, pw_hash, display_name), ...]."""
+        out: list[tuple[str, str, str]] = []
+        for part in (self.admin_logins or "").split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            fields = part.split(":", 2)
+            if len(fields) < 2 or not fields[0].strip() or not fields[1].strip():
+                continue
+            login = fields[0].strip().lower()
+            pwhash = fields[1].strip()
+            name = (fields[2].strip() if len(fields) > 2 and fields[2].strip()
+                    else f"Администратор {login}")
+            out.append((login, pwhash, name))
+        return out
+
     @property
     def bootstrap_ids(self) -> list[str]:
         """BOOTSTRAP_ADMIN_YA_IDS как чистый список строк.
@@ -102,6 +126,14 @@ class Settings(BaseSettings):
             errors.append("SEED_DEMO_DATA=true в продакшене — будут созданы демо-пользователи с детерминированными id")
         if not self.yandex_client_id or not self.yandex_client_secret:
             errors.append("YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET не заданы — OAuth-вход невозможен")
+        # Администратор обязан быть задан хотя бы одним способом, иначе система
+        # остаётся без управляющего контура (именно так возникало «зашёл, но админки нет»).
+        if not self.admin_login_entries and not self.bootstrap_ids:
+            errors.append(
+                "Не задан ни один администратор: заполните ADMIN_LOGINS "
+                "(вход по логину/паролю, хеш — python scripts/gen_admin_password.py) "
+                "или BOOTSTRAP_ADMIN_YA_IDS (вход через Яндекс)."
+            )
 
         # Предупреждение (не блокирует запуск): /data — стандартный путь БД. Убедитесь,
         # что он примонтирован как постоянное хранилище: docker volume /data на VPS;
