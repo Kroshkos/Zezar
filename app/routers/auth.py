@@ -83,7 +83,14 @@ async def callback(request: Request, code: str = "", state: str = "",
         if inv.department_id:
             session.add(DepartmentMember(user_id=user.id, department_id=inv.department_id,
                                          role_in_dept=inv.role_in_dept))
-        inv.used_at = datetime.now(timezone.utc)
+        # Bootstrap-приглашение (создано seed.bootstrap из BOOTSTRAP_ADMIN_YA_IDS)
+        # не помечаем использованным: идемпотентный bootstrap при следующем старте
+        # иначе его не пересоздаст (он ищет только used_at IS NULL), и админ,
+        # потерявший сессию, больше не сможет войти. Обычные приглашения — одноразовые.
+        if inv.created_by_id is None and inv.email is None:
+            await session.delete(inv)
+        else:
+            inv.used_at = datetime.now(timezone.utc)
         await session.commit()
     elif not user.is_active:
         return RedirectResponse("/login?error=disabled", status_code=302)

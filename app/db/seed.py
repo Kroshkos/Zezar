@@ -6,6 +6,7 @@ Bootstrap/seed базы (идемпотентен): справочники ст�
 """
 from __future__ import annotations
 
+import logging
 import secrets
 
 from sqlalchemy import func, select
@@ -15,6 +16,8 @@ from app.core.config import get_settings
 from app.models.core import (
     Department, DepartmentMember, EntityKind, Invite, PriorityLevel, Role, StatusSet, User,
 )
+
+log = logging.getLogger("caesar.seed")
 
 # statusSets['task'] / prioSet из defaults() прототипа
 TASK_STATUSES = [
@@ -108,12 +111,33 @@ async def bootstrap(session: AsyncSession) -> None:
             session.add(PriorityLevel(key=key, label=label, color=color, weight=weight))
 
     # --- первый администратор: bootstrap_admin_ya_ids или invite-коды ---
-    if s.bootstrap_admin_ya_ids and not await session.scalar(
-            select(func.count(User.id)).where(User.role == Role.ADMIN)):
-        for ya_id in [x.strip() for x in s.bootstrap_admin_ya_ids.split(",") if x.strip()]:
-            if not await session.scalar(select(User).where(User.yandex_id == ya_id)):
-                session.add(Invite(yandex_id=ya_id, display_name="Администратор",
-                                   role=Role.ADMIN, code=secrets.token_hex(4)))
+    # Ключевое свойство: bootstrap должен сработать при ПЕРВОМ входе администратора.
+    # Раньше условие опиралось на отсутствие пользователя с ролью ADMIN: если к моменту
+    # запуска уже существовал любой админ (демо-сид, созданный ранее), Invite не
+    # создавался вовсе — и человек из BOOTSTRAP_ADMIN_YA_IDS входил обычным участником
+    # без прав администрирования (нельзя добавлять пользователей и подразделения).
+    # Теперь:
+    #   * приглашение создаётся для каждого id из списка, пока у него нет учётной записи;
+    #   * если учётная запись уже есть (например, создана до того, как в .env появился
+    #     его ya_id, или после отката БД) — роль повышается до ADMIN идемпотентно;
+    #   * bootstrap-приглашение удаляется из таблицы сразу после использования
+    #     (см. app/routers/auth.py), поэтому при случайной очистке cookie админ
+    #     получит новый доступ на следующем перезапуске.
+    bootstrap_ids = [x.strip() for x in s.bootstrap_admin_ya_ids.split(",") if x.strip()]
+    for ya_id in bootstrap_ids:
+        existing = await session.scalar(select(User).where(User.yandex_id == ya_id))
+        if existing is not None:
+            if existing.role != Role.ADMIN:
+                existing.role = Role.ADMIN
+                log.info("bootstrap: пользователю %s (id=%s) повышена роль до ADMIN",
+                         existing.display_name, ya_id)
+            continue
+        inv = await session.scalar(
+            select(Invite).where(Invite.used_at.is_(None), Invite.yandex_id == ya_id)
+        )
+        if inv is None:
+            session.add(Invite(yandex_id=ya_id, display_name="Администратор",
+                               role=Role.ADMIN, code=secrets.token_hex(4)))
 
     # --- демо-данные для локальной разработки (как в прототипе) ---
     # В продакшене запрещены (fail-fast в main.py), но дополнительно защищаемся и здесь:
