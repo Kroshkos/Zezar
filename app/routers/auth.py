@@ -3,8 +3,10 @@
 
 1) АДМИНИСТРАТОРЫ — локальный логин/пароль (без Яндекса):
   POST /auth/admin-login   форма login+password; учётные записи синхронизируются
-                           из переменной окружения ADMIN_LOGINS при старте
-                           (app/db/seed.sync_admin_logins). Пароли — pbkdf2_sha256.
+                           из переменных окружения при старте
+                           (ADMIN_USERNAME + ADMIN_PASSWORD, резерв — ADMIN_LOGINS;
+                           app/db/seed.sync_admin_logins). Пароль хешируется
+                           системой (pbkdf2_sha256), в env задаётся открытым.
 
 2) УЧАСТНИКИ — OAuth Яндекс ID с закрытой регистрацией (по приглашению админа):
   GET  /auth/login         -> редирект на Яндекс
@@ -85,7 +87,8 @@ async def admin_login(request: Request, login: str = Form(""), password: str = F
     if not user.is_active:
         return RedirectResponse("/login?error=disabled&mode=admin", status_code=302)
     # Гарантийство роли: админ-аккаунт обязан быть ADMIN (защита от ручного понижения
-    # в обход ADMIN_LOGINS — источник истины для локальных админов всё-таки env).
+    # в обход env — источник истины для локальных админов всё-таки ADMIN_USERNAME/
+    # ADMIN_PASSWORD).
     if user.role != Role.ADMIN:
         user.role = Role.ADMIN
         logger.info("admin-login: пользователю '%s' восстановлена роль ADMIN", user.login)

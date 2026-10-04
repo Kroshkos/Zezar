@@ -84,14 +84,16 @@ async def patch_user(user_id: int, body: dict, user: User = Depends(get_current_
     for k in ("role", "is_active", "telegram_chat_id", "display_name"):
         if k in body:
             setattr(u, k, Role(body[k]) if k == "role" else body[k])
-    # Защита контура админов: локальный аккаунт из ADMIN_LOGINS нельзя понизить
-    # или заблокировать через API — отзыв доступа = удаление строки из env + рестарт
-    # (см. app/db/seed.sync_admin_logins). Иначе админ случайно «сломал» бы себе вход,
-    # а это ровно та проблема, из-за которой переделывалась авторизация.
+    # Защита контура админов: локальный аккаунт из ADMIN_USERNAME/ADMIN_PASSWORD
+    # (или ADMIN_LOGINS) нельзя понизить или заблокировать через API — отзыв доступа =
+    # удаление строки из env + рестарт (см. app/db/seed.sync_admin_logins). Иначе
+    # админ случайно «сломал» бы себе вход, а это ровно та проблема, из-за которой
+    # переделывалась авторизация.
     if u.login and (body.get("role") not in (None, "admin") or body.get("is_active") is False):
         await session.rollback()
-        raise HTTPException(409, f"Локальный администратор '{u.login}' управляется переменной "
-                                 "ADMIN_LOGINS: роль всегда ADMIN, блокировка — удалением из env")
+        raise HTTPException(409, f"Локальный администратор '{u.login}' управляется переменными "
+                                 "ADMIN_USERNAME/ADMIN_PASSWORD: роль всегда ADMIN, "
+                                 "блокировка — удалением из env + рестарт")
     await session.commit()
     return {"ok": True}
 

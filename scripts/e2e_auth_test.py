@@ -7,8 +7,13 @@ os.environ["DATA_DIR"] = tmp
 os.environ["DATABASE_PATH"] = os.path.join(tmp, "test.db")
 os.environ["SECRET_KEY"] = "x" * 40
 from app.core.security import hash_password
-H = hash_password("S3cret-Pass!")
-os.environ["ADMIN_LOGINS"] = f"chief:{H}:Коршунов К. К.;second:{hash_password('another-pass')}:Второй Админ"
+# Основной способ: логин и пароль задаются ОТДЕЛЬНЫМИ env-переменными,
+# система сама хеширует пароль при старте.
+os.environ["ADMIN_USERNAME"] = "chief"
+os.environ["ADMIN_PASSWORD"] = "S3cret-Pass!"
+os.environ["ADMIN_FULL_NAME"] = "Коршунов К. К."
+# Резервный способ (несколько админов / хеши в env):
+os.environ["ADMIN_LOGINS"] = f"second:{hash_password('another-pass')}:Второй Админ"
 os.environ["BOOTSTRAP_ADMIN_YA_IDS"] = ""
 
 import httpx

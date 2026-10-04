@@ -94,13 +94,15 @@ PRIORITIES = [
 
 
 async def sync_admin_logins(session: AsyncSession) -> None:
-    """Идемпотентная синхронизация локальных администраторов из ADMIN_LOGINS.
+    """Идемпотентная синхронизация локальных администраторов из env.
 
-    Для каждой записи "логин:хеш:ФИО":
+    Источник — Settings.admin_login_entries: ADMIN_USERNAME/ADMIN_PASSWORD
+    (пароль хешируется системой, pbkdf2_sha256) + резервный ADMIN_LOGINS
+    ("логин:хеш[:ФИО];..."). Для каждой записи:
       * аккаунта нет -> создаётся User(login, password_hash, role=ADMIN, yandex_id=NULL);
       * аккаунт есть -> хеш и ФИО обновляются (смена пароля = правка env + рестарт),
         роль гарантированно ADMIN.
-    Аккаунты, которые были созданы из ADMIN_LOGINS, но исчезли из переменной,
+    Аккаунты, которые были созданы из env-переменных, но исчезли из них,
     деактивируются (is_active=False) — пароль «в воздухе» оставаться не должен.
     """
     entries = get_settings().admin_login_entries
@@ -160,10 +162,11 @@ async def bootstrap(session: AsyncSession) -> None:
         for key, label, color, weight in PRIORITIES:
             session.add(PriorityLevel(key=key, label=label, color=color, weight=weight))
 
-    # --- Администраторы по логину/паролю (ADMIN_LOGINS) ---
+    # --- Администраторы по логину/паролю (ADMIN_USERNAME + ADMIN_PASSWORD) ---
     # Независимый от Яндекса контур доступа: аккаунты создаются/синхронизируются
-    # при каждом старте идемпотентно. Это гарантирует, что админка доступна даже
-    # если OAuth-обход не настроен или id в BOOTSTRAP_ADMIN_YA_IDS указан неверно.
+    # при каждом старте идемпотентно, пароль хешируется системой. Это гарантирует,
+    # что админка доступна даже если OAuth-обход не настроен или id в
+    # BOOTSTRAP_ADMIN_YA_IDS указан неверно.
     await sync_admin_logins(session)
 
     # --- legacy: bootstrap через Яндекс-id (BOOTSTRAP_ADMIN_YA_IDS) ---
