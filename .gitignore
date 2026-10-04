@@ -1,1 +1,6 @@
-(empty)__pycache__/
+# Python compiled files
+__pycache__/
+*.pyc
+
+# Environment variables (common for this type of project structure)
+.env
