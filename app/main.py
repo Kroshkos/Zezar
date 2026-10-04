@@ -89,6 +89,26 @@ async def lifespan(app: FastAPI):
         await registry.sync_table(s)
         await bootstrap(s)
 
+    # Диагностика bootstrap сразу при старте (в логах Amvera видно без входа):
+    # что за список видит процесс и какие yandex_id лежат в базе. Если здесь
+    # «список ПУСТО» — переменная BOOTSTRAP_ADMIN_YA_IDS не дошла до рантайма
+    # (задаётся в панели «Переменные и секреты», а не только в amvera.yaml).
+    from app.core.config import get_settings as _gs
+    from app.models.core import User as _User
+    from sqlalchemy import select as _select
+    _bids = _gs().bootstrap_ids
+    async with SessionLocal() as s:
+        _uids = (await s.execute(_select(_User.yandex_id, _User.role))).all()
+    log.info("bootstrap check at startup: BOOTSTRAP_ADMIN_YA_IDS=%r -> %s; users в БД: %s",
+                _gs().bootstrap_admin_ya_ids, _bids or "ПУСТО",
+                [(uid, r.value) for uid, r in _uids] or "—")
+    if _bids and not any((uid or "").lower() in _bids for uid, _ in _uids):
+        log.warning("bootstrap check at startup: ни один yandex_id из БД не совпадает со "
+                       "списком %s. Скорее всего там указан логин/email вместо числового "
+                       "id аккаунта Яндекса (sub). Настоящий id видно в этих же логах при "
+                       "попытке входа ('auth callback: ya_id=...') или на /login после "
+                       "отказа в доступе.", _bids)
+
     # 3. Jinja: подключить папки шаблонов модулей
     from app.ui import init_templates
     init_templates()

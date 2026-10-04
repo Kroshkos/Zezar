@@ -18,7 +18,21 @@ class Settings(BaseSettings):
     yandex_client_id: str = ""
     yandex_client_secret: str = ""
     yandex_redirect_uri: str = "http://localhost:8000/auth/callback"
-    bootstrap_admin_ya_ids: str = ""     # csv, первый вход при пустой БД
+    # csv Yandex sub'ей для первичного администратора. Пусто по умолчанию —
+    # иначе случайный/дефолтный id мог бы получить ADMIN (см. _bootstrap_ids).
+    bootstrap_admin_ya_ids: str = ""
+
+    @property
+    def bootstrap_ids(self) -> list[str]:
+        """BOOTSTRAP_ADMIN_YA_IDS как чистый список строк.
+
+        Терпимость к типичным ошибкам заполнения на хостинге: разделители
+        ';'/'/', переносы строк и пробелы, регистр букв в id. Сравнение с
+        ya_id из userinfo Яндекса идёт по lower()."""
+        import re
+        raw = self.bootstrap_admin_ya_ids or ""
+        parts = [p.strip() for p in re.split(r"[,;/\s]+", raw) if p.strip()]
+        return [p.lower() for p in parts]
 
     # Telegram
     telegram_bot_token: str = ""

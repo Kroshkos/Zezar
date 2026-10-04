@@ -123,9 +123,9 @@ async def bootstrap(session: AsyncSession) -> None:
     #   * bootstrap-приглашение удаляется из таблицы сразу после использования
     #     (см. app/routers/auth.py), поэтому при случайной очистке cookie админ
     #     получит новый доступ на следующем перезапуске.
-    bootstrap_ids = [x.strip() for x in s.bootstrap_admin_ya_ids.split(",") if x.strip()]
+    bootstrap_ids = s.bootstrap_ids
     for ya_id in bootstrap_ids:
-        existing = await session.scalar(select(User).where(User.yandex_id == ya_id))
+        existing = await session.scalar(select(User).where(func.lower(User.yandex_id) == ya_id))
         if existing is not None:
             if existing.role != Role.ADMIN:
                 existing.role = Role.ADMIN
