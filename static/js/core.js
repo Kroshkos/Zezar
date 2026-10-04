@@ -2,12 +2,21 @@
 "use strict";
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Универсальный вызов API. Тело можно передать строкой (JSON) или объектом — как в core.js, так и в admin_dept.
-async function api(path,opts={}){
-  if(typeof opts==='string')opts={method:opts};
+async function api(path,opts={},body){
+  // Поддержка двух стилей вызова: api(path,{method,body}) и api(path,'POST',{..}).
+  if(typeof opts==='string')opts={method:opts,body:body};
   if(opts&&typeof opts.body==='object'&&opts.body!==null){opts={...opts,body:JSON.stringify(opts.body)};}
   const r=await fetch(path,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});
   if(r.status===401){location.href='/login';throw new Error('auth');}
-  if(!r.ok){let d;try{d=(await r.json()).detail}catch(e){d=r.statusText}toast('⚠ '+d,true);throw new Error(d)}
+  if(!r.ok){
+    let d;
+    try{
+      const j=await r.json();d=j.detail;
+      // FastAPI при 422 возвращает массив ошибок валидации — делаем текст читаемым.
+      if(Array.isArray(d))d=d.map(e=>(e.loc||[]).slice(1).join('.')+': '+(e.msg||'')).join('; ');
+    }catch(e){d=r.statusText}
+    toast('⚠ '+d,true);throw new Error(typeof d==='string'?d:JSON.stringify(d));
+  }
   return r.status===204?null:r.json();
 }
 function toast(msg,err){
