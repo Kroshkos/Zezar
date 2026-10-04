@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.security import hash_password
 from app.models.core import (
     Department, DepartmentMember, EntityKind, Invite, PriorityLevel, Role, StatusSet, User,
 )
@@ -92,6 +93,55 @@ PRIORITIES = [
 ]
 
 
+async def sync_admin_logins(session: AsyncSession) -> None:
+    """Идемпотентная синхронизация локальных администраторов из ADMIN_LOGINS.
+
+    Для каждой записи "логин:хеш:ФИО":
+      * аккаунта нет -> создаётся User(login, password_hash, role=ADMIN, yandex_id=NULL);
+      * аккаунт есть -> хеш и ФИО обновляются (смена пароля = правка env + рестарт),
+        роль гарантированно ADMIN.
+    Аккаунты, которые были созданы из ADMIN_LOGINS, но исчезли из переменной,
+    деактивируются (is_active=False) — пароль «в воздухе» оставаться не должен.
+    """
+    entries = get_settings().admin_login_entries
+    logins = {login for login, _, _ in entries}
+    for login, pwhash, name in entries:
+        user = await session.scalar(select(User).where(User.login == login))
+        if user is None:
+            session.add(User(login=login, password_hash=pwhash, display_name=name,
+                             role=Role.ADMIN, initials=_initials_of(name), is_active=True))
+            log.info("admin-logins: создана учётная запись администратора '%s' (%s)", login, name)
+        else:
+            changed = []
+            if user.password_hash != pwhash:
+                user.password_hash = pwhash
+                changed.append("пароль обновлён")
+            if user.display_name != name:
+                user.display_name = name
+                changed.append("имя обновлено")
+            if user.role != Role.ADMIN:
+                user.role = Role.ADMIN
+                changed.append("роль восстановлена до ADMIN")
+            if not user.is_active:
+                user.is_active = True
+                changed.append("аккаунт активирован")
+            if changed:
+                log.info("admin-logins: администратор '%s': %s", login, ", ".join(changed))
+    # отзыв локальных админов, удалённых из ADMIN_LOGINS (только login-аккаунты!)
+    stale = (await session.execute(
+        select(User).where(User.login.is_not(None)))).scalars().all()
+    for u in stale:
+        if u.login not in logins and u.is_active:
+            u.is_active = False
+            log.warning("admin-logins: аккаунт '%s' удалён из ADMIN_LOGINS — отключён", u.login)
+    await session.commit()
+
+
+def _initials_of(name: str) -> str:
+    parts = (name or "").split()
+    return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
+
+
 async def bootstrap(session: AsyncSession) -> None:
     s = get_settings()
 
@@ -110,34 +160,29 @@ async def bootstrap(session: AsyncSession) -> None:
         for key, label, color, weight in PRIORITIES:
             session.add(PriorityLevel(key=key, label=label, color=color, weight=weight))
 
-    # --- первый администратор: bootstrap_admin_ya_ids или invite-коды ---
-    # Ключевое свойство: bootstrap должен сработать при ПЕРВОМ входе администратора.
-    # Раньше условие опиралось на отсутствие пользователя с ролью ADMIN: если к моменту
-    # запуска уже существовал любой админ (демо-сид, созданный ранее), Invite не
-    # создавался вовсе — и человек из BOOTSTRAP_ADMIN_YA_IDS входил обычным участником
-    # без прав администрирования (нельзя добавлять пользователей и подразделения).
-    # Теперь:
-    #   * приглашение создаётся для каждого id из списка, пока у него нет учётной записи;
-    #   * если учётная запись уже есть (например, создана до того, как в .env появился
-    #     его ya_id, или после отката БД) — роль повышается до ADMIN идемпотентно;
-    #   * bootstrap-приглашение удаляется из таблицы сразу после использования
-    #     (см. app/routers/auth.py), поэтому при случайной очистке cookie админ
-    #     получит новый доступ на следующем перезапуске.
+    # --- Администраторы по логину/паролю (ADMIN_LOGINS) ---
+    # Независимый от Яндекса контур доступа: аккаунты создаются/синхронизируются
+    # при каждом старте идемпотентно. Это гарантирует, что админка доступна даже
+    # если OAuth-обход не настроен или id в BOOTSTRAP_ADMIN_YA_IDS указан неверно.
+    await sync_admin_logins(session)
+
+    # --- legacy: bootstrap через Яндекс-id (BOOTSTRAP_ADMIN_YA_IDS) ---
+    # Оставлен как второй способ: id из списка получает ADMIN при OAuth-входе
+    # (см. app/routers/auth.py). Bootstrap-invites больше не создаются — вход
+    # админа теперь либо по логину/паролю, либо по ya_id из списка напрямую.
     bootstrap_ids = s.bootstrap_ids
     for ya_id in bootstrap_ids:
         existing = await session.scalar(select(User).where(func.lower(User.yandex_id) == ya_id))
-        if existing is not None:
-            if existing.role != Role.ADMIN:
-                existing.role = Role.ADMIN
-                log.info("bootstrap: пользователю %s (id=%s) повышена роль до ADMIN",
-                         existing.display_name, ya_id)
-            continue
-        inv = await session.scalar(
-            select(Invite).where(Invite.used_at.is_(None), Invite.yandex_id == ya_id)
-        )
-        if inv is None:
-            session.add(Invite(yandex_id=ya_id, display_name="Администратор",
-                               role=Role.ADMIN, code=secrets.token_hex(4)))
+        if existing is not None and existing.role != Role.ADMIN:
+            existing.role = Role.ADMIN
+            log.info("bootstrap: пользователю %s (id=%s) повышена роль до ADMIN",
+                     existing.display_name, ya_id)
+    # очистка незадействованных bootstrap-invites (созданы старым сидом)
+    for inv in (await session.execute(
+            select(Invite).where(Invite.used_at.is_(None),
+                                 Invite.created_by_id.is_(None),
+                                 Invite.email.is_(None)))).scalars():
+        await session.delete(inv)
 
     # --- демо-данные для локальной разработки (как в прототипе) ---
     # В продакшене запрещены (fail-fast в main.py), но дополнительно защищаемся и здесь:
