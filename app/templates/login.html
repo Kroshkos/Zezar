@@ -8,7 +8,7 @@
   <p style="color:var(--muted);font-size:13px;margin-bottom:22px">Управление стратегических инициатив и проектов</p>
   {% if error %}<p class="badge b-red" style="margin-bottom:14px">{{ error_msg }}</p>{% endif %}
 
-  {# ---------- Контур администраторов: логин/пароль (ADMIN_LOGINS) ---------- #}
+  {# ---------- Контур администраторов: логин/пароль (ADMIN_USERNAME/ADMIN_PASSWORD) ---------- #}
   <form method="post" action="/auth/admin-login" style="display:flex;flex-direction:column;gap:8px;text-align:left">
     <label style="font-size:12px;color:var(--muted)">Администратор — вход по логину и паролю</label>
     <input name="login" placeholder="Логин администратора" autocomplete="username" required

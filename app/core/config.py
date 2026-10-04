@@ -22,16 +22,43 @@ class Settings(BaseSettings):
     # иначе случайный/дефолтный id мог бы получить ADMIN (см. _bootstrap_ids).
     bootstrap_admin_ya_ids: str = ""
 
-    # ---------- Логины администраторов (вход по логину/паролю, без Яндекса) ----------
-    # Формат: "логин:хеш:ФИО", несколько записей через ';'. Хеш — pbkdf2_sha256,
-    # сгенерировать: python scripts/gen_admin_password.py <логин>
-    # Логин-ключи нормализуются к lower(); сравнение пароля — hmac.compare_digest.
+    # ---------- Администраторы: вход по логину и паролю (без Яндекса) ----------
+    # Оба значения задаются через переменные окружения ОТДЕЛЬНО:
+    #   ADMIN_USERNAME  — логин администратора (по умолчанию 'admin')
+    #   ADMIN_PASSWORD  — его пароль в открытом виде (система сама хеширует
+    #                     его pbkdf2_sha256 при старте; хеш генерировать не нужно)
+    #   ADMIN_FULL_NAME — ФИО для карточки пользователя (необязательно)
+    # Резервирование (несколько админов): ADMIN_LOGINS="вася:хеш1:Вася П.;петя:хеш2",
+    # где хеш — pbkdf2_sha256 (python scripts/gen_admin_password.py <логин>).
+    # Простой путь — ADMIN_USERNAME/ADMIN_PASSWORD; ADMIN_LOGINS нужен, только если
+    # админов несколько или хочется хранить хеши вместо открытого пароля.
+    admin_username: str = "admin"
+    admin_password: str = ""
+    admin_full_name: str = ""
     admin_logins: str = ""
 
     @property
     def admin_login_entries(self) -> list[tuple[str, str, str]]:
-        """ADMIN_LOGINS как [(login_lower, pw_hash, display_name), ...]."""
+        """Записи локальных администраторов [(login_lower, pw_hash, ФИО), ...].
+
+        Источник 1 (основной): ADMIN_USERNAME + ADMIN_PASSWORD — пароль хешируется
+        на лету (pbkdf2_sha256), поэтому в env светится только сам пароль, который
+        вы и так знаете, а хеш нигде не хранится в явном виде.
+        Источник 2 (резерв): ADMIN_LOGINS="логин:хеш[:ФИО];..." — для нескольких
+        админов / хранения хешей. Одинаковые логины не дублируются (первый wins).
+        """
+        from app.core.security import hash_password
+
         out: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+
+        login = (self.admin_username or "").strip().lower()
+        password = self.admin_password or ""
+        if login and password.strip():
+            name = (self.admin_full_name or "").strip() or f"Администратор {login}"
+            out.append((login, hash_password(password), name))
+            seen.add(login)
+
         for part in (self.admin_logins or "").split(";"):
             part = part.strip()
             if not part:
@@ -39,11 +66,14 @@ class Settings(BaseSettings):
             fields = part.split(":", 2)
             if len(fields) < 2 or not fields[0].strip() or not fields[1].strip():
                 continue
-            login = fields[0].strip().lower()
+            lgn = fields[0].strip().lower()
+            if lgn in seen:
+                continue
             pwhash = fields[1].strip()
             name = (fields[2].strip() if len(fields) > 2 and fields[2].strip()
-                    else f"Администратор {login}")
-            out.append((login, pwhash, name))
+                    else f"Администратор {lgn}")
+            out.append((lgn, pwhash, name))
+            seen.add(lgn)
         return out
 
     @property
@@ -130,8 +160,8 @@ class Settings(BaseSettings):
         # остаётся без управляющего контура (именно так возникало «зашёл, но админки нет»).
         if not self.admin_login_entries and not self.bootstrap_ids:
             errors.append(
-                "Не задан ни один администратор: заполните ADMIN_LOGINS "
-                "(вход по логину/паролю, хеш — python scripts/gen_admin_password.py) "
+                "Не задан ни один администратор: заполните ADMIN_PASSWORD "
+                "(вход админа по логину/паролю; логин — ADMIN_USERNAME, по умолчанию 'admin') "
                 "или BOOTSTRAP_ADMIN_YA_IDS (вход через Яндекс)."
             )
 
