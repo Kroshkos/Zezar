@@ -22,7 +22,7 @@ from app.core import yandex_oauth as yo
 from app.core.config import get_settings
 from app.core.security import SESSION_COOKIE, create_session_token, get_current_user
 from app.deps import session_dep
-from app.models.core import DepartmentMember, Invite, User
+from app.models.core import DepartmentMember, Invite, Role, User
 from app.core.yandex_oauth import STATE_COOKIE
 
 router = APIRouter()
@@ -74,10 +74,16 @@ async def callback(request: Request, code: str = "", state: str = "",
                 ya.yandex_id, ya.default_email, ya.email)
             return RedirectResponse(
                 f"/login?error=not_allowed&ya_id={ya.yandex_id}", status_code=302)
+        # Если id пользователя также в BOOTSTRAP_ADMIN_YA_IDS — вход даёт ADMIN,
+        # даже когда приглашение было найдено по email с ролью ниже (или invite
+        # создавал другой админ). Иначе получалось «зашёл, но админки нет».
+        bootstrap_ids = [x.strip() for x in get_settings().bootstrap_admin_ya_ids.split(",")
+                         if x.strip()]
+        role = Role.ADMIN if ya.yandex_id in bootstrap_ids else inv.role
         user = User(yandex_id=ya.yandex_id, email=ya.email,
                     display_name=inv.display_name or ya.display_name,
                     yandex_login=ya.login,
-                    role=inv.role, initials=_initials(inv.display_name or ya.display_name))
+                    role=role, initials=_initials(inv.display_name or ya.display_name))
         session.add(user)
         await session.flush()
         if inv.department_id:
@@ -97,6 +103,16 @@ async def callback(request: Request, code: str = "", state: str = "",
     else:
         user.email = user.email or ya.email
         user.yandex_login = ya.login or user.yandex_login  # CalDAV требует актуальный логин
+        # Идемпотентный bootstrap на лету: если id в BOOTSTRAP_ADMIN_YA_IDS, но
+        # учётная запись до сих пор не ADMIN (например, сервис не перезапускался
+        # после добавления id в .env, или роль была понижена вручную) — повышаем
+        # прямо при входе. Иначе «перезапустил, вошёл — а админки всё равно нет».
+        bootstrap_ids = [x.strip() for x in get_settings().bootstrap_admin_ya_ids.split(",")
+                         if x.strip()]
+        if ya.yandex_id in bootstrap_ids and user.role != Role.ADMIN:
+            user.role = Role.ADMIN
+            logger.info("auth callback: пользователю %s (ya_id=%s) восстановлена роль ADMIN "
+                        "по BOOTSTRAP_ADMIN_YA_IDS", user.display_name, ya.yandex_id)
         await session.commit()
     return _login_redirect(user)
 
