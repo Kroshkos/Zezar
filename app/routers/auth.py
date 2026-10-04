@@ -56,6 +56,14 @@ async def callback(request: Request, code: str = "", state: str = "",
     tok = await yo.exchange_code(code)
     ya = await yo.fetch_userinfo(tok["access_token"])
 
+    # Диагностика bootstrap: видно ли в логах, что за id пришёл из Яндекса и что
+    # реально лежит в BOOTSTRAP_ADMIN_YA_IDS (включая «мусор»: пробелы, email,
+    # опечатки — сравнение идёт по точному совпадению sub).
+    _raw_bootstrap = get_settings().bootstrap_admin_ya_ids
+    logger.info(
+        "auth callback: ya_id=%s login=%s email=%s | BOOTSTRAP_ADMIN_YA_IDS=%r",
+        ya.yandex_id, ya.login, ya.email, _raw_bootstrap)
+
     user = await session.scalar(select(User).where(User.yandex_id == ya.yandex_id))
     if user is None:
         # закрытая регистрация: пускаем только по заранее созданному invite
@@ -113,6 +121,14 @@ async def callback(request: Request, code: str = "", state: str = "",
             user.role = Role.ADMIN
             logger.info("auth callback: пользователю %s (ya_id=%s) восстановлена роль ADMIN "
                         "по BOOTSTRAP_ADMIN_YA_IDS", user.display_name, ya.yandex_id)
+        elif user.role != Role.ADMIN:
+            # Пользователь НЕ из bootstrap-списка и не админ — фиксируем в логе
+            # его реальный id: если человек рассчитывал на админку, это значит,
+            # что в BOOTSTRAP_ADMIN_YA_IDS прописан другой (неверный) id.
+            logger.info("auth callback: пользователь %s (ya_id=%s) вошёл с ролью %s; "
+                        "его id отсутствует в BOOTSTRAP_ADMIN_YA_IDS — добавьте туда "
+                        "именно этот ya_id, если нужен доступ администратора",
+                        user.display_name, ya.yandex_id, user.role.value)
         await session.commit()
     return _login_redirect(user)
 
