@@ -5,7 +5,7 @@
 
 {% block actions %}
 {% if departments %}
-<select id="deptSel" onchange="location='/admin_dept?department_id='+this.value" style="min-width:220px">
+<select id="deptSel" onchange="location='/admin_dept/?department_id='+this.value" style="min-width:220px">
   {% for d in departments %}
   <option value="{{ d.id }}" {% if d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
   {% endfor %}
@@ -14,11 +14,27 @@
 {% endblock %}
 
 {% block content %}
+{% if not department %}
+<!-- Пустое состояние (первый запуск): подразделений ещё нет. -->
+<div class="card pad" style="max-width:560px;margin:24px auto;padding:22px">
+  <h3 style="margin:0 0 8px">🏢 Создайте первое рабочее пространство</h3>
+  <p class="muted" style="margin:0 0 14px">Подразделений в системе пока нет. Администратору
+    нужно создать первое — для него автоматически откроется изолированное рабочее
+    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).</p>
+  <label style="display:block;margin-bottom:8px">Название
+    <input id="ndName" placeholder="напр. Отдел разработки" style="width:100%;padding:8px"></label>
+  <label style="display:block;margin-bottom:14px">Код (латиница, для URL/API)
+    <input id="ndCode" placeholder="напр. dev" style="width:100%;padding:8px"></label>
+  <button class="btn primary" onclick="createDept()">+ Подразделение</button>
+</div>
+{% else %}
 <!-- Баннер: какое рабочее пространство сейчас открыто (для Admin/Coordinator — с подсказкой про переключатель) -->
 <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
   Вы просматриваете рабочее пространство: <b>{{ department.name }}</b>
   {% if departments %}<span style="color:#5b6b82"> — сменить можно выпадающим списком справа вверху.</span>{% endif %}
 </div>
+{% endif %}
+{% if department %}
 <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
 
   <!-- Участники -->
@@ -130,6 +146,7 @@
     {% else %}<p class="muted">Входящих шерингов нет.</p>{% endif %}
   </div>
 </div>
+{% endif %}
 
 <script id="admData" type="application/json">
 {{ {'department': department, 'can_manage': can_manage} | tojson }}
@@ -139,7 +156,20 @@
 {% block scripts %}
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
-const DEPT = ADM.department.id;
+const DEPT = ADM.department ? ADM.department.id : null;
+
+async function createDept() {
+  const name = document.getElementById('ndName').value.trim();
+  let code = document.getElementById('ndCode').value.trim().toLowerCase();
+  if (!name || !code) return toast('Укажите название и код', 'warn');
+  // DeptIn ожидает [a-z0-9_-], длина >= 2
+  code = code.replace(/[^a-z0-9_-]/g, '-');
+  if (code.length < 2) code = 'dept-' + code;
+  const r = await api('/api/core/departments', 'POST', { name, code });
+  if (r.ok) { toast('Подразделение создано'); location.href = '/admin_dept/'; }
+  else if (r.status === 409) toast('Код занят — укажите другой', 'err');
+  else toast('Ошибка (' + r.status + ')', 'err');
+}
 
 async function addMember() {
   const uid = +document.getElementById('addUser').value;

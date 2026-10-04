@@ -59,7 +59,7 @@ async def render_page(request: Request, template: str, *, module_key: str,
                     Entity.kind.in_(kinds), entity_filter(nav_ctx))
                 cnt = await session.scalar(q) or 0
         items.append({"key": spec.key, "title": spec.title, "icon": spec.icon,
-                      "url": f"/{spec.key}", "count": cnt})
+                      "url": f"/{spec.key}/", "count": cnt})
 
     base = {"user": user, "nav_modules": items, "active_module": module_key,
             "is_admin": user.role in (Role.ADMIN, Role.COORDINATOR)}
