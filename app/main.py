@@ -36,12 +36,48 @@ def _import_all_models() -> None:
     import app.models.module_payloads  # noqa: F401
 
 
+def _sync_missing_columns(conn) -> None:
+    """Самовосстановление схемы для легаси-БД, созданных старым create_all.
+
+    Проблема на продакшене (Amvera): entrypoint при alembic_version==head выполняет
+    `stamp head` вместо `upgrade`, поэтому новые колонки (например users.yandex_login)
+    так и не добавляются, а приложение падает с "no such column". Здесь сверяем
+    фактические колонки SQLite с метаданными моделей и досоздаём отсутствующие
+    (ALTER TABLE ADD COLUMN — единственная безопасная операция без пересоздания таблиц;
+    индексы добираются через create_all). Идемпотентно."""
+    for table in Base.metadata.sorted_tables:
+        # Сначала проверяем существование таблицы (SELECT, а не PRAGMA — он не бросает
+        # исключение на несуществующей таблице), иначе create_all создаст её целиком.
+        exists = conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table.name}
+        ).fetchone()
+        if not exists:
+            continue
+        existing = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table.name})")}
+        missing = [c for c in table.columns if c.name not in existing]
+        for col in missing:
+            coltype = col.type.compile(conn.dialect)
+            conn.exec_driver_sql(
+                f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype} NULL"
+            )
+            log.warning("migrate: добавлена отсутствующая колонка %s.%s (%s)",
+                        table.name, col.name, coltype)
+        if missing:
+            # добрать индексы новой колонки, если они объявлены в модели
+            for idx in table.indexes:
+                if all(c.name in {m.name for m in missing} for c in idx.columns):
+                    idx.create(conn, checkfirst=True)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. Схема БД (SQLite строго в /data — путь из .env). Модели импортируем ДО create_all,
     #    иначе payload-таблицы модулей не попадут в метаданные.
     _import_all_models()
     async with engine.begin() as conn:
+        # Сначала досоздаём недостающие колонки в существующих таблицах (легаси-БД после
+        # `alembic stamp head`), затем create_all добавляет отсутствующие таблицы/индексы.
+        await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
 
     # 2. Динамическая регистрация модулей-плагинов + таблица module_registry + bootstrap

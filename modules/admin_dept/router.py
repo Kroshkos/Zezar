@@ -52,10 +52,7 @@ async def _pick_department(session: AsyncSession, ctx: access.AccessContext,
                 .where(Department.is_active == True)  # noqa: E712
                 .order_by(Department.id).limit(1))
             if dept_id is None:
-                raise HTTPException(
-                    400,
-                    "Подразделений ещё нет — создайте первое («+ Подразделение»)",
-                )
+                return None      # пустое состояние: страница предложит создать пространство
         else:
             raise HTTPException(403, "Вы не состоите ни в одном подразделении")
     dept = await session.get(Department, dept_id)
@@ -72,6 +69,26 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
                           session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
     dept = await _pick_department(session, ctx, department_id)
+
+    # --- пустое состояние ----------------------------------------------------
+    # Подразделений ещё нет (первый запуск): вместо сырого JSON рендерим
+    # страницу с формой «+ Подразделение». Кнопка работает через тот же API
+    # ядра, что и обычный CRUD пространств.
+    if dept is None:
+        all_users = (await session.scalars(
+            select(User).where(User.is_active == True)  # noqa: E712
+            .order_by(User.display_name))).all()
+        return await render_page(
+            request, "admin_dept.html", module_key=MODULE_KEY, user=user,
+            session=session,
+            page_title="Администрирование подразделения",
+            page_sub="Сначала создайте первое рабочее пространство (подразделение)",
+            counts={MODULE_KEY: 0},
+            is_global_admin=(user.role.value == "ADMIN"),
+            department=None, departments=[], can_manage=True,
+            members=[], modules=[], shares_out=[], shares_in=[],
+            users=[{"id": u.id, "name": u.display_name} for u in all_users],
+        )
 
     # --- состав участников --------------------------------------------------
     members = (await session.scalars(
