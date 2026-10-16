@@ -368,23 +368,3 @@ class OutboxEvent(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
-
-
-# ======================= Допуски (устаревшая таблица Invite) =======================
-
-class Invite(TimestampMixin, Base):
-    """УСТАРЕЛО: контур приглашений/Яндекс-допусков удалён вместе с OAuth.
-    Таблица сохранена только для совместимости со схемами старых установок
-    (в миграциях её нет — на новых БД не создаётся). Код к ней не обращается."""
-    __tablename__ = "invites"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    display_name: Mapped[str] = mapped_column(String(160))
-    role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
-    department_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
-    role_in_dept: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
-    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
-    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    code: Mapped[Optional[str]] = mapped_column(String(32))  # код привязки Telegram

@@ -32,8 +32,9 @@ from app.core.security import get_current_user, hash_password
 from app.db.seed import is_env_admin_login
 from app.deps import session_dep
 from app.models.core import (
-    DepartmentMember, EntityResponsible, EventLog, Invite, Role, User,
+    DepartmentMember, EntityResponsible, EventLog, Role, User,
 )
+from sqlalchemy.orm import selectinload
 
 router = APIRouter()
 
@@ -132,7 +133,8 @@ async def patch_user(user_id: int, body: UserPatch, request: Request,
                      user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     await _require_admin(session, user)
-    u = await session.get(User, user_id)
+    u = await session.scalar(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id))
     if not u:
         raise HTTPException(404)
     changes: list[str] = []
@@ -175,7 +177,8 @@ async def reset_password(user_id: int, body: ResetPasswordIn, request: Request,
     """Сброс пароля администратором: новый (начальный) пароль + принудительная
     смена при первом входе владельца учётной записи."""
     await _require_admin(session, user)
-    u = await session.get(User, user_id)
+    u = await session.scalar(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id))
     if not u:
         raise HTTPException(404)
     if is_env_admin_login(u.login):
@@ -201,7 +204,8 @@ async def delete_user(user_id: int, request: Request,
     await _require_admin(session, user)
     if user_id == user.id:
         raise HTTPException(409, "Нельзя удалить собственную учётную запись")
-    u = await session.get(User, user_id)
+    u = await session.scalar(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id))
     if not u:
         raise HTTPException(404)
     if is_env_admin_login(u.login):
@@ -213,7 +217,6 @@ async def delete_user(user_id: int, request: Request,
         raise HTTPException(409, f"Пользователь '{u.login}' назначен ответственным по сущностям — "
                                  "сначала передайте ответственность или отключите аккаунт")
     await session.execute(delete(DepartmentMember).where(DepartmentMember.user_id == user_id))
-    await session.execute(delete(Invite).where(Invite.used_at.is_not(None)))  # легаси-строки допусков
     name, login = u.display_name, u.login
     await session.delete(u)
     await log_event(session, "delete_user", category="admin", user=user,

@@ -20,9 +20,9 @@ import logging
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -155,27 +155,19 @@ async def change_password(request: Request,
 
 
 @router.get("/auth/dev-login")
-async def dev_login(email: str, session: AsyncSession = Depends(session_dep)):
-    """Вход по email без пароля — ТОЛЬКО локальная разработка (DEV_LOGIN_ENABLED=true).
+async def dev_login(login: str, session: AsyncSession = Depends(session_dep)):
+    """Вход по логину без пароля — ТОЛЬКО локальная разработка (DEV_LOGIN_ENABLED=true).
 
-    В продакшене отключён (fail-fast require_production_settings). Нужен для E2E-
-    тестов и ручной проверки RBAC/шеринга под разными участниками без заведения
-    паролей. Ищем пользователя по email; если его нет и включён демо-сид — создаём
-    участника (dev-контур не должен требовать предварительного сида).
+    В продакшене отключён (404 + fail-fast require_production_settings). Нужен для
+    E2E-тестов и ручной проверки RBAC/шеринга под разными участниками. Пользователь
+    должен существовать (демо-сид создаёт их с фиксированными логинами).
     """
-    from app.core.config import get_settings
     if not get_settings().dev_login_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
-    user = await session.scalar(select(User).where(func.lower(User.email) == email.strip().lower()))
-    if user is None:
-        if not get_settings().seed_demo_data:
-            raise HTTPException(404, "Пользователь с таким email не найден (dev-режим)")
-        parts = email.split("@")[0].replace(".", " ").split()
-        name = " ".join(p.capitalize() for p in parts)
-        user = User(email=email, display_name=name, initials=_initials(name), color="#4c7dff",
-                    role=Role.MEMBER)
-        session.add(user)
-        await session.flush()
+    user = await session.scalar(
+        select(User).where(func.lower(User.login) == login.strip().lower()))
+    if user is None or not user.is_active:
+        raise HTTPException(404, "Пользователь с таким логином не найден (dev-режим)")
     return _login_redirect(user)
 
 
