@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import schema
 
 from app.core.config import get_settings
 from app.core.module_registry import registry
@@ -118,6 +119,11 @@ def _drop_legacy_auth_columns(conn) -> None:
         # "no such column", и старт обрывался. Отсутствующие колонки после
         # пересоздания добивает _sync_missing_columns (NULL-дефолты).
         actual = cols(table)
+        if table not in Base.metadata.tables:
+            # Легаси-таблица, которой больше нет в моделях (invites): просто удаляем.
+            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
+            log.warning("migrate: удалена легаси-таблица %s (её больше нет в модели)", table)
+            continue
         # Пересечение колонок модели и фактической схемы, с учётом переименований
         # (очень старые БД: full_name -> display_name на SQLite < 3.25, где
         # RENAME COLUMN не удался выше).
@@ -143,17 +149,54 @@ def _drop_legacy_auth_columns(conn) -> None:
             fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
             dbapi.execute("PRAGMA foreign_keys=OFF")
         try:
+            # DDL колонок берём из метаданных модели: «сырая» копия без типов
+            # превращала id в колонку без автоинкремента (SQLite: PK работает
+            # только как INTEGER PRIMARY KEY) — первый же INSERT нового
+            # пользователя падал с "UNIQUE constraint failed: users.login"
+            # (id=0 конфликтовал повторно).
+            tmp_tbl = schema.Table(tmp, schema.MetaData())
+            for name in dst_cols:
+                cdef = Base.metadata.tables[table].columns[name]
+                tmp_tbl.append_column(schema.Column(
+                    name, cdef.type, primary_key=cdef.primary_key,
+                    nullable=cdef.nullable))
+            coldefs = [str(schema.CreateColumn(c).compile(dialect=conn.dialect))
+                       for c in tmp_tbl.columns]
             conn.exec_driver_sql(
-                f"CREATE TABLE {tmp} ({', '.join(f'\"{n}\"' for n in dst_cols)})")
+                f"CREATE TABLE {tmp} ({', '.join(coldefs)})")
             conn.exec_driver_sql(
                 f"INSERT INTO {tmp} ({collist_dst}) SELECT {collist_src} FROM {table}")
             conn.exec_driver_sql(f"DROP TABLE {table}")
             conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
         finally:
-            if fk_children and dbapi is not None and fk_prev:
+            if fk_children and dbapi is not None and fk_prev is not None:
                 dbapi.execute("PRAGMA foreign_keys=ON")
         log.warning("migrate: таблица %s пересоздана без легаси-колонки %s "
                     "(данные сохранены)", table, legacy_col)
+        # Пересозданная таблица — «сырая» копия колонок модели без PK/UNIQUE/индексов.
+        # Для users обязательно чиним первичный ключ и UNIQUE на login: без них
+        # SQLite не может валидировать FK event_log.user_id (ошибка
+        # "foreign key mismatch - event_log referencing users"), а потеря UNIQUE
+        # на login допускает дублирование логинов при синхронизации админов из env.
+        if table == "users":
+            # Уникальный индекс (id, login): SQLite требует, чтобы на колонку,
+            # на которую ссылается внешний ключ (event_log.user_id), указывал
+            # уникальный индекс — иначе при включённых foreign_keys любой
+            # INSERT в event_log падает с "foreign key mismatch".
+            try:
+                conn.exec_driver_sql(
+                    'CREATE UNIQUE INDEX IF NOT EXISTS ix_users_id_login ON users ("id", "login")')
+            except Exception:  # noqa: BLE001
+                pass
+            # Восстанавливаем уникальные индексы по метаданным модели (login и т.п.),
+            # таблица пересоздавалась «сырой» копией без ограничений.
+            for c in Base.metadata.tables["users"].columns:
+                if c.index or c.unique:
+                    try:
+                        conn.exec_driver_sql(
+                            f'CREATE UNIQUE INDEX IF NOT EXISTS "ix_users_{c.name}" ON users ("{c.name}")')
+                    except Exception:  # noqa: BLE001 — индекс мог остаться от старой схемы
+                        pass
 
 
 def _sync_missing_columns(conn) -> None:
