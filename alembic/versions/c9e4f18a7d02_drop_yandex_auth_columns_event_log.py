@@ -69,8 +69,10 @@ def upgrade() -> None:
         if "password_hash" not in cols:
             add_cols.append(sa.Column("password_hash", sa.Text(), nullable=True))
         if "must_change_password" not in cols:
+            # default=True в модели: новые пользователи (созданные админом с
+            # начальным паролем) обязаны сменить пароль при первом входе.
             add_cols.append(sa.Column("must_change_password", sa.Boolean(),
-                                      nullable=False, server_default=sa.true()))
+                                      nullable=False, server_default=sa.false()))
 
         # 1) Сначала добавляем новые колонки и ПЕРЕНОСИМ данные из легаси-колок
         #    (пока они ещё существуют в таблице): 'local:<login>' -> login.

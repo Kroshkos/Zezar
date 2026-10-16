@@ -36,11 +36,52 @@ def _import_all_models() -> None:
     import app.models.module_payloads  # noqa: F401
 
 
+def _drop_legacy_auth_columns(conn) -> None:
+    """Self-healing легаси-схемы: удаление колонок авторизации через Яндекс ID.
+
+    На продакшене встречались БД, где миграция c9e4f18a7d02 не применялась
+    (ошибочный `stamp head`). Колонки users.yandex_id / invites.yandex_id модели
+    больше не объявляют, и create_all их НЕ чистит — leftover NOT NULL yandex_id
+    ронял старт (IntegrityError при сиде администратора). SQLite < 3.35 может не
+    поддерживать DROP COLUMN, поэтому в этом случае таблица аккуратно
+    пересоздаётся по текущим метаданным с сохранением данных. Идемпотентно."""
+    def cols(table: str) -> set[str]:
+        return {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+
+    def has_table(table: str) -> bool:
+        return conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table}
+        ).fetchone() is not None
+
+    for table, legacy_col in (("users", "yandex_id"), ("invites", "yandex_id")):
+        if not has_table(table) or legacy_col not in cols(table):
+            continue
+        try:  # сначала пробуем дешёвый DROP COLUMN (SQLite >= 3.35)
+            conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {legacy_col}")
+            log.warning("migrate: удалена легаси-колонка %s.%s", table, legacy_col)
+            continue
+        except Exception:  # noqa: BLE001 — старый SQLite: пересоздаём таблицу
+            pass
+        model_cols = [c.name for c in Base.metadata.tables[table].columns
+                      if c.name != legacy_col]
+        collist = ", ".join(model_cols)
+        tmp = f"{table}__migrated"
+        quoted = lambda n: f'"{n}"'  # noqa: E731
+        conn.exec_driver_sql(
+            f"CREATE TABLE {tmp} ({', '.join(quoted(c) for c in model_cols)})")
+        conn.exec_driver_sql(
+            f"INSERT INTO {tmp} ({collist}) SELECT {collist} FROM {table}")
+        conn.exec_driver_sql(f"DROP TABLE {table}")
+        conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
+        log.warning("migrate: таблица %s пересоздана без легаси-колонки %s "
+                    "(данные сохранены)", table, legacy_col)
+
+
 def _sync_missing_columns(conn) -> None:
     """Самовосстановление схемы для легаси-БД, созданных старым create_all.
 
     Проблема на продакшене (Amvera): entrypoint при alembic_version==head выполняет
-    `stamp head` вместо `upgrade`, поэтому новые колонки (например users.yandex_login)
+    `stamp head` вместо `upgrade`, поэтому новые колонки (например users.login)
     так и не добавляются, а приложение падает с "no such column". Здесь сверяем
     фактические колонки SQLite с метаданными моделей и досоздаём отсутствующие
     (ALTER TABLE ADD COLUMN — единственная безопасная операция без пересоздания таблиц;
@@ -79,6 +120,8 @@ async def lifespan(app: FastAPI):
         # `alembic stamp head`), затем create_all добавляет отсутствующие таблицы/индексы.
         await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
+        # create_all не удаёт легаси-колонки (yandex_id) — чистим сверхсхему.
+        await conn.run_sync(_drop_legacy_auth_columns)
 
     # 2. Динамическая регистрация модулей-плагинов + таблица module_registry + bootstrap
     registry.autodiscover("modules")

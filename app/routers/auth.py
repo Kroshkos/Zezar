@@ -141,8 +141,17 @@ async def change_password(request: Request,
     if np == current_password:
         return RedirectResponse("/change-password?error=same_as_old", status_code=302)
 
-    user.password_hash = hash_password(np)
+    from sqlalchemy import update as sql_update  # локальный импорт: name 'update' занят формой
+    new_hash = hash_password(np)
     was_forced = bool(user.must_change_password)
+    # user здесь detached (загружается в отдельной сессии зависимостью
+    # get_current_user) — присваивание атрибутов ничего бы не записало в БД.
+    # Поэтому явный Core-update по id: новый хеш + снятие флага принудительной
+    # смены (без него пользователь зацикливался на /change-password).
+    await session.execute(
+        sql_update(User).where(User.id == user.id)
+        .values(password_hash=new_hash, must_change_password=False))
+    user.password_hash = new_hash
     user.must_change_password = False
     await log_event(session, "password_changed", category="auth", user=user,
                     ip=client_ip(request),
