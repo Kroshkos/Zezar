@@ -37,7 +37,12 @@ async def login_page(request: Request, error: str = ""):
 @router.get("/")
 async def index(request: Request, user: User = Depends(get_current_user),
                 session: AsyncSession = Depends(session_dep)):
-    """Корень -> первая доступная страница (дашборд)."""
+    """Корень -> первая доступная страница (дашборд).
+
+    Пользователь с не сменённым начальным паролем принудительно направляется
+    на страницу смены пароля (защита от прямого захода по URL после первого входа)."""
+    if user.must_change_password:
+        return RedirectResponse("/change-password?forced=1", status_code=302)
     return await render_page(request, "dashboard.html", module_key="dashboard",
                              page_title="Дашборд", page_sub="",
                              user=user, session=session)

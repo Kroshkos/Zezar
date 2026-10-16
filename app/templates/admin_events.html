@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{# Журнал событий: всё, что происходит в системе #}
+{% block actions %}
+<a class="btn" href="/admin" style="text-decoration:none">👥 Пользователи</a>
+{% endblock %}
+{% block content %}
+<div class="frow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
+  <div class="card pad"><div style="font-size:22px;font-weight:800">{{ stats.total }}</div><div class="sub">Всего записей</div></div>
+  {% for cat, n in stats.by_category.items() %}
+  <div class="card pad"><div style="font-size:22px;font-weight:800">{{ n }}</div><div class="sub">{{ cat }}</div></div>
+  {% endfor %}
+</div>
+
+<form method="get" action="/admin/events" class="card pad" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+  <input name="q" value="{{ filter_q }}" placeholder="Поиск: действие, объект, пользователь…"
+         style="flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--line);border-radius:8px">
+  <select name="category" style="padding:8px 12px;border:1px solid var(--line);border-radius:8px">
+    <option value="">Все категории</option>
+    {% for c in ['auth','admin','entity','dept','system'] %}
+    <option value="{{ c }}" {{ 'selected' if filter_category==c }}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="limit" style="padding:8px 12px;border:1px solid var(--line);border-radius:8px">
+    {% for l in [100,200,500,1000] %}<option value="{{ l }}" {{ 'selected' if filter_limit==l }}>{{ l }} записей</option>{% endfor %}
+  </select>
+  <button class="btn primary" type="submit">Применить</button>
+</form>
+
+<div class="card pad" style="overflow:auto">
+  <p class="sub" style="margin-bottom:8px">Записей по фильтру: {{ total }} (показаны новые сверху)</p>
+  <table class="tbl">
+    <thead><tr><th>Когда (UTC)</th><th>Кто</th><th>Действие</th><th>Категория</th><th>Объект</th><th>IP</th><th>Событие</th></tr></thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td style="white-space:nowrap">{{ e.at.replace('T',' ').rstrip('Z') }}</td>
+        <td>{{ e.user }}</td>
+        <td><code>{{ e.action }}</code></td>
+        <td><span class="badge {{ {'auth':'b-blue','admin':'b-amber','entity':'b-green','dept':'b-gray','system':'b-gray'}[e.category] or 'b-gray' }}">{{ e.category }}</span></td>
+        <td>{{ e.object or '—' }}</td>
+        <td>{{ e.ip or '—' }}</td>
+        <td>{% if e.level=='error' %}<span class="badge b-red">{{ e.level }}</span>{% elif e.level=='warning' %}<span class="badge b-amber">{{ e.level }}</span>{% endif %}
+            {{ e.message or '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="sub">Нет записей по заданному фильтру.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -94,24 +94,19 @@ async def lifespan(app: FastAPI):
     from app.core.config import get_settings as _gs
     from app.models.core import User as _User
     from sqlalchemy import select as _select
-    _bids = _gs().bootstrap_ids
     _admins = _gs().admin_login_entries
     async with SessionLocal() as s:
-        _uids = (await s.execute(_select(_User.yandex_id, _User.login, _User.role))).all()
+        _uids = (await s.execute(_select(_User.login, _User.role))).all()
     _st = _gs()
     log.info("access check at startup: admin logins=%s (ADMIN_USERNAME=%r, ADMIN_PASSWORD %s); "
-             "BOOTSTRAP_ADMIN_YA_IDS=%r -> %s; users в БД: %s",
+             "users в БД: %s",
              [a[0] for a in _admins] or "не задан",
              _st.admin_username, "задан" if _st.admin_password else "НЕ задан",
-             _st.bootstrap_admin_ya_ids, _bids or "—",
-             [(uid or lgn, r.value) for uid, lgn, r in _uids] or "—")
-    if not _admins and not _bids:
+             [(lgn, r.value) for lgn, r in _uids] or "—")
+    if not _admins:
         log.warning("access check at startup: НЕ задано ни одной учётной записи администратора! "
-                    "Задайте ADMIN_USERNAME + ADMIN_PASSWORD (вход по логину/паролю) "
-                    "или BOOTSTRAP_ADMIN_YA_IDS — иначе в систему нельзя войти как админ.")
-    if _bids and not any((uid or "").lower() in _bids for uid, _, _ in _uids):
-        log.info("access check at startup: в BOOTSTRAP_ADMIN_YA_IDS (%s) пока нет пользователя "
-                 "в базе — он получит ADMIN при первом OAuth-входе.", _bids)
+                    "Задайте ADMIN_USERNAME + ADMIN_PASSWORD (вход по логину/паролю) — "
+                    "иначе в систему нельзя войти как админ.")
 
     # 3. Jinja: подключить папки шаблонов модулей
     from app.ui import init_templates
