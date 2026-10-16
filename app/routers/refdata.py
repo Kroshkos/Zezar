@@ -82,6 +82,20 @@ def _scope(user: User, dept_id: Optional[int]) -> Optional[int]:
     return dept_id
 
 
+def _write_dept(user: User, body_dept: Optional[int]) -> Optional[int]:
+    """Контекст записи для администратора/координатора.
+
+    Глобальный шаблон создаётся только при явном указании null-контекста
+    (UI отправляет department_id=null из режима «Вся система»). Если админ
+    работает во контексте конкретного пространства — запись локальна ему
+    наравне с руководителем (общесистемные шаблоны видны всем и применяются
+    автоматически, поэтому копия в пространстве не требуется).
+    """
+    if user.role in (Role.ADMIN, Role.COORDINATOR):
+        return body_dept
+    return None  # заполняется resolve_dept (только своё подразделение, HEAD)
+
+
 @router.get("/view")
 async def view(ref: str = Query(..., description="status|prio|type|wf|groups"),
                set: Optional[str] = None, department_id: Optional[int] = None,
@@ -156,8 +170,9 @@ async def create_status(body: StatusIn, user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Справочники ведут администратор и руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.department_id)
+    dept = _write_dept(user, body.department_id)
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.create_status(session, user, set_name=body.set, label=body.label,
                                       color=body.color, order=body.order, dept_id=dept)
     return {"id": row.id, "key": row.key, "ok": True}
@@ -168,8 +183,9 @@ async def patch_status(row_id: int, body: dict, user: User = Depends(get_current
                        session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.get("department_id"))
+    dept = _write_dept(user, body.get("department_id"))
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.get("department_id"))
     row = await refdata.patch_status(session, user, row_id, body, dept)
     return {"id": row.id, "ok": True}
 
@@ -180,7 +196,7 @@ async def delete_status(row_id: int, department_id: Optional[int] = None,
                         session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
+    dept = department_id if user.role in (Role.ADMIN, Role.COORDINATOR) \
         else await resolve_dept(session, user, department_id)
     await refdata.delete_status(session, user, row_id, dept)
     return {"ok": True}
@@ -193,8 +209,9 @@ async def create_prio(body: PrioIn, user: User = Depends(get_current_user),
                       session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.department_id)
+    dept = _write_dept(user, body.department_id)
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.create_priority(session, user, label=body.label, color=body.color,
                                        weight=body.weight, dept_id=dept)
     return {"id": row.id, "key": row.key, "ok": True}
@@ -205,8 +222,9 @@ async def patch_prio(row_id: int, body: dict, user: User = Depends(get_current_u
                      session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.get("department_id"))
+    dept = _write_dept(user, body.get("department_id"))
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.get("department_id"))
     row = await refdata.patch_priority(session, user, row_id, body, dept)
     return {"id": row.id, "ok": True}
 
@@ -217,7 +235,7 @@ async def delete_prio(row_id: int, department_id: Optional[int] = None,
                       session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
+    dept = department_id if user.role in (Role.ADMIN, Role.COORDINATOR) \
         else await resolve_dept(session, user, department_id)
     await refdata.delete_priority(session, user, row_id, dept)
     return {"ok": True}
@@ -230,8 +248,9 @@ async def create_type(body: TypeIn, user: User = Depends(get_current_user),
                       session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.department_id)
+    dept = _write_dept(user, body.department_id)
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.create_type(session, user, ref_kind=body.kind, label=body.label,
                                     dept_id=dept)
     return {"id": row.id, "ok": True}
@@ -242,8 +261,9 @@ async def patch_type(row_id: int, body: dict, user: User = Depends(get_current_u
                      session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.get("department_id"))
+    dept = _write_dept(user, body.get("department_id"))
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.get("department_id"))
     row = await refdata.patch_type(session, user, row_id, body.get("label", ""), dept)
     return {"id": row.id, "ok": True}
 
@@ -254,7 +274,7 @@ async def delete_type(row_id: int, department_id: Optional[int] = None,
                       session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
+    dept = department_id if user.role in (Role.ADMIN, Role.COORDINATOR) \
         else await resolve_dept(session, user, department_id)
     await refdata.delete_type(session, user, row_id, dept)
     return {"ok": True}
@@ -267,8 +287,9 @@ async def create_wf(body: WfIn, user: User = Depends(get_current_user),
                     session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.department_id)
+    dept = _write_dept(user, body.department_id)
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.create_template(session, user, name=body.name, steps=body.steps,
                                         kind_scope=body.kind_scope, dept_id=dept)
     return {"id": row.id, "ok": True}
@@ -279,8 +300,9 @@ async def patch_wf(row_id: int, body: dict, user: User = Depends(get_current_use
                    session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.get("department_id"))
+    dept = _write_dept(user, body.get("department_id"))
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.get("department_id"))
     row = await refdata.patch_template(session, user, row_id, body, dept)
     return {"id": row.id, "ok": True}
 
@@ -291,7 +313,7 @@ async def delete_wf(row_id: int, department_id: Optional[int] = None,
                     session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
+    dept = department_id if user.role in (Role.ADMIN, Role.COORDINATOR) \
         else await resolve_dept(session, user, department_id)
     await refdata.delete_template(session, user, row_id, dept)
     return {"ok": True}
@@ -304,8 +326,9 @@ async def create_group(body: GroupIn, user: User = Depends(get_current_user),
                        session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.department_id)
+    dept = _write_dept(user, body.department_id)
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.create_group(session, user, name=body.name, criteria=body.criteria,
                                      dept_id=dept)
     return {"id": row.id, "ok": True}
@@ -316,8 +339,9 @@ async def patch_group(row_id: int, body: dict, user: User = Depends(get_current_
                       session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
-        else await resolve_dept(session, user, body.get("department_id"))
+    dept = _write_dept(user, body.get("department_id"))
+    if dept is None and user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept = await resolve_dept(session, user, body.get("department_id"))
     row = await refdata.patch_group(session, user, row_id, body, dept)
     return {"id": row.id, "ok": True}
 
@@ -328,7 +352,7 @@ async def delete_group(row_id: int, department_id: Optional[int] = None,
                        session: AsyncSession = Depends(session_dep)):
     if user.role == Role.MEMBER:
         raise RefDataError(403, "Только администратор/руководитель")
-    dept = None if user.role in (Role.ADMIN, Role.COORDINATOR) \
+    dept = department_id if user.role in (Role.ADMIN, Role.COORDINATOR) \
         else await resolve_dept(session, user, department_id)
     await refdata.delete_group(session, user, row_id, dept)
     return {"ok": True}
@@ -336,27 +360,47 @@ async def delete_group(row_id: int, department_id: Optional[int] = None,
 
 # ---------------- Активация/деактивация шаблонов руководителем ------------------
 
+def _activate_ref_name(model) -> str:
+    from app.models.core import PriorityLevel, RefType, StatusSet, TaskGroup, WfTemplate
+    return {StatusSet: "status", PriorityLevel: "prio", RefType: "type",
+            WfTemplate: "wf", TaskGroup: "groups"}[model]
+
+
 @router.post("/activate")
 async def activate(body: ActivateIn, user: User = Depends(get_current_user),
                    session: AsyncSession = Depends(session_dep)):
-    """Включить глобальный шаблон администратора в своём подразделении (копия)."""
-    dept = await resolve_dept(session, user, body.department_id)
-    # вид справочника определяем по глобальной записи: пробуем каждую модель
+    """Включить глобальный шаблон администратора у себя.
+
+    Руководитель подразделения: создаётся копия шаблона в его пространстве
+    (source_global_id) — при повторной активации деактивированная копия
+    включается обратно. Администратор/координатор: работает напрямую с
+    общесистемным шаблоном — достаточно включить его (is_active=True).
+    """
     from app.models.core import PriorityLevel, RefType, StatusSet, TaskGroup, WfTemplate
-    model_ref = None
-    for ref_name, model in (("status", StatusSet), ("prio", PriorityLevel),
-                            ("type", RefType), ("wf", WfTemplate), ("groups", TaskGroup)):
-        if await session.get(model, body.global_id) is not None:
-            model_ref = ref_name
+    glob, model_ref = None, None
+    for model in (StatusSet, PriorityLevel, RefType, WfTemplate, TaskGroup):
+        row = await session.get(model, body.global_id)
+        if row is not None:
+            glob, model_ref = row, _activate_ref_name(model)
             break
-    if model_ref is None:
+    if glob is None:
         raise RefDataError(404, "Шаблон не найден")
+    if user.role in (Role.ADMIN, Role.COORDINATOR):
+        if glob.department_id is not None:
+            raise RefDataError(400, "Администратор включает только общесистемные шаблоны")
+        glob.is_active = True
+        await refdata.log_event(session, "refdata_template_enable_global", category="admin",
+                                user=user, object=f"{model_ref}:#{glob.id}",
+                                message=f"Общесистемный шаблон «{refdata._tpl_name(glob)}» активирован")
+        await session.commit()
+        return {"ok": True, "global": True}
+    dept = await resolve_dept(session, user, body.department_id)
     row = await refdata.activate_template(session, user, model_ref, body.global_id, dept)
     return {"ok": True, "copy_id": row.id}
 
 
 @router.post("/deactivate/{ref}/{copy_id}")
-async def deactivate(ref: str, copy_id: int, department_id: int,
+async def deactivate(ref: str, copy_id: int, department_id: Optional[int] = None,
                      user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     """Выключить применённый шаблон администратора (копия сохраняется —

@@ -147,12 +147,20 @@ async def effective_statuses(session: AsyncSession, kind: EntityKind,
             return []
     if dept_id is not None:
         own = [r for r in rows if r.department_id == dept_id]
-        eff = {r.key: r for r in rows if r.department_id is None}
+        eff = {r.key: r for r in rows if r.department_id is None and r.is_active}
         for r in own:
-            eff[r.key] = r          # своя запись/копия подразделения приоритетнее глобальной
-        rows = [r for r in eff.values() if r.is_active]
+            if r.source_global_id:
+                # копия шаблона администратора: деактивированная копия «выключает»
+                # глобальный шаблон для этого подразделения (преемственность ТЗ)
+                if r.is_active:
+                    eff[r.key] = r
+                else:
+                    eff.pop(r.key, None)
+            elif r.is_active:
+                eff[r.key] = r      # собственная запись подразделения приоритетнее глобальной
+        rows = list(eff.values())
     else:
-        rows = [r for r in rows if r.department_id is None]
+        rows = [r for r in rows if r.department_id is None and r.is_active]
     return sorted(rows, key=lambda r: (r.order, r.id))
 
 
@@ -167,13 +175,20 @@ async def effective_priorities(session: AsyncSession, dept_id: Optional[int],
     if dept_id is not None and mods is not None and not _module_allowed("prio", mods):
         return []
     if dept_id is not None:
-        eff = {r.key: r for r in rows if r.department_id is None}
+        eff = {r.key: r for r in rows if r.department_id is None and r.is_active}
         for r in rows:
-            if r.department_id == dept_id:
+            if r.department_id != dept_id:
+                continue
+            if r.source_global_id:
+                if r.is_active:
+                    eff[r.key] = r
+                else:
+                    eff.pop(r.key, None)   # деактивированная копия выключает глобальный шаблон
+            elif r.is_active:
                 eff[r.key] = r
-        rows = [r for r in eff.values() if r.is_active]
+        rows = list(eff.values())
     else:
-        rows = [r for r in rows if r.department_id is None]
+        rows = [r for r in rows if r.department_id is None and r.is_active]
     return sorted(rows, key=lambda r: (-r.weight, r.id))
 
 
@@ -188,12 +203,17 @@ async def effective_types(session: AsyncSession, ref_kind: str, dept_id: Optiona
     if dept_id is not None and mods is not None and not _module_allowed(f"type:{ref_kind}", mods):
         return []
     if dept_id is not None:
-        # своя запись подразделения с таким же label перекрывает глобальную
+        # своя запись подразделения с таким же label перекрывает глобальную;
+        # деактивированная копия шаблона — «выключает» глобальный тип для пространства
         eff: dict[str, RefType] = {}
         for r in rows:
-            prev = eff.get(r.label)
-            if prev is None or (r.department_id == dept_id and prev.department_id is None):
+            if r.department_id is None:
                 eff[r.label] = r
+            elif r.is_active and r.department_id == dept_id:
+                eff[r.label] = r
+        for g in rows:  # деактивированные копии убирают своего глобального «двойника»
+            if g.department_id == dept_id and g.source_global_id and not g.is_active:
+                eff.pop(g.label, None)
         rows = list(eff.values())
     else:
         rows = [r for r in rows if r.department_id is None]
