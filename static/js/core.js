@@ -41,19 +41,29 @@ function askConfirm(msg,onYes){
   openModal('Подтверждение','<p>'+esc(msg)+'</p>',async()=>{closeModal();await onYes()},'Да');
 }
 async function logout(){await api('/auth/logout',{method:'POST'});location.href='/login'}
+/* «Мои интеграции»: только Telegram (Яндекс.Календарь из интерфейса удалён).
+   Логика привязки: пользователь пишет боту /start <код>; код выдаётся кнопкой ниже. */
 async function openSettings(){
   const me=await api('/auth/me');
   const st=await api('/api/profile/integrations').catch(()=>({}));
-  const calId=(st.email||'').split('@')[0];
-  let body='<p style="font-size:13px;color:var(--muted)">Привязка интеграций. Telegram: напишите боту <code>/start ваш_код</code>.</p>'
-   +(calId?'<p style="font-size:12px;color:var(--muted)">Логин CalDAV (аккаунт Яндекса): <b>'+esc(calId)+'</b></p>':'')
-   +'<label>Яндекс.Календарь — app-пароль (<a target=_blank href="https://id.yandex.ru/security/app-passwords">создать</a>, сервис «Другие»)</label>'
-   +'<input name="cal_password" type="password" placeholder="app-пароль">'
-   +'<label>Имя календаря</label><input name="cal_name" value="default">';
-  openModal('Мои интеграции · '+esc(me.name),body,async(fd,f)=>{
-    if(f.cal_password&&f.cal_password.value.trim()){
-      await api('/api/profile/calendar',{method:'PUT',body:JSON.stringify({app_password:f.cal_password.value.trim(),calendar_name:f.cal_name.value||'default'})});
-    }
-    closeModal();toast('Настройки сохранены');
-  });
+  let body='<p style="font-size:13px;color:var(--muted)">Бот <b>ЦЕЗАРЬ</b> присылает уведомления о задачах, совещаниях и проектах.</p>';
+  if(st.telegram_linked){
+    body+='<p>Статус Telegram: <span class="badge b-green">привязан</span>'
+      +(st.telegram_muted?' <span class="badge b-gray">уведомления отключены (/unmute в боте)</span>':'')
+      +'</p><button type="button" class="btn sm ghost" onclick="tgBind(this)">🔄 Привязать заново</button>';
+  }else{
+    body+='<div id="tgBindBox"><button type="button" class="btn primary sm" onclick="tgBind(this)">Получить код привязки</button></div>';
+  }
+  openModal('Мои интеграции · '+esc(me.name),body,async()=>{closeModal();},'Готово');
+}
+async function tgBind(btn){
+  try{
+    const r=await api('/api/profile/telegram/bind',{method:'POST'});
+    const box=document.getElementById('tgBindBox')||btn.parentElement;
+    box.innerHTML='<p style="font-size:13px">1️⃣ Откройте бота <b>@CaesarBot</b> в Telegram<br>'
+     +'2️⃣ Отправьте команду:<br>'
+     +'<code style="display:block;background:#0f172a;color:#fff;padding:10px;border-radius:10px;margin:8px 0;font-size:15px">'+esc(r.code)+'</code>'
+     +'3️⃣ Бот сам проверит код, очистит диалог и пришлёт приветствие. Готово ✅</p>'
+     +'<button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(r.code)+'\').then(()=>toast(\'Код скопирован\'))">📋 Копировать код</button>';
+  }catch(e){}
 }
