@@ -25,15 +25,37 @@ function toast(msg,err){
   t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3200);
 }
 function openModal(title,bodyHtml,onSave,saveLabel='Сохранить'){
-  const root=document.getElementById('modalRoot');
-  root.innerHTML='<div style="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeModal()">'
+  // Если на странице нет контейнера #modalRoot (или он перекрыт/недоступен),
+  // вставляем оверлей прямо в <body> — иначе модалка «не открывается».
+  let root=document.getElementById('modalRoot');
+  if(!root){ root=document.createElement('div'); root.id='modalRoot'; document.body.appendChild(root); }
+  root.innerHTML='<div style="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeModal()">'
    +'<div class="card" style="width:min(560px,94vw);max-height:88vh;overflow:auto;padding:20px"><h3 style="margin-bottom:12px">'+esc(title)+'</h3>'
    +'<form id="mform">'+bodyHtml
    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="button" class="btn ghost" onclick="closeModal()">Отмена</button>'
    +'<button type="submit" class="btn primary">'+esc(saveLabel)+'</button></div></form></div></div>';
-  document.getElementById('mform').addEventListener('submit',async e=>{e.preventDefault();
-    const fd=Object.fromEntries(new FormData(e.target).entries());
-    await onSave(fd,e.target);
+  const form=document.getElementById('mform');
+  const first=form.querySelector('input,select,textarea'); if(first) first.focus();
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    // fd — прокси-объект: поля доступны И как значения (fd.title → строка),
+    // И как DOM-элементы (fd.login.value). Обратная совместимость со всеми
+    // старыми обработчиками (tasks/docs/meetings/... и админ-панелью).
+    const fd=new Proxy(form.elements,{
+      get(el,k){
+        if(typeof k!=='string') return el[k];
+        const c=el[k];
+        if(!c) return undefined;
+        // Элементы форм (HTMLInputElement и т.п.) всегда имеют .value —
+        // возвращаем строковое значение поля (fd.title → «текст»).
+        if(typeof c==='object'&&'value'in c) return c.value;
+        // Служебные свойства HTMLFormControlsCollection (length, item, ...)
+        return c;
+      },
+      has:(el,k)=>k in el,
+    });
+    try{ await onSave(fd,form); }
+    catch(err){ console.error('[modal]',err); /* ошибку api() уже показала toast */ }
   });
 }
 function closeModal(){document.getElementById('modalRoot').innerHTML=''}

@@ -241,6 +241,14 @@
       Создание аккаунтов и смена глобальных ролей — только администратор.
       {% endif %}</p>
     <input id="usersQ" class="adm-search" placeholder="Поиск по ФИО / логину / email…" oninput="renderUsersFiltered()" style="margin-bottom:10px">
+{# Серверный резерв списка ролей: используется cu()/openEdit(), если внешний
+   core.js не загрузился (жёсткий кэш) и roleOptions недоступна. #}
+<select id="roleFallbackSel" style="display:none" aria-hidden="true">
+  <option value="member">Участник</option>
+  <option value="head">Руководитель</option>
+  <option value="coordinator">Координатор</option>
+  <option value="admin">Администратор</option>
+</select>
     <table class="tbl">
       <thead><tr><th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Подразделения</th>
         <th style="text-align:right">Действия</th></tr></thead>
@@ -463,6 +471,17 @@ function roleOptions(sel,allowed){
   const list=allowed||ALL_ROLES;
   return list.map(v=>`<option value="${v}" ${v===sel?'selected':''}>${ROLE_LABEL[v]||v}</option>`).join('');
 }
+/* Резервный вариант списка ролей: если почему-то не доехала внешняя core.js —
+   на странице всегда есть серверный <select id="roleFallbackSel"> с теми же опциями. */
+function roleOptionsSafe(sel){
+  try{
+    if(typeof roleOptions==='function'&&typeof ALL_ROLES!=='undefined') return roleOptions(sel);
+  }catch(e){}
+  const f=document.getElementById('roleFallbackSel');
+  if(f) return [...f.options].map(o=>`<option value="${esc(o.value)}" ${o.value===sel?'selected':''}>${esc(o.textContent)}</option>`).join('');
+  return ['member','head','coordinator','admin']
+    .map(v=>`<option value="${v}" ${v===sel?'selected':''}>${({admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'})[v]}</option>`).join('');
+}
 async function loadUsers(force){
   if(USERS_CACHE&&!force) return renderUsersFiltered();
   const body=document.getElementById('usersBody');
@@ -518,23 +537,44 @@ function deptOptionsForCreate(){
 }
 function cu(){ /* admin-only: создание УЗ */
   if(!IS_ADMIN){ toast('Создание пользователей доступно только администратору','warn'); return; }
-  openModal('Новый пользователь',
-    '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+
-    '<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'+
-    '<label>Email (необязательно)</label><input name="email" placeholder="ivanov@org.ru">'+
-    '<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" type="password" required minlength="8" autocomplete="new-password" placeholder="выдать пользователю">'+
-    '<label>Роль в системе</label><select name="role">'+roleOptions('member')+'</select>'+
-    '<p class="sub" style="margin:4px 0 8px">Администратор и Координатор получают доступ ко всем подразделениям системы; подразделение для такой роли можно не выбирать.</p>'+
-    '<label>Подразделение (необязательно)</label><select name="department_id">'+deptOptionsForCreate()+'</select>',
-    async(fd)=>{
-      const body={display_name:fd.display_name.value.trim(),login:fd.login.value.trim().toLowerCase(),
-        initial_password:fd.initial_password.value,role:fd.role.value};
-      if(fd.email.value.trim())body.email=fd.email.value.trim();
-      if(fd.department_id&&fd.department_id.value)body.department_id=+fd.department_id.value;
+  // Собственный оверлей (не зависит от openModal из core.js): модалка
+  // открывается гарантированно даже при кэше/сбое внешней библиотеки.
+  const old=document.getElementById('cuOverlay'); if(old) old.remove();
+  const ov=document.createElement('div');
+  ov.id='cuOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+  ov.innerHTML='<div class="card" style="width:min(560px,94vw);max-height:88vh;overflow:auto;padding:20px">'
+    +'<h3 style="margin-bottom:12px">➕ Новый пользователь</h3>'
+    +'<form id="cuForm">'
+      +'<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'
+      +'<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'
+      +'<label>Email (необязательно)</label><input name="email" placeholder="ivanov@org.ru">'
+      +'<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" type="password" required minlength="8" autocomplete="new-password" placeholder="выдать пользователю">'
+      +'<label>Роль в системе</label><select name="role">'+roleOptionsSafe('member')+'</select>'
+      +'<p class="sub" style="margin:4px 0 8px">Администратор и Координатор получают доступ ко всем подразделениям системы; подразделение для такой роли можно не выбирать.</p>'
+      +'<label>Подразделение (необязательно)</label><select name="department_id">'+deptOptionsForCreate()+'</select>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">'
+        +'<button type="button" class="btn ghost" onclick="document.getElementById(\'cuOverlay\').remove()">Отмена</button>'
+        +'<button type="submit" class="btn primary">Создать</button></div>'
+    +'</form></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+  const form=document.getElementById('cuForm');
+  form.display_name.focus();
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const btn=form.querySelector('button[type=submit]'); btn.disabled=true; btn.textContent='…';
+    try{
+      const body={display_name:form.display_name.value.trim(),login:form.login.value.trim().toLowerCase(),
+        initial_password:form.initial_password.value,role:form.role.value};
+      if(form.email.value.trim())body.email=form.email.value.trim();
+      if(form.department_id.value)body.department_id=+form.department_id.value;
       await api('/api/core/admin/users','POST',body);
-      closeModal();toast('Пользователь создан. Передайте ему начальный пароль — при первом входе он обязан сменить его.');
+      ov.remove();toast('Пользователь создан. Передайте ему начальный пароль — при первом входе он обязан сменить его.');
       loadUsers(true);
-    },'Создать');
+    }catch(err){ console.error('[create-user]',err); }
+    finally{ btn.disabled=false; btn.textContent='Создать'; }
+  });
 }
 function openEdit(id){
   const u=byId(id);

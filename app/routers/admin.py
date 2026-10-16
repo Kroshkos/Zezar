@@ -48,9 +48,20 @@ async def _require_admin(session, user):
 
 
 def _norm_role_value(v):
-    """Принять роль в любом регистре ('HEAD'/'head'/Role), иначе — как есть."""
+    """Принять роль в любом регистре ('HEAD'/'head'/Role); пустое/неизвестное — MEMBER.
+
+    Пустая строка раньше бросала ValueError прямо в валидаторе — клиент получал
+    422, и создание пользователя «не работало» без внятной ошибки. Теперь это
+    безопасное значение по умолчанию (UI всегда шлёт конкретную роль)."""
     if isinstance(v, str):
-        return Role(v.lower())
+        s = v.strip().lower()
+        if not s:
+            return Role.MEMBER
+        try:
+            return Role(s)
+        except ValueError:
+            raise HTTPException(400, f"Неизвестная роль '{v}'. "
+                                     "Допустимы: admin, coordinator, head, member")
     return v
 
 
@@ -78,9 +89,9 @@ class UserPatch(BaseModel):
     @field_validator("role", mode="before")
     @classmethod
     def _norm_role(cls, v):
-        # Принять "HEAD"/"MEMBER" и т.п. в любом регистре
+        # Принять "HEAD"/"MEMBER" в любом регистре; None оставить как есть (PATCH)
         if isinstance(v, str):
-            return Role(v.lower())
+            return _norm_role_value(v)
         return v
 
 
