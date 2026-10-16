@@ -24,6 +24,10 @@
 {% if is_admin_global %}
 <button class="btn primary" onclick="showTab('departments');toggleNewDept(true)"
         title="Создать новое подразделение (рабочее пространство) — количество не ограничено">＋ Подразделение</button>
+{# Управление учётными записями вынесено над подразделениями: создание
+   администраторов/координаторов возможно и когда подразделений ещё нет. #}
+<button class="btn" onclick="showTab('users')" id="btnAccountsTop"
+        title="Управление учётными записями всей системы: создание, роли, блокировка, сброс паролей">🪪 Учётные записи</button>
 {% endif %}
 {% if departments %}
 <select id="deptSel" onchange="switchDept(this.value)"
@@ -156,7 +160,13 @@
     </div>
   </div>
 </section>
+{% else %}
+{# Нет активного пространства (пустая система) — обзор не нужен, но pane-overview
+   должен существовать как безопасный fallback для JS showTab(). #}
+<section class="adm-pane" id="pane-overview"></section>
+{% endif %}
 
+{% if department %}
 <!-- ===================== Участники ===================== -->
 <section class="adm-pane" id="pane-members">
   <div class="card pad" style="overflow:auto">
@@ -207,6 +217,10 @@
     {% endif %}
   </div>
 </section>
+{% else %}
+<section class="adm-pane" id="pane-members">
+  <div class="card pad"><p class="muted" style="margin:0">Выберите или создайте подразделение — состав участников управляется внутри пространства.</p></div>
+</section>
 {% endif %}
 
 <!-- ===================== Учётные записи ===================== -->
@@ -215,7 +229,9 @@
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
       <h3 style="margin:0">🪪 Учётные записи</h3>
       {% if is_admin_global %}
-      <template id="tplNewUserBtn"></template>
+      {# Кнопка встраивается статически (админ видит её всегда); для руководителя
+         блок не рендерится вовсе — admin-функции не попадают в его HTML. #}
+      <button id="btnNewUser" class="btn primary sm" onclick="cu()">➕ Новый пользователь</button>
       {% endif %}
     </div>
     <p class="adm-scope">{% if is_admin_global %}
@@ -316,11 +332,18 @@
     <div id="evList" class="muted">Откройте вкладку для загрузки…</div>
   </div>
 </section>
+{% else %}
+{# Нет активного пространства — заглушки, чтобы JS showTab() не падал #}
+<section class="adm-pane" id="pane-modules"></section>
+<section class="adm-pane" id="pane-sharing"></section>
+<section class="adm-pane" id="pane-events">
+  <div class="card pad"><p class="muted" style="margin:0">Журнал доступен после выбора подразделения.</p></div>
+</section>
 {% endif %}
 
 <script id="admData" type="application/json">
 {{ {'department': department, 'can_manage': can_manage, 'is_global_admin': is_admin_global,
-    'default_tab': tab} | tojson }}
+    'default_tab': tab, 'departments': [{'id': d.id, 'name': d.name} for d in departments]} | tojson }}
 </script>
 {% endblock %}
 
@@ -329,13 +352,20 @@
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 const IS_ADMIN = !!ADM.is_global_admin;
-/* админ-специфичный UI (кнопка создания пользователя) инжектируется только при IS_ADMIN,
-   чтобы в HTML для руководителя не встречалось admin-функций */
-if (IS_ADMIN) {
-  const tpl = document.getElementById('tplNewUserBtn');
-  if (tpl) tpl.insertAdjacentHTML('afterend', '<button id="btnNewUser" class="btn primary sm" onclick="' + 'cu()">➕ Новый пользователь</button>');
-}
 let USERS_CACHE = null;
+/* Подразделения для формы создания УЗ: берём из server-side JSON (dept_list_simple),
+   при пустом значении — из выпадающего переключателя пространств в шапке. */
+window.DEPTS_FOR_CREATE=[];
+(function initDeptsForCreate(){
+  try{
+    const el=document.getElementById('deptsData');
+    if(el) window.DEPTS_FOR_CREATE=JSON.parse(el.textContent)||[];
+  }catch(e){}
+  const sel=document.getElementById('deptSel');
+  if(sel && !window.DEPTS_FOR_CREATE.length){
+    window.DEPTS_FOR_CREATE=[...sel.options].map(o=>({id:+o.value,name:o.textContent.trim()}));
+  }
+})();
 let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
 let evTimer = null;
 
@@ -435,7 +465,12 @@ async function toggleModule(key,enable){
 
 /* ---------------- учётные записи ---------------- */
 const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
-function roleOptions(sel){return Object.entries(ROLE_LABEL).map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');}
+// Полный набор ролей для формы создания (админ выбирает вплоть до администратора/координатора)
+const ALL_ROLES=['member','head','coordinator','admin'];
+function roleOptions(sel,allowed){
+  const list=allowed||ALL_ROLES;
+  return list.map(v=>`<option value="${v}" ${v===sel?'selected':''}>${ROLE_LABEL[v]||v}</option>`).join('');
+}
 async function loadUsers(force){
   if(USERS_CACHE&&!force) return renderUsersFiltered();
   const body=document.getElementById('usersBody');
@@ -446,7 +481,7 @@ async function loadUsers(force){
     renderUsersFiltered();
   }catch(e){ if(body) body.innerHTML='<tr><td colspan="7" class="muted">Нет доступа к списку пользователей.</td></tr>'; }
 }
-function userInDept(u){ return (u.departments||[]).some(d=>d.id===DEPT); }
+function userInDept(u){ return DEPT && (u.departments||[]).some(d=>d.id===DEPT); }
 function renderUsersFiltered(){
   const body=document.getElementById('usersBody'); if(!USERS_CACHE||!body) return;
   const q=(document.getElementById('usersQ')?.value||'').trim().toLowerCase();
@@ -483,9 +518,10 @@ function renderUsersFiltered(){
 }
 function byId(id){return USERS_CACHE.find(u=>u.id===id);}
 function deptOptionsForCreate(){
-  const sel=document.getElementById('deptsData');
+  const list=(window.DEPTS_FOR_CREATE&&window.DEPTS_FOR_CREATE.length)
+    ? window.DEPTS_FOR_CREATE : (ADM.departments||[]);
   let opts='<option value="">— без подразделения —</option>';
-  if(window.DEPTS_FOR_CREATE) opts+=window.DEPTS_FOR_CREATE.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  opts+=list.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
   return opts;
 }
 function cu(){ /* admin-only: создание УЗ */
@@ -494,14 +530,15 @@ function cu(){ /* admin-only: создание УЗ */
     '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+
     '<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'+
     '<label>Email (необязательно)</label><input name="email" placeholder="ivanov@org.ru">'+
-    '<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" required minlength="8" placeholder="выдать пользователю">'+
-    '<label>Роль</label><select name="role">${roleOptions("member")}</select>'+
+    '<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" type="password" required minlength="8" autocomplete="new-password" placeholder="выдать пользователю">'+
+    '<label>Роль в системе</label><select name="role">'+roleOptions('member')+'</select>'+
+    '<p class="sub" style="margin:4px 0 8px">Администратор и Координатор получают доступ ко всем подразделениям системы; подразделение для такой роли можно не выбирать.</p>'+
     '<label>Подразделение (необязательно)</label><select name="department_id">'+deptOptionsForCreate()+'</select>',
     async(fd)=>{
       const body={display_name:fd.display_name.value.trim(),login:fd.login.value.trim().toLowerCase(),
         initial_password:fd.initial_password.value,role:fd.role.value};
       if(fd.email.value.trim())body.email=fd.email.value.trim();
-      if(fd.department_id.value)body.department_id=+fd.department_id.value;
+      if(fd.department_id&&fd.department_id.value)body.department_id=+fd.department_id.value;
       await api('/api/core/admin/users','POST',body);
       closeModal();toast('Пользователь создан. Передайте ему начальный пароль — при первом входе он обязан сменить его.');
       loadUsers(true);
