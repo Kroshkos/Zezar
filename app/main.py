@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import schema, types as sa_types
+from sqlalchemy import inspect as sa_inspect, schema, text, types as sa_types
 
 from app.core.config import get_settings
 from app.core.module_registry import registry
@@ -38,6 +38,19 @@ def _import_all_models() -> None:
     import app.models.module_payloads  # noqa: F401
 
 
+# ---------------------------------------------------------------------------
+# Самовосстановление схемы БД. Вся интроспекция — ЧЕРЕЗ SQLAlchemy Inspector
+# (sa_inspect(conn)), а не «сырые» PRAGMA: курсоры aiosqlite, оставленные
+# недочитанными/незакрытыми внутри run_sync, роняли следующий запрос с
+# MissingGreenlet на проде. Записи — только через conn.execute(text(...)).
+# ---------------------------------------------------------------------------
+
+
+def _exec(conn, sql: str) -> None:
+    """Выполнить DDL/DML без строк результата (Inspector-безопасно)."""
+    conn.execute(text(sql))
+
+
 def _drop_legacy_auth_columns(conn) -> None:
     """Self-healing легаси-схемы: удаление колонок авторизации через Яндекс ID.
 
@@ -47,32 +60,24 @@ def _drop_legacy_auth_columns(conn) -> None:
     ронял старт (IntegrityError при сиде администратора). SQLite < 3.35 может не
     поддерживать DROP COLUMN, поэтому в этом случае таблица аккуратно
     пересоздаётся по текущим метаданным с сохранением данных. Идемпотентно."""
+    insp = sa_inspect(conn)
+
     def cols(table: str) -> set[str]:
-        return {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+        return {c["name"] for c in insp.get_columns(table)}
 
     def has_table(table: str) -> bool:
-        return conn.exec_driver_sql(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table}
-        ).fetchone() is not None
+        return insp.has_table(table)
 
     def fks(table: str) -> list[tuple]:
         """Прямые FK-зависимости: (таблица-ребёнок, колонка ребёнка) на table.id."""
         out = []
-        for t in _table_names():
-            if not _is_view(t):
-                for r in conn.exec_driver_sql(f"PRAGMA foreign_key_list({t})"):
-                    if r[2] == table and r[3] == "id":
-                        out.append((t, r[1]))
+        for t in insp.get_table_names():
+            for fk in insp.get_foreign_keys(t):
+                if fk["referred_table"] == table and \
+                        fk["referred_columns"] == ["id"]:
+                    for lc in fk["constrained_columns"]:
+                        out.append((t, lc))
         return out
-
-    def _table_names() -> set[str]:
-        return {r[0] for r in conn.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
-
-    def _is_view(name: str) -> bool:
-        return conn.exec_driver_sql(
-            "SELECT 1 FROM sqlite_master WHERE type='view' AND name=:n",
-            {"n": name}).fetchone() is not None
 
     # Очень старые схемы: users.full_name вместо display_name. ALTER TABLE ...
     # RENAME COLUMN поддерживается только SQLite >= 3.25; на более старых
@@ -83,7 +88,7 @@ def _drop_legacy_auth_columns(conn) -> None:
         ucols = cols("users")
         if "display_name" not in ucols and "full_name" in ucols:
             try:
-                conn.exec_driver_sql("ALTER TABLE users RENAME COLUMN full_name TO display_name")
+                _exec(conn, "ALTER TABLE users RENAME COLUMN full_name TO display_name")
                 log.warning("migrate: users.full_name переименован в display_name")
             except Exception:  # noqa: BLE001 — старый SQLite: перенос при recrate
                 _legacy_col_rename["users"] = ("full_name", "display_name")
@@ -94,7 +99,7 @@ def _drop_legacy_auth_columns(conn) -> None:
         # при любом SELECT (role -> None). CASE по lower(role) — чтобы чинить
         # и верхний, и нижний регистр легаси-значений.
         try:
-            conn.exec_driver_sql(
+            _exec(conn,
                 "UPDATE users SET role = CASE lower(role)"
                 " WHEN 'admin' THEN 'ADMIN'"
                 " WHEN 'coordinator' THEN 'COORDINATOR'"
@@ -109,7 +114,7 @@ def _drop_legacy_auth_columns(conn) -> None:
         if not has_table(table) or legacy_col not in cols(table):
             continue
         try:  # сначала пробуем дешёвый DROP COLUMN (SQLite >= 3.35)
-            conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {legacy_col}")
+            _exec(conn, f"ALTER TABLE {table} DROP COLUMN {legacy_col}")
             log.warning("migrate: удалена легаси-колонка %s.%s", table, legacy_col)
             continue
         except Exception:  # noqa: BLE001 — старый SQLite: пересоздаём таблицу
@@ -122,7 +127,7 @@ def _drop_legacy_auth_columns(conn) -> None:
         actual = cols(table)
         if table not in Base.metadata.tables:
             # Легаси-таблица, которой больше нет в моделях (invites): просто удаляем.
-            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
+            conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
             log.warning("migrate: удалена легаси-таблица %s (её больше нет в модели)", table)
             continue
         # Пересечение колонок модели и фактической схемы, с учётом переименований
@@ -180,11 +185,24 @@ def _drop_legacy_auth_columns(conn) -> None:
         # на SQLite требует временного отключения foreign_keys; PRAGMA вне
         # транзакции, поэтому делаем это через raw driver-соединение.
         fk_children = fks(table)
-        dbapi = conn.connection.connection if hasattr(conn.connection, "connection") else None
+        # PRAGMA foreign_keys — per-connection; выполняем через тот же
+        # async-путь SQLAlchemy (run_sync уже внутри зелёной корутины),
+        # курсоры закрываем явно (недочитанный курсор aiosqlite роняет
+        # следующий запрос с MissingGreenlet).
+        def _pragma(sql: str):
+            cur = conn.connection.cursor()
+            try:
+                conn.dialect.do_execute(cur, sql, {}, None)
+                return cur.fetchone()
+            finally:
+                with contextlib.suppress(Exception):
+                    cur.close()
+
         fk_prev = None
-        if fk_children and dbapi is not None:
-            fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
-            dbapi.execute("PRAGMA foreign_keys=OFF")
+        if fk_children:
+            row = _pragma("PRAGMA foreign_keys")
+            fk_prev = row[0] if row else None
+            _pragma("PRAGMA foreign_keys=OFF")
         try:
             # DDL колонок берём из метаданных модели: «сырая» копия без типов
             # превращала id в колонку без автоинкремента (SQLite: PK работает
@@ -205,15 +223,15 @@ def _drop_legacy_auth_columns(conn) -> None:
                     nullable=cdef.nullable, autoincrement=autoinc))
             coldefs = [str(schema.CreateColumn(c).compile(dialect=conn.dialect))
                        for c in tmp_tbl.columns]
-            conn.exec_driver_sql(
-                f"CREATE TABLE {tmp} ({', '.join(coldefs)})")
-            conn.exec_driver_sql(
-                f"INSERT INTO {tmp} ({collist_dst}) SELECT {collist_src} FROM {table}")
-            conn.exec_driver_sql(f"DROP TABLE {table}")
-            conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
+            conn.execute(text(
+                f"CREATE TABLE {tmp} ({', '.join(coldefs)})"))
+            conn.execute(text(
+                f"INSERT INTO {tmp} ({collist_dst}) SELECT {collist_src} FROM {table}"))
+            conn.execute(text(f"DROP TABLE {table}"))
+            conn.execute(text(f"ALTER TABLE {tmp} RENAME TO {table}"))
         finally:
-            if fk_children and dbapi is not None and fk_prev is not None:
-                dbapi.execute("PRAGMA foreign_keys=ON")
+            if fk_children and fk_prev:
+                _pragma("PRAGMA foreign_keys=ON")
         log.warning("migrate: таблица %s пересоздана без легаси-колонки %s "
                     "(данные сохранены)", table, legacy_col)
         # Пересозданная таблица — «сырая» копия колонок модели без PK/UNIQUE/
@@ -250,11 +268,11 @@ def _drop_legacy_auth_columns(conn) -> None:
         create_ddl = str(schema.CreateTable(full_tbl).compile(dialect=conn.dialect))
         collist_all = ", ".join(f'"{c.name}"' for c in md_tbl.columns)
         try:
-            conn.exec_driver_sql(create_ddl)
-            conn.exec_driver_sql(
-                f"INSERT INTO {tmp2} ({collist_all}) SELECT {collist_dst} FROM {table}")
-            conn.exec_driver_sql(f"DROP TABLE {table}")
-            conn.exec_driver_sql(f"ALTER TABLE {tmp2} RENAME TO {table}")
+            conn.execute(text(create_ddl))
+            conn.execute(text(
+                f"INSERT INTO {tmp2} ({collist_all}) SELECT {collist_dst} FROM {table}"))
+            conn.execute(text(f"DROP TABLE {table}"))
+            conn.execute(text(f"ALTER TABLE {tmp2} RENAME TO {table}"))
             log.warning("migrate: схема %s восстановлена из метаданных "
                         "(PK/автоинкремент/FK)", table)
         except Exception:  # noqa: BLE001 — если DDL не подошёл, оставляем сырую копию + индексы
@@ -262,19 +280,19 @@ def _drop_legacy_auth_columns(conn) -> None:
                         "остаётся сырая копия с восстановленными индексами", table,
                         exc_info=True)
             with contextlib.suppress(Exception):
-                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {tmp2}")
+                conn.execute(text(f"DROP TABLE IF EXISTS {tmp2}"))
             if table == "users":
                 with contextlib.suppress(Exception):
-                    conn.exec_driver_sql(
-                        'CREATE UNIQUE INDEX IF NOT EXISTS ix_users_id_login ON users ("id", "login")')
+                    conn.execute(text(
+                        'CREATE UNIQUE INDEX IF NOT EXISTS ix_users_id_login ON users ("id", "login")'))
         if table == "users":
             # Уникальные ИНДЕКСЫ по метаданным (login и т.п.) — как резерв на
             # случай отказа полного DDL; create_all позже досоздаст обычные.
             for c in Base.metadata.tables["users"].columns:
                 if c.index or c.unique:
                     with contextlib.suppress(Exception):
-                        conn.exec_driver_sql(
-                            f'CREATE UNIQUE INDEX IF NOT EXISTS "ix_users_{c.name}" ON users ("{c.name}")')
+                        conn.execute(text(
+                            f'CREATE UNIQUE INDEX IF NOT EXISTS "ix_users_{c.name}" ON users ("{c.name}")'))
 
 
 def _sync_missing_columns(conn) -> None:
@@ -289,12 +307,12 @@ def _sync_missing_columns(conn) -> None:
     for table in Base.metadata.sorted_tables:
         # Сначала проверяем существование таблицы (SELECT, а не PRAGMA — он не бросает
         # исключение на несуществующей таблице), иначе create_all создаст её целиком.
-        exists = conn.exec_driver_sql(
+        exists = conn.execute(text(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table.name}
-        ).fetchone()
+        )).fetchone()
         if not exists:
             continue
-        existing = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table.name})")}
+        existing = {r[1] for r in conn.execute(text(f"PRAGMA table_info({table.name})"))}
         missing = [c for c in table.columns if c.name not in existing]
         for col in missing:
             coltype = col.type.compile(conn.dialect)
@@ -313,7 +331,7 @@ def _sync_missing_columns(conn) -> None:
                     sqldef = str(d)
                 if sqldef is not None:
                     ddl += f" NOT NULL DEFAULT {sqldef}"
-            conn.exec_driver_sql(ddl)
+            conn.execute(text(ddl))
             log.warning("migrate: добавлена отсутствующая колонка %s.%s (%s)",
                         table.name, col.name, coltype)
         if missing:
@@ -351,8 +369,8 @@ def _reconcile_event_log_fk(conn) -> None:
         закрывается при возврате из run_sync). Поэтому вычитываем ВСЕ строки
         сразу в list и закрываем курсор.
         """
-        cur = conn.exec_driver_sql(sql, params) if params is not None \
-            else conn.exec_driver_sql(sql)
+        cur = conn.execute(text(sql, params)) if params is not None \
+            else conn.execute(text(sql))
         try:
             return list(cur.fetchall())
         finally:
@@ -368,7 +386,7 @@ def _reconcile_event_log_fk(conn) -> None:
         MissingGreenlet ('greenlet_spawn has not been called'). Закрытие
         сбрасывает cursor_ до следующей команды.
         """
-        cur = conn.exec_driver_sql(sql)
+        cur = conn.execute(text(sql))
         with contextlib.suppress(Exception):
             cur.close()
 
