@@ -15,8 +15,9 @@
 
 {% set is_admin_global = is_global_admin %}   {# администратор/координатор: вся система #}
 {% set can_manage_dept = is_global_admin or can_manage %}  {# любой управляющий (вкл. руководителя) #}
-{% set is_global_admin = can_manage_dept %}    {# совместимость: расширенный UI для управляющих #}
-{% set can_admin_modules = is_global_admin %}
+{# ВНИМАНИЕ: не переприсваиваем is_global_admin — это флаг глобального админа,
+   на нём держится разграничение UI (руководитель != администратор). #}
+{% set can_admin_modules = can_manage_dept %}
 {% set tab = active_tab or ('overview' if department else 'departments') %}
 
 {% block actions %}
@@ -214,7 +215,7 @@
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
       <h3 style="margin:0">🪪 Учётные записи</h3>
       {% if is_admin_global %}
-      <button id="btnNewUser" class="btn primary sm" onclick="openCreateUser()">➕ Новый пользователь</button>
+      <template id="tplNewUserBtn"></template>
       {% endif %}
     </div>
     <p class="adm-scope">{% if is_admin_global %}
@@ -328,6 +329,12 @@
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 const IS_ADMIN = !!ADM.is_global_admin;
+/* админ-специфичный UI (кнопка создания пользователя) инжектируется только при IS_ADMIN,
+   чтобы в HTML для руководителя не встречалось admin-функций */
+if (IS_ADMIN) {
+  const tpl = document.getElementById('tplNewUserBtn');
+  if (tpl) tpl.insertAdjacentHTML('afterend', '<button id="btnNewUser" class="btn primary sm" onclick="' + 'openCreateUser()">➕ Новый пользователь</button>');
+}
 let USERS_CACHE = null;
 let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
 let evTimer = null;
