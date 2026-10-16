@@ -268,8 +268,8 @@ class EntityShare(TimestampMixin, Base):
 # ======================= Справочники (как statusSets/prioSet в демо) =======================
 
 class StatusSet(TimestampMixin, Base):
-    """Наборы статусов по видам сущностей; глобальные (department_id=NULL)
-    либо переопределённые для подразделения."""
+    """Наборы статусов по видам сущностей; глобальные (department_id=NULL —
+    шаблоны администратора) либо собственные справочники подразделения."""
     __tablename__ = "status_sets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -280,22 +280,79 @@ class StatusSet(TimestampMixin, Base):
     order: Mapped[int] = mapped_column(Integer, default=0)
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    # Шаблон создан администратором и активирован руководителем в этом
+    # подразделении (копия глобального шаблона; деактивация = удаление копии).
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("status_sets.id", ondelete="SET NULL"), nullable=True)
 
     __table_args__ = (UniqueConstraint("kind", "key", "department_id"),)
 
 
 class PriorityLevel(TimestampMixin, Base):
+    """Приоритеты задач. department_id=NULL — глобальный шаблон администратора;
+    заполнен — собственный приоритет подразделения (или активированная копия
+    глобального шаблона, см. source_global_id)."""
     __tablename__ = "priority_levels"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    key: Mapped[str] = mapped_column(String(50), unique=True)
+    key: Mapped[str] = mapped_column(String(50))
     label: Mapped[str] = mapped_column(String(120))
     color: Mapped[str] = mapped_column(String(20), default="b-blue")
     weight: Mapped[int] = mapped_column(Integer, default=0)
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("priority_levels.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("key", "department_id"),)
+
+
+class RefType(TimestampMixin, Base):
+    """Справочник типов: документы (doc_types), ПО (soft_types), стипендии
+    (schol_types) — типы документов/ПО/стипендий из раздела администрирования
+    прототипа sipm_lite_v3.html. department_id=NULL — шаблон администратора,
+    иначе — тип подразделения (в т.ч. активированная копия глобального)."""
+    __tablename__ = "ref_types"
+
+    KIND_DOC = "doc_type"
+    KIND_SOFT = "soft_type"
+    KIND_SCHOL = "schol_type"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(30))            # doc_type | soft_type | schol_type
+    label: Mapped[str] = mapped_column(String(200))
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ref_types.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    __table_args__ = (UniqueConstraint("kind", "label", "department_id"),)
+
+
+class TaskGroup(TimestampMixin, Base):
+    """Группы задач для совещаний (taskGroups из демо): критерии отбора
+    [{projects:[uid..], statuses:[key..], priorities:[key..], dues:[..]}]."""
+    __tablename__ = "task_groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    criteria: Mapped[dict] = mapped_column(JSON, default=dict)
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("task_groups.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    __table_args__ = (UniqueConstraint("name", "department_id"),)
 
 
 class WfTemplate(TimestampMixin, Base):
-    """Шаблоны согласований (wfTemplates из демо)."""
+    """Шаблоны маршрутов (wfTemplates из демо). department_id=NULL — шаблон
+    администратора (применяется ко всем подразделениям согласно подключённым
+    модулям); заполнен — собственный шаблон руководителя подразделения либо
+    активированная копия глобального (source_global_id, деактивация = снятие
+    is_active / удаление копии)."""
     __tablename__ = "wf_templates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -304,6 +361,9 @@ class WfTemplate(TimestampMixin, Base):
     kind_scope: Mapped[Optional[str]] = mapped_column(String(50))       # для каких EntityKind
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("wf_templates.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class EntityWfState(Base):
