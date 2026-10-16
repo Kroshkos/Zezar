@@ -5,7 +5,8 @@
 
 {% block actions %}
 {% if is_global_admin %}
-<button class="btn" onclick="toggleNewDept()" title="Создать новое подразделение (рабочее пространство)">＋ Подразделение</button>
+<button class="btn primary" onclick="toggleNewDept()" title="Создать новое подразделение (рабочее пространство) — доступно всегда, количество не ограничено">＋ Подразделение</button>
+<a class="btn" href="/admin" style="text-decoration:none" title="Управление учётными записями пользователей">👤 Пользователи</a>
 {% endif %}
 {% if departments %}
 <select id="deptSel" onchange="location='/admin_dept/?department_id='+this.value" style="min-width:220px">
@@ -24,8 +25,8 @@
   <h3 style="margin:0 0 8px">{% if not department %}🏢 Создайте первое рабочее пространство{% else %}🏢 Новое рабочее пространство{% endif %}</h3>
   <p class="muted" style="margin:0 0 14px">{% if not department %}Подразделений в системе пока нет. Администратору
     нужно создать первое — для него автоматически откроется изолированное рабочее
-    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% else %}Будет создано изолированное рабочее
-    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% endif %}</p>
+    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% else %}Будет создано ещё одно изолированное рабочее
+    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.). Количество подразделений не ограничено.{% endif %}</p>
   <label style="display:block;margin-bottom:8px">Название
     <input id="ndName" placeholder="напр. Отдел разработки" style="width:100%;padding:8px"></label>
   <label style="display:block;margin-bottom:14px">Код (латиница, для URL/API)
@@ -40,7 +41,7 @@
 <!-- Баннер: какое рабочее пространство сейчас открыто (для Admin/Coordinator — с подсказкой про переключатель) -->
 <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
   Вы просматриваете рабочее пространство: <b>{{ department.name }}</b>
-  {% if departments %}<span style="color:#5b6b82"> — сменить можно выпадающим списком справа вверху.</span>{% endif %}
+  {% if departments %}<span style="color:#5b6b82"> — сменить пространство можно выпадающим списком в шапке страницы; там же кнопка «＋ Подразделение» для создания новых.</span>{% endif %}
 </div>
 {% endif %}
 {% if department %}
