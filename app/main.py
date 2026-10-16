@@ -308,8 +308,8 @@ def _sync_missing_columns(conn) -> None:
         # Сначала проверяем существование таблицы (SELECT, а не PRAGMA — он не бросает
         # исключение на несуществующей таблице), иначе create_all создаст её целиком.
         exists = conn.execute(text(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table.name}
-        )).fetchone()
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n"
+        ), {"n": table.name}).fetchone()
         if not exists:
             continue
         existing = {r[1] for r in conn.execute(text(f"PRAGMA table_info({table.name})"))}
@@ -369,7 +369,7 @@ def _reconcile_event_log_fk(conn) -> None:
         закрывается при возврате из run_sync). Поэтому вычитываем ВСЕ строки
         сразу в list и закрываем курсор.
         """
-        cur = conn.execute(text(sql, params)) if params is not None \
+        cur = conn.execute(text(sql), params) if params is not None \
             else conn.execute(text(sql))
         try:
             return list(cur.fetchall())
@@ -452,21 +452,31 @@ def _reconcile_event_log_fk(conn) -> None:
         fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
         dbapi.execute("PRAGMA foreign_keys=OFF")
     try:
-        fresh = schema.Table(tmp, schema.MetaData())
+        fresh_md = schema.MetaData()
+        # Таблица-цель FK регистрируем в ЭТОЙ ЖЕ метаданных — иначе ForeignKey
+        # не сможет разрешить ссылку (NoReferencedTableError).
+        fresh_parent = schema.Table(
+            "users", fresh_md,
+            *[schema.Column(r[1], sa_types.Integer() if r[5] else sa_types.TEXT(),
+                            primary_key=bool(r[5]))
+              for r in _rows("PRAGMA table_info(users)")])
+        fresh = schema.Table(tmp, fresh_md)
         for c in md_tbl.columns:
             autoinc = True if (c.primary_key and isinstance(c.type, sa_types.Integer)) else None
+            col_kwargs = {}
+            for fk in c.foreign_keys:
+                # target_fullname — 'users.id' (таблица + колонка, на которую ссылается FK)
+                parts = fk.target_fullname.split(".")
+                ttable, tcol = parts[0], parts[-1]
+                col_kwargs['foreign_keys'] = [schema.ForeignKey(
+                    (ttable, tcol),
+                    onupdate=fk.onupdate, ondelete=fk.ondelete,
+                    deferrable=fk.deferrable, initially=fk.initially)]
             fresh.append_column(schema.Column(
                 c.name, c.type, primary_key=c.primary_key,
                 nullable=c.nullable, default=c.default,
-                server_default=c.server_default, autoincrement=autoinc))
-        fks_list = [schema.ForeignKeyConstraint(
-            [fk.parent.name for fk in cons.columns],
-            [fk.target_fullname for fk in cons.referenced_columns],
-            ondelete=cons.ondelete, onupdate=cons.onupdate)
-            for cons in md_tbl.constraints
-            if isinstance(cons, schema.ForeignKeyConstraint)]
-        for cons in fks_list:
-            fresh.append_constraint(cons)
+                server_default=c.server_default, autoincrement=autoinc,
+                **col_kwargs))
         _write_ddl(str(schema.CreateTable(fresh).compile(dialect=conn.dialect)))
         old_cols = set(cols("event_log"))
         dst = [c.name for c in md_tbl.columns if c.name in old_cols]
