@@ -4,30 +4,39 @@
 {% set can_admin_modules = is_global_admin %}
 
 {% block actions %}
+{% if is_global_admin %}
+<button class="btn" onclick="toggleNewDept()" title="Создать новое подразделение (рабочее пространство)">＋ Подразделение</button>
+{% endif %}
 {% if departments %}
 <select id="deptSel" onchange="location='/admin_dept/?department_id='+this.value" style="min-width:220px">
   {% for d in departments %}
-  <option value="{{ d.id }}" {% if d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
+  <option value="{{ d.id }}" {% if department and d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
   {% endfor %}
 </select>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-{% if not department %}
-<!-- Пустое состояние (первый запуск): подразделений ещё нет. -->
-<div class="card pad" style="max-width:560px;margin:24px auto;padding:22px">
-  <h3 style="margin:0 0 8px">🏢 Создайте первое рабочее пространство</h3>
-  <p class="muted" style="margin:0 0 14px">Подразделений в системе пока нет. Администратору
+{% if is_global_admin %}
+<!-- Форма создания подразделения доступна ВСЕГДА для администратора/координатора
+     (не только в пустом состоянии): можно создать любое количество пространств. -->
+<div id="newDeptCard" class="card pad" style="max-width:560px;margin:0 0 14px;padding:22px;{% if not department %}display:block{% else %}display:none{% endif %}">
+  <h3 style="margin:0 0 8px">{% if not department %}🏢 Создайте первое рабочее пространство{% else %}🏢 Новое рабочее пространство{% endif %}</h3>
+  <p class="muted" style="margin:0 0 14px">{% if not department %}Подразделений в системе пока нет. Администратору
     нужно создать первое — для него автоматически откроется изолированное рабочее
-    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).</p>
+    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% else %}Будет создано изолированное рабочее
+    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% endif %}</p>
   <label style="display:block;margin-bottom:8px">Название
     <input id="ndName" placeholder="напр. Отдел разработки" style="width:100%;padding:8px"></label>
   <label style="display:block;margin-bottom:14px">Код (латиница, для URL/API)
     <input id="ndCode" placeholder="напр. dev" style="width:100%;padding:8px"></label>
-  <button class="btn primary" onclick="createDept()">+ Подразделение</button>
+  <div style="display:flex;gap:8px">
+    <button class="btn primary" onclick="createDept()">+ Подразделение</button>
+    {% if department %}<button class="btn" onclick="toggleNewDept()">Отмена</button>{% endif %}
+  </div>
 </div>
-{% else %}
+{% endif %}
+{% if department %}
 <!-- Баннер: какое рабочее пространство сейчас открыто (для Admin/Coordinator — с подсказкой про переключатель) -->
 <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
   Вы просматриваете рабочее пространство: <b>{{ department.name }}</b>
@@ -158,6 +167,14 @@
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 
+function toggleNewDept() {
+  const c = document.getElementById('newDeptCard');
+  if (!c) return;
+  const hidden = c.style.display === 'none';
+  c.style.display = hidden ? 'block' : 'none';
+  if (hidden) { const i = document.getElementById('ndName'); if (i) i.focus(); }
+}
+
 async function createDept() {
   const name = document.getElementById('ndName').value.trim();
   let code = document.getElementById('ndCode').value.trim().toLowerCase();
@@ -166,8 +183,12 @@ async function createDept() {
   code = code.replace(/[^a-z0-9_-]/g, '-');
   if (code.length < 2) code = 'dept-' + code;
   try {
-    await api('/api/core/departments', 'POST', { name, code });
-    toast('Подразделение создано'); location.href = '/admin_dept/';
+    const res = await api('/api/core/departments', 'POST', { name, code });
+    toast('Подразделение создано');
+    // Открываем НОВОЕ пространство напрямую: после первого подразделения
+    // переход на '/admin_dept/' без параметра выбирал бы самое раннее
+    // подразделение, и админ «не видел» только что созданное.
+    location.href = '/admin_dept/?department_id=' + res.id;
   } catch (e) { /* текст ошибки уже показан тостом в api() */ }
 }
 
