@@ -313,7 +313,10 @@ def _sync_missing_columns(conn) -> None:
         if not exists:
             continue
         existing = {r[1] for r in conn.execute(text(f"PRAGMA table_info({table.name})"))}
-        missing = [c for c in table.columns if c.name not in existing]
+        # Первичный ключ нельзя добавить через ALTER TABLE (SQLite требует PK NOT
+        # NULL) — такие легаси-таблицы чинит _reconcile_users_fk пересборкой.
+        missing = [c for c in table.columns
+                   if c.name not in existing and not c.primary_key]
         for col in missing:
             coltype = col.type.compile(conn.dialect)
             ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}"
@@ -331,7 +334,33 @@ def _sync_missing_columns(conn) -> None:
                     sqldef = str(d)
                 if sqldef is not None:
                     ddl += f" NOT NULL DEFAULT {sqldef}"
+            elif col.nullable:
+                # nullable-колонка легаси-строкам не нужна; но ORM-вставки детей
+                # с NOT NULL в модели (event_log.category и т.п.) позже упадут —
+                # см. COALESCE-заполнение ниже
+                pass
             conn.execute(text(ddl))
+            # Заполнить существующие строки для колонок, которые НЕ могут быть
+            # NULL в модели (иначе любой SELECT/INSERT по ORM падает с IntegrityError):
+            # ADD COLUMN даёт им NULL независимо от того, объявили мы NOT NULL в DDL
+            # или нет (SQLite это запрещает для существующих строк).
+            if not col.nullable:
+                d2 = col.default.arg if (col.default is not None and
+                                         not callable(col.default.arg)) else None
+                if isinstance(d2, bool):
+                    v = "1" if d2 else "0"
+                elif isinstance(d2, (int, float)):
+                    v = str(d2)
+                elif isinstance(d2, str):
+                    v = "'" + d2.replace("'", "''") + "'"
+                elif isinstance(col.type, (sa_types.DateTime, sa_types.Date)):
+                    v = "datetime('now')"
+                else:
+                    v = "''"
+                with contextlib.suppress(Exception):
+                    conn.execute(text(
+                        f'UPDATE {table.name} SET "{col.name}" = {v} '
+                        f'WHERE "{col.name}" IS NULL'))
             log.warning("migrate: добавлена отсутствующая колонка %s.%s (%s)",
                         table.name, col.name, coltype)
         if missing:
@@ -341,34 +370,29 @@ def _sync_missing_columns(conn) -> None:
                     idx.create(conn, checkfirst=True)
 
 
-def _reconcile_event_log_fk(conn) -> None:
-    """Самовосстановление «битых» FK у event_log (sqlite3.OperationalError:
-    foreign key mismatch - "event_log" referencing "users").
+def _reconcile_users_fk(conn) -> None:
+    """Самовосстановление «битых» FK на users (sqlite3.OperationalError:
+    foreign key mismatch - "<child>" referencing "users").
 
-    Причина на проде: users была пересоздана self-healing-кодом (или легаси-
-    миграцией) с PK id_user вместо id, а event_log остался ссылаться на
-    users(id). SQLite при INSERT проверяет, что ссылка FK совпадает с PK/
-    UNIQUE-индексом родительской таблицы — несовпадение роняло любой логин
-    (запись login_failed в журнал давала 500).
+    Причина на проде: users была пересобрана самовосстановлением с PK id_user
+    плюс отдельная НЕ-PK колонка id; SQLite принимает целью FK только реальный
+    PK или UNIQUE-индекс родителя — любой INSERT в event_log/audit_log падал
+    с 500 (в т.ч. на логине, при записи login_failed).
 
     Лечим идемпотентно и без потери данных:
-      1. Если PK users называется не 'id' — переименовываем его в 'id'
-         (ALTER TABLE ... RENAME COLUMN поддерживается SQLite >= 3.25; после
-         rename ссылки всех детей автоматически указывают на users(id)).
-      2. Иначе, если PK корректный, но таблица-ребёнок ссылается на несущест-
-         вующую колонку — пересоздаём ребёнка по метаданным модели.
+      1. PK users называется не 'id' — пересобираем users по метаданным модели
+         (PK = id INTEGER PRIMARY KEY AUTOINCREMENT, значения id из старого PK).
+      2. Для КАЖДОЙ таблицы-ребёнка со ссылкой на users проверяем, что колонка
+         цели — PK/UNIQUE родителя; не совпало — пересоздаём ребёнка по модели
+         (данные сохраняются), а легаси-таблицы вне моделей удаляем.
     """
     def cols(table: str) -> list[str]:
         return [r[1] for r in _rows(f"PRAGMA table_info({table})")]
 
     def _rows(sql: str, params=None):
-        """Безопасное чтение PRAGMA/SELECT через run_sync на aiosqlite.
-
-        SQLAlchemy 2.x + aiosqlite: курсор, оставленный недочитанным, роняет
-        следующий запрос с 'MissingGreenlet' (зелёный корутины-воркера
-        закрывается при возврате из run_sync). Поэтому вычитываем ВСЕ строки
-        сразу в list и закрываем курсор.
-        """
+        """Безопасное чтение PRAGMA/SELECT: вычитываем ВСЕ строки сразу и
+        закрываем курсор (недочитанный курсор aiosqlite роняет следующий
+        запрос с MissingGreenlet)."""
         cur = conn.execute(text(sql), params) if params is not None \
             else conn.execute(text(sql))
         try:
@@ -378,14 +402,7 @@ def _reconcile_event_log_fk(conn) -> None:
                 cur.close()
 
     def _write_ddl(sql: str) -> None:
-        """DDL/DML без строк результата: выполняем и ЯВНО закрываем курсор.
-
-        На aiosqlite недозакрытый курсор от «молчащего» exec_driver_sql
-        (ALTER/UPDATE/CREATE...) оставляет зелёный DB-worker в состоянии, при
-        котором следующий запрос внутри того же run_sync падает с
-        MissingGreenlet ('greenlet_spawn has not been called'). Закрытие
-        сбрасывает cursor_ до следующей команды.
-        """
+        """DDL/DML без строк результата: выполняем и ЯВНО закрываем курсор."""
         cur = conn.execute(text(sql))
         with contextlib.suppress(Exception):
             cur.close()
@@ -401,102 +418,209 @@ def _reconcile_event_log_fk(conn) -> None:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n",
             {"n": name}) != []
 
-    if not has_table("users") or not has_table("event_log"):
+    def fk_off_on():
+        """Возвращает (продолжить?, fn_восстановления). Пересоздание таблиц с
+        FK требует per-connection PRAGMA foreign_keys=OFF вне транзакции."""
+        dbapi = (conn.connection.connection
+                 if hasattr(conn.connection, "connection") else None)
+        if dbapi is None:
+            return True, (lambda: None)
+        prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
+        dbapi.execute("PRAGMA foreign_keys=OFF")
+        def restore():
+            if prev:
+                dbapi.execute("PRAGMA foreign_keys=ON")
+        return True, restore
+
+    if not has_table("users"):
         return
 
-    # 1. PK users должен называться 'id' — иначе ни одна FK-ссылка users.id
-    #    не резолвится (в т.ч. у freshly-created create_all таблиц).
-    ucols = cols("users")
-    if ucols and "id" not in ucols:
-        pk = pk_col("users")
-        if pk:
-            try:
-                _write_ddl(f'ALTER TABLE users RENAME COLUMN "{pk}" TO "id"')
-                log.warning("migrate: PK users.%s переименован в users.id "
-                            "(чинит FK-ссылки event_log и других детей)", pk)
-            except Exception:  # noqa: BLE001 — старый SQLite: чиним детей ниже
-                log.warning("migrate: не удалось переименовать users.%s в id",
-                            pk, exc_info=True)
+    # 1. PK users должен называться 'id'. Легаси-варианты: PK id_user (+ иногда
+    #    отдельная не-PK колонка id от старых ALTER TABLE) — переименование
+    #    невозможно из-за конфликта имён, поэтому пересобираем users по
+    #    метаданным модели; значения id берём из текущего PK, данные целы.
+    if pk_col("users") not in ("id", None):
+        pk_leg = pk_col("users")
+        _, restore = fk_off_on()
+        tmpu = "users__pkfix"
+        try:
+            md_users = Base.metadata.tables["users"]
+            actual = set(cols("users"))
+            # Если в легаси-таблице УЖЕ есть отдельная колонка id (не-PK,
+            # добавленная старыми ALTER TABLE) — переименовываем PK в id нельзя
+            # (конфликт имён), но и затирать данные id значениями id_user нельзя:
+            # сначала сдвигаем старую колонку id в users_id_legacy.
+            if "id" in actual and pk_leg != "id":
+                with contextlib.suppress(Exception):
+                    _write_ddl('ALTER TABLE users RENAME COLUMN "id" TO "id_legacy"')
+                    actual.discard("id"); actual.add("id_legacy")
+                    log.warning("migrate: легаси-колонка users.id переименована "
+                                "в id_legacy (освобождаем имя для PK)")
 
-    # 2. Проверить прямые ссылки event_log -> users: колонка цели должна быть
-    #    реальным PK/UNIQUE-колонкой parents. Не совпало — пересоздать event_log.
-    target = None
-    for r in _rows("PRAGMA foreign_key_list(event_log)"):
-        if r[2] == "users":
-            target = r[3]  # referenced column
-            break
-    if target is None:
-        return  # FK нет (например, создан без ограничений) — ничего не делаем
+            def _fill(c) -> str:
+                """SQL-выражение для NOT NULL-колонки модели, которой нет в
+                легаси-таблице (INSERT...SELECT не должен нарушать NOT NULL)."""
+                d = c.default.arg if (c.default is not None and
+                                       not callable(c.default.arg)) else None
+                if isinstance(d, bool):
+                    return "1" if d else "0"
+                if isinstance(d, (int, float)):
+                    return str(d)
+                if isinstance(d, str):
+                    return "'" + d.replace("'", "''") + "'"
+                if isinstance(c.type, (sa_types.DateTime, sa_types.Date)):
+                    return "datetime('now')"
+                if c.name == "login":
+                    # служебный логин; seed._backfill_missing_logins доведёт
+                    # учётку (пустой хеш + must_change_password) при старте
+                    return f"'user_' || COALESCE(\"{pk_leg}\", 0)"
+                return "''"
+
+            src_cols, dst_cols = [], []
+            for c in md_users.columns:
+                dst_cols.append(c.name)
+                if c.name == "id":
+                    src_cols.append(f'"{pk_leg}"')
+                elif c.name in actual:
+                    src_cols.append(f'"{c.name}"')
+                elif c.nullable:
+                    src_cols.append("NULL")
+                else:
+                    src_cols.append(f"(SELECT {_fill(c)})")
+            fresh_md = schema.MetaData()
+            fresh_u = schema.Table(tmpu, fresh_md)
+            for c in md_users.columns:
+                autoinc = True if (c.primary_key and
+                                   isinstance(c.type, sa_types.Integer)) else None
+                fresh_u.append_column(schema.Column(
+                    c.name, c.type, primary_key=c.primary_key,
+                    nullable=c.nullable, default=c.default,
+                    server_default=c.server_default, autoincrement=autoinc))
+            _write_ddl(str(schema.CreateTable(fresh_u).compile(dialect=conn.dialect)))
+            _write_ddl(f"INSERT INTO {tmpu} ({', '.join(dst_cols)}) "
+                       f"SELECT {', '.join(src_cols)} FROM users")
+            _write_ddl("DROP TABLE users")
+            _write_ddl(f"ALTER TABLE {tmpu} RENAME TO users")
+            for ix in md_users.indexes:
+                with contextlib.suppress(Exception):
+                    ix.create(conn, checkfirst=True)
+            log.warning("migrate: users пересобрана с PK=id "
+                        "(значения id сохранены, данные целы)")
+        except Exception:  # noqa: BLE001
+            log.exception("migrate: не удалось пересобрать users с PK=id")
+            with contextlib.suppress(Exception):
+                _write_ddl(f"DROP TABLE IF EXISTS {tmpu}")
+        finally:
+            restore()
+
+    if not has_table("users"):
+        return
+
+    # 2. Валидные цели FK для SQLite: PK или колонка с одиночным UNIQUE-индексом.
     ucols_now = cols("users")
     pk_now = pk_col("users")
     valid_targets = {c for c in ucols_now if c == pk_now}
-    # уникальные индексы тоже удовлетворяют проверке SQLite
     with contextlib.suppress(Exception):
         for row in _rows("PRAGMA index_list(users)"):
-            uniq = row[2]
-            if uniq:
-                icols = [i[2] for i in _rows(
-                    f"PRAGMA index_info('{row[1]}')")]
+            if row[2]:  # unique
+                icols = [i[2] for i in _rows(f"PRAGMA index_info('{row[1]}')")]
                 if len(icols) == 1:
                     valid_targets.update(icols)
-    if target in valid_targets:
+
+    children = {}
+    for tname in [r[0] for r in _rows(
+            "SELECT name FROM sqlite_master WHERE type='table'")]:
+        if tname in ("users", "sqlite_sequence"):
+            continue
+        for r in _rows(f"PRAGMA foreign_key_list({tname})"):
+            if r[2] == "users":
+                children.setdefault(tname, []).append(r[3])
+    broken = [(t, tgt) for t, tgts in children.items() for tgt in tgts
+              if tgt not in valid_targets]
+    if not broken:
         return
 
-    log.warning("migrate: FK event_log->users(%s) не совпадает со схемой "
-                "users (PK=%s) — пересоздаю event_log по модели", target, pk_now)
-    md_tbl = Base.metadata.tables["event_log"]
-    tmp = "event_log__fkfix"
-    dbapi = conn.connection.connection if hasattr(conn.connection, "connection") else None
-    fk_prev = None
-    if dbapi is not None:
-        fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
-        dbapi.execute("PRAGMA foreign_keys=OFF")
-    try:
-        fresh_md = schema.MetaData()
-        # Таблица-цель FK регистрируем в ЭТОЙ ЖЕ метаданных — иначе ForeignKey
-        # не сможет разрешить ссылку (NoReferencedTableError).
-        fresh_parent = schema.Table(
-            "users", fresh_md,
-            *[schema.Column(r[1], sa_types.Integer() if r[5] else sa_types.TEXT(),
-                            primary_key=bool(r[5]))
-              for r in _rows("PRAGMA table_info(users)")])
-        fresh = schema.Table(tmp, fresh_md)
-        for c in md_tbl.columns:
-            autoinc = True if (c.primary_key and isinstance(c.type, sa_types.Integer)) else None
-            col_kwargs = {}
-            for fk in c.foreign_keys:
-                # target_fullname — 'users.id' (таблица + колонка, на которую ссылается FK)
-                parts = fk.target_fullname.split(".")
-                ttable, tcol = parts[0], parts[-1]
-                col_kwargs['foreign_keys'] = [schema.ForeignKey(
-                    (ttable, tcol),
-                    onupdate=fk.onupdate, ondelete=fk.ondelete,
-                    deferrable=fk.deferrable, initially=fk.initially)]
-            fresh.append_column(schema.Column(
-                c.name, c.type, primary_key=c.primary_key,
-                nullable=c.nullable, default=c.default,
-                server_default=c.server_default, autoincrement=autoinc,
-                **col_kwargs))
-        _write_ddl(str(schema.CreateTable(fresh).compile(dialect=conn.dialect)))
-        old_cols = set(cols("event_log"))
-        dst = [c.name for c in md_tbl.columns if c.name in old_cols]
-        collist = ", ".join(f'"{n}"' for n in dst)
-        _write_ddl(
-            f"INSERT INTO {tmp} ({collist}) SELECT {collist} FROM event_log")
-        _write_ddl("DROP TABLE event_log")
-        _write_ddl(f"ALTER TABLE {tmp} RENAME TO event_log")
-        for ix in md_tbl.indexes:
+    for child in sorted({t for t, _ in broken}):
+        target = children[child][0]
+        if child not in Base.metadata.tables:
+            # легаси-таблица, которой нет в моделях (например старый audit_log) —
+            # чинить ссылку нечем, приложение её не использует: удаляем.
+            log.warning("migrate: удалена легаси-таблица %s (нет в модели, "
+                        "битая FK-ссылка -> users(%s))", child, target)
+            _write_ddl(f"DROP TABLE IF EXISTS {child}")
+            continue
+        log.warning("migrate: FK %s->users(%s) не совпадает со схемой users "
+                    "(PK=%s) — пересоздаю %s по модели",
+                    child, target, pk_now, child)
+        _, restore = fk_off_on()
+        md_tbl = Base.metadata.tables[child]
+        tmp = f"{child}__fkfix"
+        try:
+            fresh_md = schema.MetaData()
+            # Таблица-цель FK регистрируем в ЭТОЙ ЖЕ метаданных — иначе
+            # ForeignKey не разрешит ссылку (NoReferencedTableError).
+            schema.Table(
+                "users", fresh_md,
+                *[schema.Column(r[1], sa_types.Integer() if r[5] else sa_types.TEXT(),
+                                primary_key=bool(r[5]))
+                  for r in _rows("PRAGMA table_info(users)")])
+            fresh = schema.Table(tmp, fresh_md)
+            for c in md_tbl.columns:
+                autoinc = True if (c.primary_key and
+                                   isinstance(c.type, sa_types.Integer)) else None
+                col_kwargs = {}
+                for fk in c.foreign_keys:
+                    parts = fk.target_fullname.split(".")
+                    col_kwargs['foreign_keys'] = [schema.ForeignKey(
+                        (parts[0], parts[-1]),
+                        onupdate=fk.onupdate, ondelete=fk.ondelete,
+                        deferrable=fk.deferrable, initially=fk.initially)]
+                fresh.append_column(schema.Column(
+                    c.name, c.type, primary_key=c.primary_key,
+                    nullable=c.nullable, default=c.default,
+                    server_default=c.server_default, autoincrement=autoinc,
+                    **col_kwargs))
+            _write_ddl(str(schema.CreateTable(fresh).compile(dialect=conn.dialect)))
+            old_cols = set(cols(child))
+            def _fill_child(c) -> str:
+                d = c.default.arg if (c.default is not None and
+                                       not callable(c.default.arg)) else None
+                if isinstance(d, bool):
+                    return "1" if d else "0"
+                if isinstance(d, (int, float)):
+                    return str(d)
+                if isinstance(d, str):
+                    return "'" + d.replace("'", "''") + "'"
+                if isinstance(c.type, (sa_types.DateTime, sa_types.Date)):
+                    return "datetime('now')"
+                return "''"
+            dst_cols, sel_cols = [], []
+            for c in md_tbl.columns:
+                dst_cols.append(c.name)
+                if c.name in old_cols:
+                    expr = f'"{c.name}"'
+                    if not c.nullable:
+                        expr = f"COALESCE({expr}, {_fill_child(c)})"
+                    sel_cols.append(expr)
+                elif c.nullable:
+                    sel_cols.append("NULL")
+                else:
+                    sel_cols.append(_fill_child(c))
+            _write_ddl(f"INSERT INTO {tmp} ({', '.join(f'chr' and chr(34)+n+chr(34) for n in dst_cols)}) "
+                       f"SELECT {', '.join(sel_cols)} FROM {child}")
+            _write_ddl(f"DROP TABLE {child}")
+            _write_ddl(f"ALTER TABLE {tmp} RENAME TO {child}")
+            for ix in md_tbl.indexes:
+                with contextlib.suppress(Exception):
+                    ix.create(conn, checkfirst=True)
+            log.warning("migrate: %s пересоздана с корректным FK -> users.id "
+                        "(данные сохранены)", child)
+        except Exception:  # noqa: BLE001 — худший случай: ребёнок остаётся битым, но старт не падает
+            log.exception("migrate: не удалось пересоздать %s", child)
             with contextlib.suppress(Exception):
-                ix.create(conn, checkfirst=True)
-        log.warning("migrate: event_log пересоздана с корректным FK -> users.id "
-                    "(данные журнала сохранены)")
-    except Exception:  # noqa: BLE001 — худший случай: журнал остаётся битым, но старт не падал раньше
-        log.exception("migrate: не удалось пересоздать event_log")
-        with contextlib.suppress(Exception):
-            _write_ddl(f"DROP TABLE IF EXISTS {tmp}")
-    finally:
-        if dbapi is not None and fk_prev:
-            dbapi.execute("PRAGMA foreign_keys=ON")
+                _write_ddl(f"DROP TABLE IF EXISTS {tmp}")
+        finally:
+            restore()
 
 
 @contextlib.asynccontextmanager
@@ -508,11 +632,12 @@ async def lifespan(app: FastAPI):
         # Сначала досоздаём недостающие колонки в существующих таблицах (легаси-БД после
         # `alembic stamp head`), затем create_all добавляет отсутствующие таблицы/индексы.
         await conn.run_sync(_drop_legacy_auth_columns)
+        # До create_all: чиним PK users и битые FK детей -> users
+        # (sqlite3 "foreign key mismatch", ронявший логин с 500 на проде),
+        # иначе create_all добавит не-PK колонку id и всё сломает окончательно.
+        await conn.run_sync(_reconcile_users_fk)
         await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
-        # После create_all: чиним FK-несоответствия event_log -> users
-        # (sqlite3 "foreign key mismatch", ронявший логин с 500 на проде).
-        await conn.run_sync(_reconcile_event_log_fk)
 
     # 2. Динамическая регистрация модулей-плагинов + таблица module_registry + bootstrap
     registry.autodiscover("modules")
