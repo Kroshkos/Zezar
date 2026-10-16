@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -169,20 +169,24 @@ def _initials_of(name: str) -> str:
 
 
 async def _backfill_missing_logins(session: AsyncSession) -> None:
-    """Доводка легаси-учёток без login до новой модели входа по логину/паролю.
+    """Доводка легаси-учёток до новой модели входа по логину/паролю.
 
     Старые яндекс-аккаунты (после удаления yandex_id миграцией c9e4f18a7d02 или
-    self-healing в main.py) остались с login IS NULL и password_hash IS NULL —
-    вход для них невозможен в принципе. Каждому такому пользователю выдаётся
-    служебный уникальный логин 'user_<id>' и must_change_password=True: учётка
-    остаётся видимой в админке (история, назначения, журнал не ломаются), а
-    войти по паролю нельзя, пока администратор не задаст новый пароль (сброс
-    пароля в админке снимает флаг). Идемпотентно: повторные прогоны ничего не
-    меняют.
+    self-healing в main.py) остались без актуального контура входа: либо с
+    login IS NULL и password_hash IS NULL — вход невозможен в принципе, либо
+    с унаследованным логином 'local:<яндекс-id>' / 'dev:*' (предыдущая OAuth-
+    интеграция), пароль по которому пользователь задать не может. Каждой такой
+    учётке выдаётся служебный уникальный логин 'user_<id>', пустой хеш пароля
+    (verify_password всегда False) и must_change_password=True: учётка остаётся
+    видимой в админке (история, назначения, журнал не ломаются), а войти по
+    паролю нельзя, пока администратор не задаст новый пароль (сброс пароля в
+    админке снимает флаг). Идемпотентно: повторные прогоны ничего не меняют.
     """
     from sqlalchemy import update as sa_update
     rows = (await session.execute(
-        select(User.id).where(User.login.is_(None)).order_by(User.id))).scalars().all()
+        select(User.id).where(
+            or_(User.login.is_(None), User.login.like("local:%"), User.login.like("dev:%"))
+        ).order_by(User.id))).scalars().all()
     if not rows:
         return
     for uid in rows:
@@ -192,7 +196,7 @@ async def _backfill_missing_logins(session: AsyncSession) -> None:
                 password_hash="",           # пустой хеш: verify всегда False
                 must_change_password=True,
             ))
-    log.info("seed: %s легаси-учёткам без login выдан служебный логин user_<id> "
+    log.info("seed: %s легаси-учёткам выдан служебный логин user_<id> "
              "(вход заблокирован до сброса пароля админом)", len(rows))
     await session.commit()
 

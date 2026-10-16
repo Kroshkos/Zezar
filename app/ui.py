@@ -7,6 +7,7 @@ from __future__ import annotations
 import pathlib
 
 from fastapi import Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, FileSystemLoader
 from sqlalchemy import func, select
@@ -33,6 +34,12 @@ def init_templates() -> None:
 async def render_page(request: Request, template: str, *, module_key: str,
                       user: User, session: AsyncSession,
                       counts: dict[str, int] | None = None, **ctx):
+    # Принудительная смена пароля: ни одна страница модулей не открывается до
+    # смены начального пароля (раньше это делалось только на '/', остальные
+    # пути отдавали страницу с JS-редиректом из base.html — теперь сервером).
+    if getattr(user, "must_change_password", False):
+        return RedirectResponse("/change-password?forced=1", status_code=302)
+
     nav_ctx = await build_context(session, user)
 
     enabled_keys: set[str] = set()
