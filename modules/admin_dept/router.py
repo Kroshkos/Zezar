@@ -115,6 +115,7 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             select(User).where(User.is_active == True)  # noqa: E712
             .order_by(User.display_name))).all()
         depts_all = await _dept_list(include_inactive=True) if ctx.is_global else []
+        active_simple = [{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]]
         return await render_page(
             request, "admin_dept.html", module_key=MODULE_KEY, user=user,
             session=session,
@@ -125,11 +126,15 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             can_manage=ctx.can_admin_system,
             active_tab=tab or ("departments" if ctx.can_admin_system else "overview"),
             department=None,
-            departments=[{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]],
+            departments=active_simple,
             dept_list=depts_all,
-            dept_list_simple=[{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]],
+            dept_list_simple=active_simple,
             members=[], modules=[], shares_out=[], shares_in=[],
             users=[{"id": u.id, "name": u.display_name} for u in all_users],
+            adm_payload={"department": None, "can_manage": bool(ctx.can_admin_system),
+                         "is_global_admin": bool(ctx.can_admin_system),
+                         "default_tab": tab or ("departments" if ctx.can_admin_system else "users"),
+                         "departments": active_simple},
         )
 
     # --- все подразделения ---------------------------------------------------
@@ -225,4 +230,9 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
         users=[{"id": u.id, "name": u.display_name} for u in
                (await session.scalars(select(User).where(User.is_active == True)  # noqa: E712
                                       .order_by(User.display_name))).all()],
+        adm_payload={"department": {"id": dept.id, "name": dept.name},
+                     "can_manage": bool(can_manage),
+                     "is_global_admin": bool(ctx.can_admin_system),
+                     "default_tab": tab or "overview",
+                     "departments": scope_depts},
     )

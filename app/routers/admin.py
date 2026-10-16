@@ -47,6 +47,13 @@ async def _require_admin(session, user):
         raise HTTPException(403, "Только администратор/координатор")
 
 
+def _norm_role_value(v):
+    """Принять роль в любом регистре ('HEAD'/'head'/Role), иначе — как есть."""
+    if isinstance(v, str):
+        return Role(v.lower())
+    return v
+
+
 class UserIn(BaseModel):
     display_name: str = Field(min_length=2, max_length=160)   # «Фамилия Имя»
     login: str = Field(min_length=2, max_length=64)
@@ -54,6 +61,11 @@ class UserIn(BaseModel):
     role: Role = Role.MEMBER
     email: str | None = None
     department_id: int | None = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _norm_role(cls, v):
+        return _norm_role_value(v)
 
 
 class UserPatch(BaseModel):

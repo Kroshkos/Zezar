@@ -167,14 +167,38 @@ async def save_calendar(body: CalIn, request: Request,
     return {"ok": True, "calendar": user.yandex_cal_name}
 
 
-@router.post("/api/profile/telegram/bind")
-async def telegram_bind(user: User = Depends(get_current_user),
-                        session: AsyncSession = Depends(session_dep)):
-    """Генерирует одноразовый код: отправьте боту «/start <код>» (воркер long-polling привяжет chat_id)."""
-    code = _secrets.token_hex(4)
-    user.telegram_bind_code = code
+@router.get("/api/profile/telegram/steps")
+async def telegram_steps(user: User = Depends(get_current_user)):
+    """Инструкция привязки Telegram: сценарий «логин → пароль», без кодов."""
+    from app.core.config import get_settings as _gs
+    s = _gs()
+    bot = ("@" + s.telegram_bot_username) if getattr(s, "telegram_bot_username", None) \
+          else (getattr(s, "telegram_bot_name", None) or "бот ЦЕЗАРЬ")
+    return {
+        "bot": bot,
+        "login": user.login,
+        "steps": [
+            f"Откройте в Telegram чат с ботом {bot} и нажмите /start (или сразу напишите сообщение).",
+            "Первым сообщением отправьте ваш логин от системы ЦЕЗАРЬ — вот он: " + user.login,
+            "Бот попросит пароль — отправьте его ОДНИМ сообщением.",
+            "Бот проверит данные, немедленно удалит оба сообщения из диалога "
+            "и пришлёт приветствие. Готово ✅",
+        ],
+        "note": "После привязки бот только отправляет уведомления; ваши сообщения он "
+                "игнорирует и удаляет. Команды: /mute — отключить уведомления, "
+                "/unmute — включить.",
+    }
+
+
+@router.post("/api/profile/telegram/unbind")
+async def telegram_unbind(user: User = Depends(get_current_user),
+                          session: AsyncSession = Depends(session_dep)):
+    """Отвязать Telegram от учётной записи."""
+    user.telegram_chat_id = None
+    user.telegram_bind_code = None
+    user.telegram_optout = None
     await session.commit()
-    return {"code": code, "hint": "Напишите боту: /start " + code}
+    return {"ok": True}
 
 
 @router.get("/api/profile/integrations")

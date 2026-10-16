@@ -41,19 +41,42 @@ function askConfirm(msg,onYes){
   openModal('Подтверждение','<p>'+esc(msg)+'</p>',async()=>{closeModal();await onYes()},'Да');
 }
 async function logout(){await api('/auth/logout',{method:'POST'});location.href='/login'}
+/* «Мои интеграции»: только Telegram (Яндекс.Календарь из интерфейса удалён).
+   Привязка без кодов: пользователь пишет боту логин, затем пароль (бот чистит диалог). */
 async function openSettings(){
   const me=await api('/auth/me');
   const st=await api('/api/profile/integrations').catch(()=>({}));
-  const calId=(st.email||'').split('@')[0];
-  let body='<p style="font-size:13px;color:var(--muted)">Привязка интеграций. Telegram: напишите боту <code>/start ваш_код</code>.</p>'
-   +(calId?'<p style="font-size:12px;color:var(--muted)">Логин CalDAV (аккаунт Яндекса): <b>'+esc(calId)+'</b></p>':'')
-   +'<label>Яндекс.Календарь — app-пароль (<a target=_blank href="https://id.yandex.ru/security/app-passwords">создать</a>, сервис «Другие»)</label>'
-   +'<input name="cal_password" type="password" placeholder="app-пароль">'
-   +'<label>Имя календаря</label><input name="cal_name" value="default">';
-  openModal('Мои интеграции · '+esc(me.name),body,async(fd,f)=>{
-    if(f.cal_password&&f.cal_password.value.trim()){
-      await api('/api/profile/calendar',{method:'PUT',body:JSON.stringify({app_password:f.cal_password.value.trim(),calendar_name:f.cal_name.value||'default'})});
-    }
-    closeModal();toast('Настройки сохранены');
+  let body='<p style="font-size:13px;color:var(--muted)">Бот <b>ЦЕЗАРЬ</b> присылает уведомления о задачах, совещаниях и проектах.</p>';
+  if(st.telegram_linked){
+    body+='<p>Статус Telegram: <span class="badge b-green">привязан</span>'
+      +(st.telegram_muted?' <span class="badge b-gray">уведомления отключены (/unmute в боте)</span>':'')
+      +'</p><div style="display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button type="button" class="btn sm ghost" onclick="tgShowSteps(this)">📋 Показать инструкцию</button>'
+      +'<button type="button" class="btn sm ghost" onclick="tgUnbind(this)">Отвязать Telegram</button></div>'
+      +'<div id="tgBindBox"></div>';
+  }else{
+    body+='<div id="tgBindBox"><button type="button" class="btn primary sm" onclick="tgShowSteps(this)">Как привязать Telegram</button></div>';
+  }
+  openModal('Мои интеграции · '+esc(me.name),body,async()=>{closeModal();},'Готово');
+}
+async function tgShowSteps(btn){
+  try{
+    const r=await api('/api/profile/telegram/steps');
+    const box=document.getElementById('tgBindBox')||btn.parentElement;
+    box.innerHTML='<ol style="font-size:13px;line-height:1.7;margin:6px 0 6px 18px;padding:0">'
+     +r.steps.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol>'
+     +'<code id="tgLoginCode" style="display:block;background:#0f172a;color:#fff;padding:10px;border-radius:10px;margin:8px 0;font-size:15px">'+esc(r.login)+'</code>'
+     +'<button class="btn sm" type="button" onclick="tgCopyLogin()">📋 Скопировать логин</button>'
+     +'<p style="font-size:12px;color:var(--muted);margin-top:8px">'+esc(r.note)+'</p>';
+  }catch(e){}
+}
+function tgCopyLogin(){
+  const t=(document.getElementById('tgLoginCode')||{}).textContent||'';
+  if(navigator.clipboard&&t){navigator.clipboard.writeText(t).then(()=>toast('Логин скопирован'));}
+}
+async function tgUnbind(btn){
+  askConfirm('Отвязать Telegram от учётной записи? Уведомления приходить перестанут.',async()=>{
+    await api('/api/profile/telegram/unbind',{method:'POST'});
+    toast('Telegram отвязан');openSettings();
   });
 }
