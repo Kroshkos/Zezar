@@ -53,6 +53,25 @@ def _drop_legacy_auth_columns(conn) -> None:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table}
         ).fetchone() is not None
 
+    def fks(table: str) -> list[tuple]:
+        """Прямые FK-зависимости: (таблица-ребёнок, колонка ребёнка) на table.id."""
+        out = []
+        for t in _table_names():
+            if not _is_view(t):
+                for r in conn.exec_driver_sql(f"PRAGMA foreign_key_list({t})"):
+                    if r[2] == table and r[3] == "id":
+                        out.append((t, r[1]))
+        return out
+
+    def _table_names() -> set[str]:
+        return {r[0] for r in conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+
+    def _is_view(name: str) -> bool:
+        return conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='view' AND name=:n",
+            {"n": name}).fetchone() is not None
+
     # Очень старые схемы: users.full_name вместо display_name — переименуем,
     # пока таблица цела (rename сохраняет данные и ограничения колонки).
     if has_table("users"):
@@ -60,6 +79,14 @@ def _drop_legacy_auth_columns(conn) -> None:
         if "display_name" not in ucols and "full_name" in ucols:
             conn.exec_driver_sql("ALTER TABLE users RENAME COLUMN full_name TO display_name")
             log.warning("migrate: users.full_name переименован в display_name")
+        # Нормализация role: Enum хранит имена ('ADMIN'), легаси-строки вроде
+        # 'admin'/'member' иначе роняют старт с LookupError при любом SELECT.
+        try:
+            conn.exec_driver_sql(
+                "UPDATE users SET role = upper(role) "
+                "WHERE role IS NOT NULL AND role <> upper(role)")
+        except Exception:  # noqa: BLE001 — колонки role может не быть на убитых БД
+            pass
 
     for table, legacy_col in (("users", "yandex_id"), ("invites", "yandex_id")):
         if not has_table(table) or legacy_col not in cols(table):
@@ -81,12 +108,25 @@ def _drop_legacy_auth_columns(conn) -> None:
         collist = ", ".join(model_cols)
         tmp = f"{table}__migrated"
         quoted = lambda n: f'"{n}"'  # noqa: E731
-        conn.exec_driver_sql(
-            f"CREATE TABLE {tmp} ({', '.join(quoted(c) for c in model_cols)})")
-        conn.exec_driver_sql(
-            f"INSERT INTO {tmp} ({collist}) SELECT {collist} FROM {table}")
-        conn.exec_driver_sql(f"DROP TABLE {table}")
-        conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
+        # Пересоздание таблицы с FK-ссылками (event_log.user_id -> users.id и т.п.)
+        # на SQLite требует временного отключения foreign_keys; PRAGMA вне
+        # транзакции, поэтому делаем это через raw driver-соединение.
+        fk_children = fks(table)
+        dbapi = conn.connection.connection if hasattr(conn.connection, "connection") else None
+        fk_prev = None
+        if fk_children and dbapi is not None:
+            fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
+            dbapi.execute("PRAGMA foreign_keys=OFF")
+        try:
+            conn.exec_driver_sql(
+                f"CREATE TABLE {tmp} ({', '.join(quoted(c) for c in model_cols)})")
+            conn.exec_driver_sql(
+                f"INSERT INTO {tmp} ({collist}) SELECT {collist} FROM {table}")
+            conn.exec_driver_sql(f"DROP TABLE {table}")
+            conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
+        finally:
+            if fk_children and dbapi is not None and fk_prev:
+                dbapi.execute("PRAGMA foreign_keys=ON")
         log.warning("migrate: таблица %s пересоздана без легаси-колонки %s "
                     "(данные сохранены)", table, legacy_col)
 

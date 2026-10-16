@@ -124,10 +124,22 @@ async def sync_admin_logins(session: AsyncSession) -> None:
     for login, pwhash, name in entries:
         user = await session.scalar(select(User).where(User.login == login))
         if user is None:
-            session.add(User(login=login, password_hash=pwhash, display_name=name,
-                             role=Role.ADMIN, initials=_initials_of(name), is_active=True,
-                             must_change_password=False))
-            log.info("admin-logins: создана учётная запись администратора '%s' (%s)", login, name)
+            # Легаси-учётка с тем же display_name (например, старый яндекс-админ
+            # без login) — не плодим дубль, а привязываем логин к существующей.
+            legacy = None
+            if name:
+                legacy = await session.scalar(
+                    select(User).where(User.display_name == name, User.login.is_(None)))
+            if legacy is not None:
+                user = legacy
+                user.login = login
+                log.info("admin-logins: легаси-учётка '%s' привязана к логину '%s'",
+                         name, login)
+            else:
+                session.add(User(login=login, password_hash=pwhash, display_name=name,
+                                 role=Role.ADMIN, initials=_initials_of(name), is_active=True,
+                                 must_change_password=False))
+                log.info("admin-logins: создана учётная запись администратора '%s' (%s)", login, name)
         else:
             changed = []
             if user.password_hash != pwhash:
@@ -156,6 +168,35 @@ def _initials_of(name: str) -> str:
     return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
 
 
+async def _backfill_missing_logins(session: AsyncSession) -> None:
+    """Доводка легаси-учёток без login до новой модели входа по логину/паролю.
+
+    Старые яндекс-аккаунты (после удаления yandex_id миграцией c9e4f18a7d02 или
+    self-healing в main.py) остались с login IS NULL и password_hash IS NULL —
+    вход для них невозможен в принципе. Каждому такому пользователю выдаётся
+    служебный уникальный логин 'user_<id>' и must_change_password=True: учётка
+    остаётся видимой в админке (история, назначения, журнал не ломаются), а
+    войти по паролю нельзя, пока администратор не задаст новый пароль (сброс
+    пароля в админке снимает флаг). Идемпотентно: повторные прогоны ничего не
+    меняют.
+    """
+    from sqlalchemy import update as sa_update
+    rows = (await session.execute(
+        select(User.id).where(User.login.is_(None)).order_by(User.id))).scalars().all()
+    if not rows:
+        return
+    for uid in rows:
+        await session.execute(
+            sa_update(User).where(User.id == uid).values(
+                login=f"user_{uid}",
+                password_hash="",           # пустой хеш: verify всегда False
+                must_change_password=True,
+            ))
+    log.info("seed: %s легаси-учёткам без login выдан служебный логин user_<id> "
+             "(вход заблокирован до сброса пароля админом)", len(rows))
+    await session.commit()
+
+
 async def bootstrap(session: AsyncSession) -> None:
     s = get_settings()
 
@@ -177,6 +218,11 @@ async def bootstrap(session: AsyncSession) -> None:
     # --- Администраторы по логину/паролю (ADMIN_USERNAME + ADMIN_PASSWORD) ---
     # Единственный контур входа в систему: аккаунты создаются/синхронизируются
     # при каждом старте идемпотентно, пароль хешируется системой (pbkdf2_sha256).
+    # Перед синхронизацией — доводка легаси-учёток до новой модели входа:
+    # users без login (старые яндекс-аккаунты) получают служебный логин и
+    # must_change_password=True (вход по паролю невозможен до выдачи пароля
+    # админом); у env-администраторов login заполняется в sync_admin_logins.
+    await _backfill_missing_logins(session)
     await sync_admin_logins(session)
 
     # --- демо-данные для локальной разработки (как в прототипе) ---
