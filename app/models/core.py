@@ -77,11 +77,12 @@ class User(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[Optional[str]] = mapped_column(String(255))
-    display_name: Mapped[str] = mapped_column(String(160))   # «ФИО» из виджета people прототипа
+    display_name: Mapped[str] = mapped_column(String(160))   # «Фамилия Имя»
     # Логин аккаунта Яндекса (наследие прежней интеграции) — CalDAV Basic auth
-    # требует его, а не email. Сохранён только для данных старых установок.
+    # требует его, а не email. Никчемные значения ('local:*', 'dev:*') очищены
+    # миграцией; поле заполняется вручную только при привязке Яндекс.Календаря.
     yandex_login: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    # Локальный логин учётной записи (уникальный). Обязателен для входа.
+    # Локальный логин учётной записи (уникальный). Единственный контур входа.
     login: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)  # pbkdf2_sha256$итерации$salt$hash
     # Принудительная смена пароля при первом входе (начальный пароль выдал админ).
@@ -378,7 +379,6 @@ class Invite(TimestampMixin, Base):
     __tablename__ = "invites"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    yandex_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), index=True)
     display_name: Mapped[str] = mapped_column(String(160))
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)

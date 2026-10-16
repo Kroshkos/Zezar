@@ -1,37 +1,33 @@
-"""HTML-страницы ядра: вход, корень, профильные настройки. Страницы модулей — у самих модулей."""
+"""HTML-страницы ядра: вход, смена пароля, корень, профильные настройки.
+Страницы модулей — у самих модулей."""
 from __future__ import annotations
 
 import secrets as _secrets
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret, get_current_user
 from app.deps import session_dep
-from app.models.core import User
+from app.models.core import Department, Role, User
 from app.ui import render_page, templates as core_templates
 
 router = APIRouter()
 templates = core_templates
 
-ERRORS = {"no_code": "Яндекс не вернул код", "state": "Сессия входа истекла, попробуйте ещё раз",
-          "not_allowed": "Доступ закрыт: обратитесь к администратору за приглашением",
-          "disabled": "Учётная запись заблокирована",
+ERRORS = {"disabled": "Учётная запись заблокирована",
           "bad_credentials": "Неверный логин или пароль",
           "too_many": "Слишком много неудачных попыток — подождите 15 минут"}
 
 
 @router.get("/login")
-async def login_page(request: Request, error: str = "", ya_id: str = ""):
+async def login_page(request: Request, error: str = ""):
     from app.core.config import get_settings
     msg = ERRORS.get(error, "Ошибка входа")
-    # Подсказка: свой Yandex sub видит только сам пользователь (тот, кто прошёл OAuth),
-    # поэтому его безопасно показать на странице — по нему админ создаст приглашение.
-    if error == "not_allowed" and ya_id:
-        msg += f". Ваш Yandex ID (sub): {ya_id} — сообщите его администратору."
     return templates.TemplateResponse(request, "login.html",
                                       {"error": bool(error),
                                        "error_msg": msg,
@@ -47,11 +43,93 @@ async def index(request: Request, user: User = Depends(get_current_user),
                              user=user, session=session)
 
 
+# ---------------- Принудительная/добровольная смена пароля ----------------
+
+CHANGE_ERRORS = {
+    "wrong_current": "Текущий пароль указан неверно",
+    "too_short": "Новый пароль слишком короткий (минимум 8 символов)",
+    "mismatch": "Пароли в полях «Новый пароль» и «Повторите» не совпадают",
+    "same_as_old": "Новый пароль совпадает с текущим — выберите другой",
+    "done": "Пароль изменён. Вход выполнен.",
+}
+
+
+@router.get("/change-password")
+async def change_password_page(request: Request, error: str = "", forced: str = "",
+                               user: User = Depends(get_current_user)):
+    """Страница смены пароля. forced=1 — первый вход с начальным паролем,
+    пользователь обязан сменить его, до смены другие страницы недоступны."""
+    msg = CHANGE_ERRORS.get(error, "Ошибка" if error else "")
+    return templates.TemplateResponse(request, "change_password.html", {
+        "user": user,
+        "forced": forced == "1" or bool(user.must_change_password),
+        "error_msg": msg,
+        "ok": error == "done",
+    })
+
+
+# ---------------- Администрирование системы (пользователи + журнал событий) ----------------
+
+def _require_system_admin(user: User) -> None:
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        raise HTTPException(403, "Раздел доступен администратору/координатору")
+
+
+@router.get("/admin")
+async def admin_users_page(request: Request, user: User = Depends(get_current_user),
+                           session: AsyncSession = Depends(session_dep)):
+    """Раздел «Администрирование»: учётные записи пользователей
+    (Фамилия Имя, логин, начальный пароль, роль) + ссылки на журнал событий."""
+    _require_system_admin(user)
+    from app.db.seed import is_env_admin_login
+    rows = (await session.scalars(select(User).order_by(User.display_name))).all()
+    users = [{
+        "id": u.id, "name": u.display_name, "login": u.login, "email": u.email or "",
+        "role": u.role.value, "active": bool(u.is_active),
+        "env_admin": bool(is_env_admin_login(u.login)),
+        "must_change": bool(u.must_change_password),
+        "no_password": not bool(u.password_hash),
+    } for u in rows]
+    depts = (await session.execute(
+        select(Department.id, Department.name)
+        .where(Department.is_active == True)  # noqa: E712
+        .order_by(Department.name))).all()
+    return await render_page(request, "admin_users.html", module_key="system_admin",
+                             user=user, session=session,
+                             page_title="Администрирование",
+                             page_sub="Учётные записи пользователей и журнал событий системы",
+                             counts={},
+                             users=users,
+                             departments=[{"id": d[0], "name": d[1]} for d in depts])
+
+
+@router.get("/admin/events")
+async def admin_events_page(request: Request, category: str = "", q: str = "",
+                            limit: int = 200,
+                            user: User = Depends(get_current_user),
+                            session: AsyncSession = Depends(session_dep)):
+    """Журнал событий: всё, что происходит в системе (вход/выход, действия админа,
+    CRUD сущностей, подразделения, системные события). Фильтры: категория, поиск."""
+    _require_system_admin(user)
+    from app.core.events import read_events, event_stats
+    items, total = await read_events(session, limit=max(1, min(limit, 1000)), offset=0,
+                                     category=category or None, q=q or None)
+    stats = await event_stats(session)
+    return await render_page(request, "admin_events.html", module_key="system_admin",
+                             user=user, session=session,
+                             page_title="Журнал событий",
+                             page_sub=f"Записей по фильтру: {total}",
+                             counts={},
+                             events=items, stats=stats,
+                             filter_category=category, filter_q=q, filter_limit=limit)
+
+
 # ---------------- Профиль / интеграции ----------------
 
 class CalIn(BaseModel):
     app_password: str
     calendar_name: str = "Цезарь"
+    cal_login: str | None = None   # логин аккаунта Яндекса для CalDAV (вводится вручную)
 
 
 @router.put("/api/profile/calendar")
@@ -61,9 +139,14 @@ async def save_calendar(body: CalIn, request: Request,
     """Сохраняем app-пароль (Fernet) после проверки WebDAV-доступа; статус синхронизации сбрасываем на pending."""
     from integrations import yandex_calendar as yc
     # CalDAV Basic auth: имя пользователя = ЛОГИН аккаунта Яндекса (не email!).
-    login = user.yandex_login or (user.email.split("@")[0] if user.email else None)
+    # После удаления OAuth логин вводится вручную на странице настроек.
+    if body.cal_login and body.cal_login.strip():
+        login = user.yandex_login = body.cal_login.strip()
+    else:
+        login = user.yandex_login or (user.email.split("@")[0] if user.email else None)
     if not login:
-        return JSONResponse({"detail": "Не удалось определить логин Яндекс-аккаунта — войдите заново через Яндекс ID"}, 400)
+        return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
+                                       "(вход в системе к Яндекс.ID не относится)"}, 400)
     ok, code = await yc.verify_credentials(login, body.app_password)
     if not ok:
         detail = {
