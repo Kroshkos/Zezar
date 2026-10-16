@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import secrets
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -17,6 +17,54 @@ from app.core.security import hash_password
 from app.models.core import (
     Department, DepartmentMember, EntityKind, Invite, PriorityLevel, Role, StatusSet, User,
 )
+
+
+async def ensure_yandex_id_nullable(session: AsyncSession) -> None:
+    """Самовосстановление для легаси-БД с ошибочным NOT NULL на users.yandex_id.
+
+    Базовая ревизия Alembic (0ad0082f05da) создала users.yandex_id как NOT NULL,
+    хотя модель объявляет колонку nullable — локальные админ-аккаунты из env
+    (yandex_id = NULL) падали при старте с
+    "sqlite3.IntegrityError: NOT NULL constraint failed: users.yandex_id".
+    Исправление — ревизия 7d1a9c2f4b83; но если том /data был наштампован на head
+    без фактического применения upgrade (см. entrypoint.sh), колонка остаётся
+    NOT NULL. Здесь пересоздаём таблицу по метаданным моделей в отдельном
+    соединении (данные сохраняются). Идемпотентно: работает только когда
+    NOT NULL реально присутствует.
+    """
+    async with session.bind.connect() as conn:
+        row = (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()
+        if not row or not any(r[1] == 'yandex_id' and r[3] for r in row):
+            return
+        log.warning("seed: users.yandex_id имеет NOT NULL (легаси-схема baseline) — "
+                    "пересоздаю таблицу со снятием ограничения")
+        await conn.run_sync(_recreate_users)
+
+
+def _recreate_users(sync_conn) -> None:
+    from app.db.base import Base
+    users = Base.metadata.tables['users']
+    # PRAGMA foreign_keys в SQLite no-op внутри транзакции — выключаем FK до её начала
+    sync_conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    try:
+        # PRAGMA выше уже открыл транзакцию на autocommit-соединении (autobegin):
+        # фиксируем её, затем ведём пересоздание таблицы в явной транзакции.
+        sync_conn.commit()
+        with sync_conn.begin():
+            sync_conn.execute(text("ALTER TABLE users RENAME TO _users_legacy"))
+            # Индексы старой таблицы при RENAME переименовываются (_users_legacy_ix_*),
+            # но одноимённые могут остаться (например, созданные lifespan-ремонтом
+            # колонок) — удаляем их, чтобы create ниже не упал на "already exists".
+            for idx in list(users.indexes):
+                sync_conn.execute(text(f'DROP INDEX IF EXISTS "{idx.name}"'))
+            users.create(sync_conn)
+            cols = ', '.join(c.name for c in users.columns)
+            sync_conn.execute(text(f"INSERT INTO users ({cols}) "
+                                   f"SELECT {cols} FROM _users_legacy"))
+            sync_conn.execute(text("DROP TABLE _users_legacy"))
+    finally:
+        sync_conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        sync_conn.commit()
 
 log = logging.getLogger("caesar.seed")
 
@@ -146,6 +194,9 @@ def _initials_of(name: str) -> str:
 
 async def bootstrap(session: AsyncSession) -> None:
     s = get_settings()
+
+    # --- ремонт легаси-схемы: users.yandex_id должен быть NULLABLE (см. docstring) ---
+    await ensure_yandex_id_nullable(session)
 
     # --- справочники (глобальные наборы) ---
     for kind, rows in ((EntityKind.TASK, TASK_STATUSES), (EntityKind.MEETING, MEETING_STATUSES),
