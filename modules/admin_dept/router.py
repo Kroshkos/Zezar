@@ -44,19 +44,28 @@ async def _pick_department(session: AsyncSession, ctx: access.AccessContext,
     Переключить пространство админ/координатор может выпадающим списком на странице.
     """
     if dept_id is None:
-        if ctx.department_ids:
-            dept_id = next(iter(sorted(ctx.department_ids)))
-        elif ctx.is_global:
+        if ctx.is_global:
+            # Глобальные роли (ADMIN/COORDINATOR) не обязаны состоять в
+            # подразделениях — открываем самое раннее активное пространство;
+            # если подразделений нет — пустое состояние со ссылкой создания.
             dept_id = await session.scalar(
                 select(Department.id)
                 .where(Department.is_active == True)  # noqa: E712
                 .order_by(Department.id).limit(1))
             if dept_id is None:
                 return None      # пустое состояние: страница предложит создать пространство
+        elif ctx.department_ids:
+            dept_id = next(iter(sorted(ctx.department_ids)))
         else:
             raise HTTPException(403, "Вы не состоите ни в одном подразделении")
     dept = await session.get(Department, dept_id)
     if dept is None or not dept.is_active:
+        # Пространство удалено/деактивировано (например, устаревший bookmark или
+        # ссылка из кэшированной страницы) — для глобальных ролей возвращаем
+        # None, чтобы страница показала актуальный список и форму создания,
+        # вместо «сырого» 404.
+        if ctx.is_global:
+            return None
         raise HTTPException(404, "Подразделение не найдено")
     if not ctx.is_global and dept.id not in ctx.department_ids:
         raise HTTPException(403, "Нет доступа к этому подразделению")
@@ -89,6 +98,21 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             members=[], modules=[], shares_out=[], shares_in=[],
             users=[{"id": u.id, "name": u.display_name} for u in all_users],
         )
+
+    # --- все подразделения (для глобальных ролей) -----------------------------
+    # Вычисляем ДО основного блока и всегда передаём в шаблон: на странице
+    # «Администрирование» админ/координатор должен видеть и переключатель
+    # пространств, и форму создания нового подразделения — независимо от того,
+    # какое пространство открыто сейчас. Раньше список подразделений собирался
+    # только при открытом пространстве, а форма создания существовала лишь в
+    # пустом состоянии: после первого подразделения UI лишался кнопки «+
+    # Подразделение», и казалось, что создать можно только одно.
+    depts = []
+    if ctx.is_global:
+        depts = [{"id": d.id, "name": d.name} for d in
+                 (await session.scalars(
+                     select(Department).where(Department.is_active == True)  # noqa: E712
+                     .order_by(Department.name))).all()]
 
     # --- состав участников --------------------------------------------------
     members = (await session.scalars(
@@ -146,11 +170,6 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
 
     can_manage = ctx.is_global or any(
         m.user_id == user.id and m.role_in_dept == Role.HEAD for m in members)
-    depts = []
-    if ctx.is_global:
-        depts = [{"id": d.id, "name": d.name} for d in
-                 (await session.scalars(
-                     select(Department).where(Department.is_active == True))).all()]  # noqa: E712
 
     return await render_page(
         request, "admin_dept.html", module_key=MODULE_KEY, user=user, session=session,
