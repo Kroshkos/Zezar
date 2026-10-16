@@ -13,6 +13,8 @@ os.environ["DATA_DIR"] = _tmp
 os.environ["DATABASE_PATH"] = os.path.join(_tmp, "test.db")
 os.environ["SECRET_KEY"] = "e2e-secret"
 os.environ["DEV_LOGIN_ENABLED"] = "true"
+os.environ["ADMIN_USERNAME"] = "ivanov"
+os.environ["ADMIN_PASSWORD"] = "E2E-Admin-Pass1"
 os.environ["WORKERS_ENABLED"] = "false"   # сеть не трогаем, outbox проверим напрямую
 
 import httpx  # noqa: E402
@@ -22,13 +24,15 @@ from app.db.engine import SessionLocal  # noqa: E402
 from app.models.core import Entity, OutboxEvent, User  # noqa: E402
 from integrations.workers import _outbox_once  # noqa: E402
 
+EMAIL_TO_LOGIN = {'admin@caesar.local': 'ivanov', 'coord@caesar.local': 'petrova', 'head-it@caesar.local': 'sidorov', 'member-it@caesar.local': 'kuznetsov', 'member-strat@caesar.local': 'smirnova', 'head-hr@caesar.local': 'morozova', 'member-hr@caesar.local': 'gavrilov'}
+
 
 async def _create_task_as(email: str, title: str) -> tuple[str, dict]:
     """Создать задачу от имени пользователя (через реальный HTTP-стек)."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t",
                                  follow_redirects=False) as c:
-        r = await c.get(f"/auth/dev-login?email={email}")
+        r = await c.get(f"/auth/dev-login?login={EMAIL_TO_LOGIN[email]}")
         ck = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
         r = await c.post("/api/tasks", headers=ck, json={
             "title": title, "status_key": "new", "priority_key": "medium"})
@@ -42,7 +46,7 @@ async def main() -> None:
                                  follow_redirects=False) as c:
         async with app.router.lifespan_context(app):
             # 1. dev-вход админа
-            r = await c.get("/auth/dev-login?email=admin@caesar.local")
+            r = await c.get("/auth/dev-login?login=ivanov")
             assert r.status_code == 302, r.text
             cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
 
@@ -102,7 +106,7 @@ async def main() -> None:
             cross_uid = r.json()["uid"]
 
             # 9. RBAC: member видит расшаренное только на чтение
-            r = await c.get("/auth/dev-login?email=member-it@caesar.local")
+            r = await c.get("/auth/dev-login?login=kuznetsov")
             m_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=m_cookie)
             shared = [t for t in r.json() if t["uid"] == uid]
@@ -123,7 +127,7 @@ async def main() -> None:
             admin_depts = {d["code"]: d["id"] for d in r.json()}
             r = await c.get("/api/core/admin/users", headers=a_cookie)
             assert r.status_code == 200, r.text
-            users_by_email = {u["email"]: u["id"] for u in r.json()}
+            users_by_email = {u["email"]: u["id"] for u in r.json() if u.get("email")}
             r = await c.post("/api/tasks", headers=a_cookie, json={
                 "title": "Задача админа в dep-it без шеринга", "status_key": "new",
                 "priority_key": "medium",
@@ -133,7 +137,7 @@ async def main() -> None:
             leak_uid = r.json()["uid"]
             own_uid, _ = await _create_task_as("member-strat@caesar.local",
                                                "Своя задача участника страт.")
-            r = await c.get("/auth/dev-login?email=member-strat@caesar.local")
+            r = await c.get("/auth/dev-login?login=smirnova")
             o_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=o_cookie)
             lst = r.json()
@@ -164,7 +168,7 @@ async def main() -> None:
                 "задача админа без share_with просочилась в чужое пространство"
             assert any(t["uid"] == cross_uid and t["cross_dept"] for t in lst2), \
                 "у межпространственной задачи не проставлен признак cross_dept"
-            r = await c.get("/auth/dev-login?email=head-hr@caesar.local")
+            r = await c.get("/auth/dev-login?login=morozova")
             h_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/tasks/api-list", headers=h_cookie)
             lst3 = r.json()
@@ -288,7 +292,7 @@ async def main() -> None:
             # сторонний участник dep-hr: в сценарии 12 head-hr был повышен админом
             # до HEAD в dep-it (легален — видит сущности своего пространства), поэтому
             # берём ЧИСТОГО member-hr, который не участвует ни во владельце, ни в шеринге
-            r = await c.get("/auth/dev-login?email=member-hr@caesar.local")
+            r = await c.get("/auth/dev-login?login=gavrilov")
             x_cookie = {"Cookie": f"caesar_session={r.cookies['caesar_session']}"}
             r = await c.get("/api/docs/api-list", headers=x_cookie)
             assert all(d["uid"] != d_uid for d in r.json()), \

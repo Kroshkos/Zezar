@@ -13,8 +13,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import build_context
@@ -82,8 +82,20 @@ async def create_department(body: DeptIn, user: User = Depends(get_current_user)
 @router.patch("/departments/{dept_id}")
 async def patch_department(dept_id: int, body: dict, user: User = Depends(get_current_user),
                            session: AsyncSession = Depends(session_dep)):
-    await _require_global(session, user)
+    ctx = await build_context(session, user)
     dept = await session.get(Department, dept_id)
+    if not ctx.can_admin_system:
+        # Руководитель — только переименование/описание СВОЕГО подразделения
+        my = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == dept_id,
+            DepartmentMember.user_id == user.id))
+        if not (dept and my and my.role_in_dept == Role.HEAD):
+            raise HTTPException(403, "Только администратор/координатор")
+        if set(body) - {"name", "description"} or body.get("is_active") is False:
+            raise HTTPException(403, "Руководитель может изменять только название "
+                                     "и описание своего подразделения")
+    elif not ctx.is_global:
+        raise HTTPException(403, "Только администратор/координатор")
     if not dept:
         raise HTTPException(404)
     changed = [k for k in ("name", "description", "is_active") if k in body]
@@ -115,6 +127,37 @@ async def members(dept_id: int, user: User = Depends(get_current_user),
     return out
 
 
+@router.get("/departments/{dept_id}/candidates")
+async def member_candidates(dept_id: int, q: str | None = None,
+                            user: User = Depends(get_current_user),
+                            session: AsyncSession = Depends(session_dep)):
+    """Поиск пользователей для добавления в подразделение (не состоит / состоит).
+
+    Доступен администратору и руководителю подразделения. Возвращает до 20
+    активных аккаунтов по подстроке логина/ФИО/email с флагом членства."""
+    ctx = await build_context(session, user)
+    if not ctx.is_global:
+        my = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == dept_id,
+            DepartmentMember.user_id == user.id))
+        if not (my and my.role_in_dept == Role.HEAD):
+            raise HTTPException(403)
+    stmt = select(User).where(User.is_active == True)  # noqa: E712
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(or_(func.lower(User.display_name).like(like),
+                              func.lower(User.login).like(like),
+                              func.lower(User.email).like(like)))
+    stmt = stmt.order_by(User.display_name).limit(20)
+    found = (await session.scalars(stmt)).all()
+    member_ids = set((await session.scalars(
+        select(DepartmentMember.user_id).where(
+            DepartmentMember.department_id == dept_id))).all())
+    return [{"id": u.id, "name": u.display_name, "login": u.login or "",
+             "email": u.email or "", "role": u.role.value,
+             "is_member": u.id in member_ids} for u in found]
+
+
 class ModuleToggleIn(BaseModel):
     is_enabled: bool
 
@@ -122,6 +165,14 @@ class ModuleToggleIn(BaseModel):
 class MemberIn(BaseModel):
     user_id: int
     role_in_dept: Role = Role.MEMBER
+
+    @field_validator("role_in_dept", mode="before")
+    @classmethod
+    def _norm_role(cls, v):
+        # Принять "HEAD"/"MEMBER" в любом регистре
+        if isinstance(v, str):
+            return Role(v.lower())
+        return v
 
 
 @router.post("/departments/{dept_id}/members")
