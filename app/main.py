@@ -53,6 +53,14 @@ def _drop_legacy_auth_columns(conn) -> None:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table}
         ).fetchone() is not None
 
+    # Очень старые схемы: users.full_name вместо display_name — переименуем,
+    # пока таблица цела (rename сохраняет данные и ограничения колонки).
+    if has_table("users"):
+        ucols = cols("users")
+        if "display_name" not in ucols and "full_name" in ucols:
+            conn.exec_driver_sql("ALTER TABLE users RENAME COLUMN full_name TO display_name")
+            log.warning("migrate: users.full_name переименован в display_name")
+
     for table, legacy_col in (("users", "yandex_id"), ("invites", "yandex_id")):
         if not has_table(table) or legacy_col not in cols(table):
             continue
@@ -62,8 +70,14 @@ def _drop_legacy_auth_columns(conn) -> None:
             continue
         except Exception:  # noqa: BLE001 — старый SQLite: пересоздаём таблицу
             pass
+        # Пересоздание: берём ПЕРЕСЕЧЕНИЕ колонок модели и фактической таблицы.
+        # Раньше брались все колонки модели — на очень старых БД (например, с
+        # users.full_name вместо display_name) INSERT...SELECT падал с
+        # "no such column", и старт обрывался. Отсутствующие колонки после
+        # пересоздания добивает _sync_missing_columns (NULL-дефолты).
+        actual = cols(table)
         model_cols = [c.name for c in Base.metadata.tables[table].columns
-                      if c.name != legacy_col]
+                      if c.name != legacy_col and c.name in actual]
         collist = ", ".join(model_cols)
         tmp = f"{table}__migrated"
         quoted = lambda n: f'"{n}"'  # noqa: E731
@@ -98,9 +112,22 @@ def _sync_missing_columns(conn) -> None:
         missing = [c for c in table.columns if c.name not in existing]
         for col in missing:
             coltype = col.type.compile(conn.dialect)
-            conn.exec_driver_sql(
-                f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype} NULL"
-            )
+            ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}"
+            if not col.nullable:
+                # SQLite требует DEFAULT для NOT NULL при ADD COLUMN; дефолт
+                # берём из Python-default модели (bool/int/str), иначе NULL.
+                d = col.default.arg if (col.default is not None and
+                                        not callable(col.default.arg)) else None
+                sqldef = {True: "1", False: "0"}.get(d)
+                if sqldef is None and isinstance(d, (int, float)):
+                    sqldef = str(d)
+                if sqldef is None and isinstance(d, str):
+                    sqldef = "'" + d.replace("'", "''") + "'"
+                if sqldef is None and d is not None:
+                    sqldef = str(d)
+                if sqldef is not None:
+                    ddl += f" NOT NULL DEFAULT {sqldef}"
+            conn.exec_driver_sql(ddl)
             log.warning("migrate: добавлена отсутствующая колонка %s.%s (%s)",
                         table.name, col.name, coltype)
         if missing:
@@ -118,10 +145,9 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Сначала досоздаём недостающие колонки в существующих таблицах (легаси-БД после
         # `alembic stamp head`), затем create_all добавляет отсутствующие таблицы/индексы.
+        await conn.run_sync(_drop_legacy_auth_columns)
         await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
-        # create_all не удаёт легаси-колонки (yandex_id) — чистим сверхсхему.
-        await conn.run_sync(_drop_legacy_auth_columns)
 
     # 2. Динамическая регистрация модулей-плагинов + таблица module_registry + bootstrap
     registry.autodiscover("modules")

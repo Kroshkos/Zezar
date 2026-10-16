@@ -30,6 +30,8 @@ async def main():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         _reg.autodiscover('modules')
+        from app.ui import init_templates
+        init_templates()  # подключаем шаблоны модулей (dashboard.html и т.д.)
         from app.db.seed import bootstrap
         async with SessionLocal() as s:
             await _reg.sync_table(s)

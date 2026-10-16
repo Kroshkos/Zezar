@@ -94,11 +94,13 @@ def upgrade() -> None:
 
         # 2) Затем удаляем легаси-колонку yandex_id вместе с индексом.
         if has_legacy:
-            with op.batch_alter_table("users", recreate="auto") as batch_op:
-                try:
-                    batch_op.drop_index("ix_users_yandex_id")
-                except Exception:  # индекса мог не быть (разные состояния легаси-БД)
-                    pass
+            user_indexes = {i["name"] for i in _insp().get_indexes("users")}
+            with op.batch_alter_table("users", recreate="always") as batch_op:
+                # Индекс удаляем только если он реально есть в схеме: batch-режим
+                # падает с "No such index" на легаси-БД, где его никогда не создавали.
+                for ix in ("ix_users_yandex_id",):
+                    if ix in user_indexes:
+                        batch_op.drop_index(ix)
                 batch_op.drop_column("yandex_id")
 
     # ---------- invites (устаревшая таблица допусков OAuth) ----------
