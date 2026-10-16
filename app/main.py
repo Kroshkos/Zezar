@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -322,6 +323,154 @@ def _sync_missing_columns(conn) -> None:
                     idx.create(conn, checkfirst=True)
 
 
+def _reconcile_event_log_fk(conn) -> None:
+    """Самовосстановление «битых» FK у event_log (sqlite3.OperationalError:
+    foreign key mismatch - "event_log" referencing "users").
+
+    Причина на проде: users была пересоздана self-healing-кодом (или легаси-
+    миграцией) с PK id_user вместо id, а event_log остался ссылаться на
+    users(id). SQLite при INSERT проверяет, что ссылка FK совпадает с PK/
+    UNIQUE-индексом родительской таблицы — несовпадение роняло любой логин
+    (запись login_failed в журнал давала 500).
+
+    Лечим идемпотентно и без потери данных:
+      1. Если PK users называется не 'id' — переименовываем его в 'id'
+         (ALTER TABLE ... RENAME COLUMN поддерживается SQLite >= 3.25; после
+         rename ссылки всех детей автоматически указывают на users(id)).
+      2. Иначе, если PK корректный, но таблица-ребёнок ссылается на несущест-
+         вующую колонку — пересоздаём ребёнка по метаданным модели.
+    """
+    def cols(table: str) -> list[str]:
+        return [r[1] for r in _rows(f"PRAGMA table_info({table})")]
+
+    def _rows(sql: str, params=None):
+        """Безопасное чтение PRAGMA/SELECT через run_sync на aiosqlite.
+
+        SQLAlchemy 2.x + aiosqlite: курсор, оставленный недочитанным, роняет
+        следующий запрос с 'MissingGreenlet' (зелёный корутины-воркера
+        закрывается при возврате из run_sync). Поэтому вычитываем ВСЕ строки
+        сразу в list и закрываем курсор.
+        """
+        cur = conn.exec_driver_sql(sql, params) if params is not None \
+            else conn.exec_driver_sql(sql)
+        try:
+            return list(cur.fetchall())
+        finally:
+            with contextlib.suppress(Exception):
+                cur.close()
+
+    def _write_ddl(sql: str) -> None:
+        """DDL/DML без строк результата: выполняем и ЯВНО закрываем курсор.
+
+        На aiosqlite недозакрытый курсор от «молчащего» exec_driver_sql
+        (ALTER/UPDATE/CREATE...) оставляет зелёный DB-worker в состоянии, при
+        котором следующий запрос внутри того же run_sync падает с
+        MissingGreenlet ('greenlet_spawn has not been called'). Закрытие
+        сбрасывает cursor_ до следующей команды.
+        """
+        cur = conn.exec_driver_sql(sql)
+        with contextlib.suppress(Exception):
+            cur.close()
+
+    def pk_col(table: str) -> Optional[str]:
+        for row in _rows(f"PRAGMA table_info({table})"):
+            if row[5]:  # (cid, name, type, notnull, dflt_value, pk)
+                return row[1]
+        return None
+
+    def has_table(name: str) -> bool:
+        return _rows(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n",
+            {"n": name}) != []
+
+    if not has_table("users") or not has_table("event_log"):
+        return
+
+    # 1. PK users должен называться 'id' — иначе ни одна FK-ссылка users.id
+    #    не резолвится (в т.ч. у freshly-created create_all таблиц).
+    ucols = cols("users")
+    if ucols and "id" not in ucols:
+        pk = pk_col("users")
+        if pk:
+            try:
+                _write_ddl(f'ALTER TABLE users RENAME COLUMN "{pk}" TO "id"')
+                log.warning("migrate: PK users.%s переименован в users.id "
+                            "(чинит FK-ссылки event_log и других детей)", pk)
+            except Exception:  # noqa: BLE001 — старый SQLite: чиним детей ниже
+                log.warning("migrate: не удалось переименовать users.%s в id",
+                            pk, exc_info=True)
+
+    # 2. Проверить прямые ссылки event_log -> users: колонка цели должна быть
+    #    реальным PK/UNIQUE-колонкой parents. Не совпало — пересоздать event_log.
+    target = None
+    for r in _rows("PRAGMA foreign_key_list(event_log)"):
+        if r[2] == "users":
+            target = r[3]  # referenced column
+            break
+    if target is None:
+        return  # FK нет (например, создан без ограничений) — ничего не делаем
+    ucols_now = cols("users")
+    pk_now = pk_col("users")
+    valid_targets = {c for c in ucols_now if c == pk_now}
+    # уникальные индексы тоже удовлетворяют проверке SQLite
+    with contextlib.suppress(Exception):
+        for row in _rows("PRAGMA index_list(users)"):
+            uniq = row[2]
+            if uniq:
+                icols = [i[2] for i in _rows(
+                    f"PRAGMA index_info('{row[1]}')")]
+                if len(icols) == 1:
+                    valid_targets.update(icols)
+    if target in valid_targets:
+        return
+
+    log.warning("migrate: FK event_log->users(%s) не совпадает со схемой "
+                "users (PK=%s) — пересоздаю event_log по модели", target, pk_now)
+    md_tbl = Base.metadata.tables["event_log"]
+    tmp = "event_log__fkfix"
+    dbapi = conn.connection.connection if hasattr(conn.connection, "connection") else None
+    fk_prev = None
+    if dbapi is not None:
+        fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
+        dbapi.execute("PRAGMA foreign_keys=OFF")
+    try:
+        fresh = schema.Table(tmp, schema.MetaData())
+        for c in md_tbl.columns:
+            autoinc = True if (c.primary_key and isinstance(c.type, sa_types.Integer)) else None
+            fresh.append_column(schema.Column(
+                c.name, c.type, primary_key=c.primary_key,
+                nullable=c.nullable, default=c.default,
+                server_default=c.server_default, autoincrement=autoinc))
+        fks_list = [schema.ForeignKeyConstraint(
+            [fk.parent.name for fk in cons.columns],
+            [fk.target_fullname for fk in cons.referenced_columns],
+            ondelete=cons.ondelete, onupdate=cons.onupdate)
+            for cons in md_tbl.constraints
+            if isinstance(cons, schema.ForeignKeyConstraint)]
+        for cons in fks_list:
+            fresh.append_constraint(cons)
+        _write_ddl(str(schema.CreateTable(fresh).compile(dialect=conn.dialect)))
+        old_cols = set(cols("event_log"))
+        dst = [c.name for c in md_tbl.columns if c.name in old_cols]
+        collist = ", ".join(f'"{n}"' for n in dst)
+        _write_ddl(
+            f"INSERT INTO {tmp} ({collist}) SELECT {collist} FROM event_log")
+        _write_ddl("DROP TABLE event_log")
+        _write_ddl(f"ALTER TABLE {tmp} RENAME TO event_log")
+        for ix in md_tbl.indexes:
+            with contextlib.suppress(Exception):
+                ix.create(conn, checkfirst=True)
+        log.warning("migrate: event_log пересоздана с корректным FK -> users.id "
+                    "(данные журнала сохранены)")
+    except Exception:  # noqa: BLE001 — худший случай: журнал остаётся битым, но старт не падал раньше
+        log.exception("migrate: не удалось пересоздать event_log")
+        with contextlib.suppress(Exception):
+            _write_ddl(f"DROP TABLE IF EXISTS {tmp}")
+    finally:
+        if dbapi is not None and fk_prev:
+            dbapi.execute("PRAGMA foreign_keys=ON")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. Схема БД (SQLite строго в /data — путь из .env). Модели импортируем ДО create_all,
@@ -333,6 +482,9 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(_drop_legacy_auth_columns)
         await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
+        # После create_all: чиним FK-несоответствия event_log -> users
+        # (sqlite3 "foreign key mismatch", ронявший логин с 500 на проде).
+        await conn.run_sync(_reconcile_event_log_fk)
 
     # 2. Динамическая регистрация модулей-плагинов + таблица module_registry + bootstrap
     registry.autodiscover("modules")
