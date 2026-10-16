@@ -132,8 +132,11 @@ async def sync_admin_logins(session: AsyncSession) -> None:
             changed = []
             if user.password_hash != pwhash:
                 user.password_hash = pwhash
-                user.must_change_password = False  # env-пароль актуален, смена не требуется
                 changed.append("пароль обновлён")
+            # env-пароль актуален — принудительная смена для администратора не
+            # требуется (флаг снимается всегда, а не только при смене хеша).
+            if user.must_change_password:
+                user.must_change_password = False
             if user.display_name != name:
                 user.display_name = name
                 changed.append("имя обновлено")

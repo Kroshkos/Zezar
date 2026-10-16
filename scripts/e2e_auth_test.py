@@ -103,9 +103,12 @@ async def main():
             assert r.status_code == 302 and r.headers["location"] == "/", r.headers
             r = await c2.get("/")
             assert r.status_code == 200 or r.status_code == 302, r.status_code
-            # старый пароль больше не работает
-            r = await c2.post("/auth/login", data={"login": "petrov", "password": "Start-Pass1"})
-            assert "error=bad_credentials" in r.headers["location"], r.headers
+            # старый пароль больше не работает (новая клиентка — без сессии,
+            # иначе /auth/login у незалогиненного редиректит на /login)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_main_mod.app),
+                                         base_url="http://t", follow_redirects=False) as c2b:
+                r = await c2b.post("/auth/login", data={"login": "petrov", "password": "Start-Pass1"})
+                assert "error=bad_credentials" in r.headers["location"], r.headers
         print("OK 7: пользователь создан, первый вход -> принудительная смена пароля, стартый пароль отключён")
 
         # 8. сброс пароля админом -> снова must_change_password

@@ -46,12 +46,23 @@ def _cols(table: str) -> set[str]:
     return {c["name"] for c in _insp().get_columns(table)}
 
 
+def _copy_legacy_logins(from_col: str) -> None:
+    """Перенос локальных логинов из легаси-колонки ('local:<login>') в users.login."""
+    conn = op.get_bind()
+    rows = conn.execute(sa.text(
+        f"SELECT id, {from_col} FROM users WHERE {from_col} LIKE 'local:%'")).fetchall()
+    for uid, val in rows:
+        conn.execute(sa.text("UPDATE users SET login = :lg WHERE id = :uid"),
+                     {"lg": val.split(":", 1)[1].lower(), "uid": uid})
+
+
 def upgrade() -> None:
     tables = _tables()
 
     # ---------- users ----------
     if "users" in tables:
         cols = _cols("users")
+        has_legacy = "yandex_id" in cols
         add_cols = []
         if "login" not in cols:
             add_cols.append(sa.Column("login", sa.String(length=64), nullable=True))
@@ -61,40 +72,43 @@ def upgrade() -> None:
             add_cols.append(sa.Column("must_change_password", sa.Boolean(),
                                       nullable=False, server_default=sa.true()))
 
-        with op.batch_alter_table("users", recreate="always") as batch_op:
-            # Снимаем возможный NOT NULL на yandex_id (легаси baseline) — иначе
-            # UPDATE/копирование ниже и вставка env-админов падает.
-            if "yandex_id" in cols:
-                batch_op.alter_column("yandex_id",
-                                      existing_type=sa.String(length=64),
-                                      nullable=True)
-            for c in add_cols:
-                batch_op.add_column(c)
-            if "login" not in cols:
-                batch_op.create_index(batch_op.f("ix_users_login"),
-                                      ["login"], unique=True)
-            if "yandex_id" in cols:
-                batch_op.drop_index("ix_users_yandex_id")
+        # 1) Сначала добавляем новые колонки и ПЕРЕНОСИМ данные из легаси-колок
+        #    (пока они ещё существуют в таблице): 'local:<login>' -> login.
+        if add_cols or has_legacy:
+            with op.batch_alter_table("users", recreate="auto") as batch_op:
+                for c in add_cols:
+                    batch_op.add_column(c)
+                if "login" not in cols:
+                    batch_op.create_index(batch_op.f("ix_users_login"),
+                                          ["login"], unique=True)
+            if has_legacy:
+                _copy_legacy_logins("yandex_id")
+            # Чистка мусорных «сервисных» значений yandex_login от прежних сидов
+            # ('local:*', 'dev:*'); реальные логины остаются — они нужны для
+            # CalDAV (привязка Яндекс.Календаря).
+            if "yandex_login" in cols:
+                op.execute("UPDATE users SET yandex_login = NULL "
+                           "WHERE yandex_login LIKE 'local:%' OR yandex_login LIKE 'dev:%'")
+
+        # 2) Затем удаляем легаси-колонку yandex_id вместе с индексом.
+        if has_legacy:
+            with op.batch_alter_table("users", recreate="auto") as batch_op:
+                try:
+                    batch_op.drop_index("ix_users_yandex_id")
+                except Exception:  # индекса мог не быть (разные состояния легаси-БД)
+                    pass
                 batch_op.drop_column("yandex_id")
 
-        # Переносим локальные логины из легаси-колонки yandex_id в login
-        # (сид старых установок писал 'local:<login>' именно туда).
-        if "yandex_id" in cols and "login" in _cols("users"):
-            op.execute(
-                "UPDATE users SET login = lower(replace(yandex_id, 'local:', '')) "
-                "WHERE login IS NULL AND yandex_id LIKE 'local:%'"
-            )
-        # Чистка мусорных «сервисных» логинов от прежних сидов; реальные значения
-        # остаются — они нужны для CalDAV (привязка Яндекс.Календаря).
-        if "yandex_login" in _cols("users"):
-            op.execute("UPDATE users SET yandex_login = NULL "
-                       "WHERE yandex_login LIKE 'local:%' OR yandex_login LIKE 'dev:%'")
-
-    # ---------- invites (устаревшая таблица допусков) ----------
-    if "invites" in tables and "yandex_id" in _cols("invites"):
+    # ---------- invites (устаревшая таблица допусков OAuth) ----------
+    if "invites" in tables:
+        inv_cols = _cols("invites")
+        drop_ix = "ix_invites_yandex_id" in {
+            i["name"] for i in _insp().get_indexes("invites")}
         with op.batch_alter_table("invites", recreate="auto") as batch_op:
-            batch_op.drop_index("ix_invites_yandex_id")
-            batch_op.drop_column("yandex_id")
+            if drop_ix:
+                batch_op.drop_index("ix_invites_yandex_id")
+            if "yandex_id" in inv_cols:
+                batch_op.drop_column("yandex_id")
 
     # ---------- event_log: журнал событий системы ----------
     if "event_log" not in tables:
