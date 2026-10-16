@@ -156,16 +156,26 @@ async def patch_user(user_id: int, body: UserPatch, request: Request,
     # Защита контура админов: локальный аккаунт из ADMIN_USERNAME/ADMIN_PASSWORD
     # нельзя понизить или заблокировать через API — отзыв доступа = удаление
     # строки из env + рестарт (см. app/db/seed.sync_admin_logins).
+    # ВАЖНО: проверка идёт ДО записи в журнал — иначе rollback отменил бы и её,
+    # а повторный lazy-load detached-объекта вне сессии бросал MissingGreenlet.
     if is_env_admin_login(u.login) and (u.role != Role.ADMIN or not u.is_active):
-        await session.rollback()
+        # Откатываем НЕ всю транзакцию (session.rollback отменил бы и refresh
+        # detached-объекта при формировании 409 -> MissingGreenlet), а только
+        # свои изменения: возвращаем роль/активность env-админа.
+        if body.role is not None:
+            u.role = Role.ADMIN
+        if body.is_active is not None:
+            u.is_active = True
+        await session.commit()
         raise HTTPException(409, f"Локальный администратор '{u.login}' управляется переменными "
                                  "ADMIN_USERNAME/ADMIN_PASSWORD: роль всегда ADMIN, "
                                  "блокировка — удалением из env + рестарт")
     if changes:
-        await log_event(session, "update_user", category="admin", user=user,
-                        object=f"{u.display_name} ({u.login})", ip=client_ip(request),
+        target_name, target_login = u.display_name, u.login
+        await log_event(session, "update_user", category="admin", actor_name=user.display_name,
+                        object=f"{target_name} ({target_login})", ip=client_ip(request),
                         level="warning",
-                        message=f"Изменения пользователя '{u.login}': {', '.join(changes)}")
+                        message=f"Изменения пользователя '{target_login}': {', '.join(changes)}")
     await session.commit()
     return {"ok": True}
 

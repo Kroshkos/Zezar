@@ -88,6 +88,8 @@ async def main():
             r = await c2.post("/auth/login", data={"login": "petrov", "password": "Start-Pass1"})
             assert r.status_code == 302 and "change-password?forced=1" in r.headers["location"], r.headers
             # прямой заход на / всё равно редиректит на смену пароля
+            # (cookie из предыдущего ответа может не перенестись — берём явно)
+            c2.cookies.set("caesar_session", r.cookies.get("caesar_session", ""))
             r = await c2.get("/")
             assert r.status_code == 302 and "change-password" in r.headers["location"], r.headers
             # слишком короткий пароль отклоняется
