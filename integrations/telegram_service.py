@@ -97,7 +97,8 @@ WELCOME = ("<b>👋 Добро пожаловать, {name}!</b>\n\n"
            "• задачи — назначение, изменения статуса, приближение срока;\n"
            "• совещания и проекты — решения по вашему участию.\n\n"
            "Отвечать в этом чате не нужно — бот работает только на отправку. "
-           "Команды: /mute — отключить уведомления, /unmute — включить.")
+           "Команды: /mute — отключить уведомления, /unmute — включить, "
+           "/unbind — отвязать Telegram от учётной записи.")
 
 ASK_PASSWORD = ("Отлично, логин <b>{login}</b> найден.\n"
                 "Теперь одним сообщением отправьте <b>пароль</b> от вашей учётной "
@@ -185,8 +186,8 @@ async def _try_login_step(session: AsyncSession, chat_id: int, text: str) -> str
         # неизвестный логин: подсказку не шлём (защита от перебора), окно не открываем
         return None
     if u.telegram_chat_id and str(u.telegram_chat_id) != str(chat_id):
-        # чат уже занят другой УЗ — отвечаем и окно не открываем
-        return ALREADY_BOUND.format(name=_esc(u.display_name))
+        # логин уже привязан к другому чату — молча удаляем (не раскрываем чужие данные)
+        return None
     if u.telegram_chat_id and str(u.telegram_chat_id) == str(chat_id):
         return None  # этот же чат уже привязан — ветка «уже привязан» выше
     _pending_put(chat_id, login)
@@ -214,33 +215,46 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
     _gc_pending()
     chat_id = msg["chat"]["id"]
     text = msg["text"].strip()
+    mid = msg["message_id"]
     user = await session.scalar(select(User).where(User.telegram_chat_id == str(chat_id)))
 
-    # уже привязан: команды mute/unmute обрабатываем, остальное — удаляем молча
+    # --- пользователь уже привязан: команды обрабатываем, остальное удаляем молча ---
     if user is not None:
+        if text.startswith("/unbind"):
+            user.telegram_chat_id = None
+            user.telegram_bind_code = None
+            user.telegram_optout = None
+            _pending.pop(chat_id, None)
+            _last_ask.map.pop(chat_id, None)
+            await session.commit()
+            log.info("tg: chat %s отвязан от пользователя '%s'", chat_id, user.login)
+            return ("Telegram отвязан от учётной записи <b>{name}</b>. Чтобы привязать "
+                    "заново — отправьте свой логин.").format(name=_esc(user.display_name)), [mid]
         if text.startswith("/mute"):
             user.telegram_optout = "all"
             await session.commit()
-            return "Уведомления отключены. /unmute — включить.", [msg["message_id"]]
+            return "Уведомления отключены. /unmute — включить.", [mid]
         if text.startswith("/unmute"):
             user.telegram_optout = None
             await session.commit()
-            return "Уведомления включены.", [msg["message_id"]]
+            return "Уведомления включены.", [mid]
         if text.startswith("/help"):
             return ("Бот работает только на отправку уведомлений. "
-                    "Команды: /mute — отключить, /unmute — включить."), [msg["message_id"]]
-        return None, [msg["message_id"]]   # «просто удаляет» сообщения пользователя
+                    "Команды: /mute — отключить, /unmute — включить, "
+                    "/unbind — отвязать Telegram от аккаунта."), [mid]
+        return None, [mid]   # «просто удаляет» сообщения пользователя
 
-    # шаг 2: ожидаем пароль — состояние закрывается ровно одной попыткой
+    # --- шаг 2: ожидаем пароль — состояние закрывается ровно одной попыткой ---
     if chat_id in _pending:
         pending = _pending.pop(chat_id)
+        ask_id = _last_ask.map.pop(chat_id, None)
         if pending.expires < time.time():
-            return RESET_HINT, [msg["message_id"]]
+            return RESET_HINT, [m for m in (ask_id, mid) if m]
         u = await session.scalar(select(User).where(User.login == pending.login))
         ok = bool(u and u.is_active and u.password_hash
                   and verify_password(text, u.password_hash))
         # диалог очищаем ВСЕГДА: и введённый пароль, и вопрос о пароле
-        deletes = [m for m in (_last_ask.map.pop(chat_id, None), msg["message_id"]) if m]
+        deletes = [m for m in (ask_id, mid) if m]
         if not ok:
             now = time.time()
             if now - _throttle.get(chat_id, 0) < 3:
@@ -254,16 +268,17 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
         log.info("tg: chat %s привязан к пользователю '%s'", chat_id, u.login)
         return WELCOME.format(name=_esc(u.display_name)), deletes
 
-    # шаг 1: пользователь присылает свой логин (или /start [<логин>])
+    # --- шаг 1: пользователь присылает логин (или /start [<логин>]) ---
     reply = await _try_login_step(session, chat_id, text)
-    if reply and reply != NOT_BOUND_YET and chat_id not in _pending:
-        # готовые ответы-подсказки без открытия окна (NOT_FOUND молча удаляется ниже)
-        return reply, [msg["message_id"]]
-    if reply == NOT_BOUND_YET:
-        return reply, [msg["message_id"]]
-    if reply:  # ASK_PASSWORD — отправляем сами; id вопроса чистим после ввода пароля
+    if chat_id in _pending:
+        # окно «ждём пароль» открыто, reply = ASK_PASSWORD — шлём его сами,
+        # id вопроса запоминаем, чтобы удалить вместе с паролем
         sent = await call_bot("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
         if sent:
             _last_ask.map[chat_id] = sent["message_id"]
-    # неизвестный логин/пустой ввод до привязки — молча удаляем (не спамим подсказками)
-    return None, [msg["message_id"]]
+        return None, [mid]
+    if reply:
+        # подсказка без открытия окна (пустой /start)
+        return reply, [mid]
+    # неизвестный логин / чужой логин / пустой ввод — молча удаляем
+    return None, [mid]
