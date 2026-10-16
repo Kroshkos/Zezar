@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Диагностика доступа: почему вход не даёт ADMIN.
+"""Диагностика доступа: почему вход по логину/паролю не даёт ADMIN.
 
 Запуск на хостинге (Amvera: веб-терминал проекта / VPS: docker exec):
 
     python scripts/check_access.py
 
 Показывает:
-  * значение BOOTSTRAP_ADMIN_YA_IDS из окружения (и видит ли его приложение);
-  * содержимое таблиц users и invites в реальной БД;
-  * совпадает ли чей-нибудь yandex_id с bootstrap-списком;
+  * значения ADMIN_USERNAME / ADMIN_PASSWORD (и видит ли их приложение);
+  * содержимое таблицы users в реальной БД;
+  * совпадает ли чей-нибудь login со списком env-администраторов;
   * что сделает bootstrap при следующем перезапуске (dry-run, ничего не пишет).
 
 Без аргументов — только диагностика. Флаг --apply дополнительно выполняет
-bootstrap немедленно (идемпотентен, безопасно): повышает существующего
-пользователя из BOOTSTRAP_ADMIN_YA_IDS до ADMIN без перезапуска сервиса.
+bootstrap немедленно (идемпотентен, безопасно): создаёт/чинит env-администратора
+без перезапуска сервиса.
 """
 from __future__ import annotations
 
@@ -29,50 +29,40 @@ async def main(apply: bool) -> None:
 
     from app.core.config import get_settings
     from app.db.engine import SessionLocal
-    from app.models.core import Invite, Role, User
+    from app.db.seed import is_env_admin_login
+    from app.models.core import Role, User
 
     s = get_settings()
     print(f"DATABASE_PATH        : {s.database_path} "
           f"(файл существует: {os.path.exists(str(s.database_path))})")
-    raw = os.getenv("BOOTSTRAP_ADMIN_YA_IDS", "<не задана>")
-    print(f"ENV BOOTSTRAP_ADMIN_YA_IDS       : {raw!r}")
-    print(f"Settings.bootstrap_admin_ya_ids  : {s.bootstrap_admin_ya_ids!r}")
-    ids = [x.strip() for x in s.bootstrap_admin_ya_ids.split(",") if x.strip()]
-    print(f"Разобранный список ya_id         : {ids or '— пусто —'}")
-    if not ids:
-        print("\n!! Bootstrap-список пуст: проверьте точное имя переменной в панели")
-        print("   хостинга (BOOTSTRAP_ADMIN_YA_IDS) и что она попала в окружение рантайма.")
+    print(f"ENV ADMIN_USERNAME             : {os.getenv('ADMIN_USERNAME', '<не задана>')!r}")
+    print(f"ENV ADMIN_PASSWORD             : {'задан' if os.getenv('ADMIN_PASSWORD') else '<не задана>'}")
+    print(f"ENV ADMIN_LOGINS               : {'задан' if os.getenv('ADMIN_LOGINS') else '<не задана>'}")
+    entries = s.admin_login_entries
+    logins = [e[0] for e in entries]
+    print(f"Разобранный список env-админов : {logins or '— пусто —'}")
+    if not entries:
+        print("\n!! Список пуст: задайте ADMIN_USERNAME + ADMIN_PASSWORD в панели")
+        print("   хостинга и убедитесь, что переменные попали в окружение рантайма.")
 
     async with SessionLocal() as session:
-        users = (await session.execute(select(User))).scalars().all()
+        users = (await session.execute(select(User).order_by(User.id))).scalars().all()
         print(f"\nusers ({len(users)}):")
         for u in users:
             mark = ""
-            if u.yandex_id in ids:
-                mark = "  <-- СОВПАДЕНИЕ с bootstrap"
+            if is_env_admin_login(u.login or ""):
+                mark = "  <-- СОВПАДЕНИЕ с env-админом"
                 if u.role != Role.ADMIN:
                     mark += ", но роль НЕ admin!"
-            print(f"  id={u.id:<3} yandex_id={u.yandex_id!r:<28} email={u.email!r:<28} "
-                  f"role={u.role.value:<12} active={u.is_active}{mark}")
+            print(f"  id={u.id:<3} login={(u.login or '')!r:<24} email={(u.email or '')!r:<28} "
+                  f"role={u.role.value:<12} active={u.is_active} "
+                  f"pwd={'есть' if u.password_hash else 'НЕТ'}{mark}")
 
-        invites = (await session.execute(select(Invite))).scalars().all()
-        print(f"\ninvites ({len(invites)}):")
-        for i in invites:
-            print(f"  id={i.id:<3} yandex_id={i.yandex_id!r:<20} email={i.email!r:<28} "
-                  f"role={i.role.value:<12} used_at={i.used_at} created_by={i.created_by_id}")
-
-        # Частая причина «зашёл, но не админ»: пользователь заведён по email-invite,
-        # а в users у него yandex_id, которого нет в bootstrap-списке.
-        by_email_overlap = [
-            u for u in users
-            if any(i.email and u.email and i.email.lower() == u.email.lower()
-                   for i in invites if i.used_at is not None)
-        ]
-        if by_email_overlap:
-            print("\nПодсказка: эти пользователи вошли по email-приглашению — их реальный")
-            print("yandex_id может отличаться от того, что указан в BOOTSTRAP_ADMIN_YA_IDS:")
-            for u in by_email_overlap:
-                print(f"  {u.email}: yandex_id={u.yandex_id!r} role={u.role.value}")
+        env_in_db = {e[0] for e in entries}
+        missing = env_in_db - {(u.login or "").lower() for u in users}
+        if missing:
+            print(f"\nПодсказка: env-админы {sorted(missing)} ещё не созданы в БД — "
+                  "bootstrap создаст их при старте (или выполните --apply сейчас).")
 
         if apply:
             from app.db.seed import bootstrap

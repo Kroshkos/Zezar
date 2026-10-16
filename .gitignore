@@ -1,6 +1,9 @@
 # Python compiled files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# Environment variables (common for this type of project structure)
+# Environment variables
 .env
+.env.local
+.env.*

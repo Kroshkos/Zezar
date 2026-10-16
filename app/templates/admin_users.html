@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{# Администрирование: учётные записи (Фамилия Имя, логин, начальный пароль, роль) #}
+{% block actions %}
+<button class="btn primary" onclick="openCreateUser()">➕ Новый пользователь</button>
+<a class="btn" href="/admin/events" style="text-decoration:none">📜 Журнал событий</a>
+{% endblock %}
+{% block content %}
+<div class="card pad" style="overflow:auto">
+  <table class="tbl">
+    <thead><tr>
+      <th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th style="text-align:right">Действия</th>
+    </tr></thead>
+    <tbody id="usersBody"></tbody>
+  </table>
+  <p class="sub" style="margin-top:10px">Администратор из переменных окружения (ADMIN_USERNAME/ADMIN_PASSWORD) помечен значком ⚙️ —
+его роль и пароль управляются только env + рестарт. Обычным пользователям можно изменить роль,
+заблокировать аккаунт или сбросить пароль (сброс => принудительная смена при следующем входе).</p>
+</div>
+<script id="usersData" type="application/json">{{ users | tojson }}</script>
+<script id="deptsData" type="application/json">{{ departments | tojson }}</script>
+<script>
+const USERS=JSON.parse(document.getElementById('usersData').textContent);
+const DEPTS=JSON.parse(document.getElementById('deptsData').textContent);
+const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
+function roleOptions(sel){return Object.entries(ROLE_LABEL).map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');}
+function deptOptions(){return '<option value="">— без подразделения —</option>'+DEPTS.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');}
+function renderUsers(){
+  document.getElementById('usersBody').innerHTML=USERS.map(u=>`<tr>
+    <td><b>${esc(u.name)}</b>${u.email?`<div class="sub">${esc(u.email)}</div>`:''}</td>
+    <td><code>${esc(u.login||'—')}</code>${u.env_admin?' ⚙️':''}</td>
+    <td>${ROLE_LABEL[u.role]||u.role}</td>
+    <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-red">Заблокирован</span>'}</td>
+    <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change?'<span class="badge b-amber">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+    <td style="text-align:right;white-space:nowrap">
+      <button class="btn sm ghost" onclick="openEdit(${u.id})">✏️ Изменить</button>
+      ${u.env_admin?'':`<button class="btn sm ghost" onclick="openReset(${u.id})">🔑 Сброс пароля</button>
+      <button class="btn sm ghost" onclick="toggleActive(${u.id},${!u.active})">${u.active?'🚫 Блок':'✅ Разблок'}</button>
+      <button class="btn sm danger" onclick="removeUser(${u.id})">🗑 Удалить</button>`}
+    </td></tr>`).join('');
+}
+renderUsers();
+
+function openCreateUser(){
+  openModal('Новый пользователь',
+    '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+
+    '<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'+
+    '<label>Email (необязательно)</label><input name="email" placeholder="ivanov@org.ru">'+
+    '<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" required minlength="8" placeholder="выдать пользователю">'+
+    '<label>Роль</label><select name="role">${roleOptions("member")}</select>'+
+    '<label>Подразделение (необязательно)</label><select name="department_id">${deptOptions()}</select>',
+    async(fd)=>{
+      const body={display_name:fd.display_name.value.trim(),login:fd.login.value.trim().toLowerCase(),
+        initial_password:fd.initial_password.value,role:fd.role.value};
+      if(fd.email.value.trim())body.email=fd.email.value.trim();
+      if(fd.department_id.value)body.department_id=+fd.department_id.value;
+      await api('/api/core/admin/users','POST',body);
+      closeModal();toast('Пользователь создан. Передайте ему начальный пароль — при первом входе он обязан сменить его.');
+      location.reload();
+    },'Создать');
+}
+function byId(id){return USERS.find(u=>u.id===id);}
+function openEdit(id){
+  const u=byId(id);
+  openModal('Изменить: '+esc(u.name),
+    '<label>Фамилия Имя</label><input name="display_name" value="'+esc(u.name)+'" required>'+
+    '<label>Email</label><input name="email" value="'+esc(u.email||'')+'">'+
+    (u.env_admin?'<p class="sub">Роль и блокировка env-администратора управляются переменными окружения.</p>'
+      :'<label>Роль</label><select name="role">'+roleOptions(u.role)+'</select>'+
+       '<label>Статус</label><select name="is_active"><option value="1" '+(u.active?'selected':'')+'>Активен</option><option value="0" '+(!u.active?'selected':'')+'>Заблокирован</option></select>'),
+    async(fd)=>{
+      const body={display_name:fd.display_name.value.trim(),email:fd.email.value.trim()};
+      if(!u.env_admin){body.role=fd.role.value;body.is_active=fd.is_active.value==='1';}
+      await api('/api/core/admin/users/'+id,'PATCH',body);
+      closeModal();toast('Сохранено');location.reload();
+    });
+}
+function openReset(id){
+  const u=byId(id);
+  openModal('Сброс пароля: '+esc(u.login),
+    '<label>Новый начальный пароль (мин. 8 символов)</label><input name="new_password" required minlength="8">'+
+    '<p class="sub" style="margin-top:8px">После сброса пользователь при следующем входе обязан сменить пароль.</p>',
+    async(fd)=>{
+      await api('/api/core/admin/users/'+id+'/reset-password','POST',{new_password:fd.new_password.value});
+      closeModal();toast('Пароль сброшен');
+    },'Сбросить');
+}
+async function toggleActive(id,active){await api('/api/core/admin/users/'+id,'PATCH',{is_active:active});toast(active?'Аккаунт разблокирован':'Аккаунт заблокирован');location.reload();}
+function removeUser(id){
+  const u=byId(id);
+  askConfirm(`Удалить пользователя «${u.name}» (${u.login})? Действие необратимо.`,async()=>{
+    await api('/api/core/admin/users/'+id,'DELETE');toast('Удалено');location.reload();});
+}
+</script>
+{% endblock %}

@@ -8,27 +8,24 @@
   <p style="color:var(--muted);font-size:13px;margin-bottom:22px">Управление стратегических инициатив и проектов</p>
   {% if error %}<p class="badge b-red" style="margin-bottom:14px">{{ error_msg }}</p>{% endif %}
 
-  {# ---------- Контур администраторов: логин/пароль (ADMIN_USERNAME/ADMIN_PASSWORD) ---------- #}
-  <form method="post" action="/auth/admin-login" style="display:flex;flex-direction:column;gap:8px;text-align:left">
-    <label style="font-size:12px;color:var(--muted)">Администратор — вход по логину и паролю</label>
-    <input name="login" placeholder="Логин администратора" autocomplete="username" required
+  {# ---------- Единый контур входа: логин + пароль ---------- #}
+  {# Администратор задаётся переменными ADMIN_USERNAME/ADMIN_PASSWORD; #}
+  {# участники создаются администратором в разделе «Администрирование».#}
+  <form method="post" action="/auth/login" style="display:flex;flex-direction:column;gap:8px;text-align:left">
+    <label style="font-size:12px;color:var(--muted)">Логин</label>
+    <input name="login" placeholder="Логин" autocomplete="username" autofocus required
            style="padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit">
+    <label style="font-size:12px;color:var(--muted)">Пароль</label>
     <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required
            style="padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit">
-    <button class="btn primary" type="submit">Войти как администратор</button>
+    <button class="btn primary" type="submit" style="margin-top:6px">Войти</button>
   </form>
 
-  <div style="display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--muted);font-size:11px">
-    <span style="flex:1;border-top:1px solid var(--line)"></span>или<span style="flex:1;border-top:1px solid var(--line)"></span>
-  </div>
-
-  {# ---------- Контур участников: OAuth Яндекс ID ---------- #}
-  <a class="btn" style="display:inline-block;text-decoration:none" href="/auth/login">Войти через Яндекс ID</a>
-  <p style="color:var(--muted);font-size:12px;margin-top:14px">
-    Вход через Яндекс — для участников системы. Регистрация закрыта: доступ выдаёт администратор
-    (приглашение по email/Яндекс-ID в разделе «Пользователи»).</p>
+  <p style="color:var(--muted);font-size:12px;margin-top:18px">
+    Регистрация закрыта: учётные записи создаёт администратор.
+    При первом входе система потребует сменить начальный пароль.</p>
   {% if dev %}<hr style="margin:18px 0;border:0;border-top:1px solid var(--line)">
   <form method="get" action="/auth/dev-login" style="display:flex;gap:8px">
-    <input name="email" placeholder="email (dev)" style="flex:1">
+    <input name="login" placeholder="логин (dev)" style="flex:1">
     <button class="btn">Dev-вход</button></form>{% endif %}
 </div></body></html>

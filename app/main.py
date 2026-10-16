@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import schema, types as sa_types
 
 from app.core.config import get_settings
 from app.core.module_registry import registry
@@ -36,11 +37,250 @@ def _import_all_models() -> None:
     import app.models.module_payloads  # noqa: F401
 
 
+def _drop_legacy_auth_columns(conn) -> None:
+    """Self-healing легаси-схемы: удаление колонок авторизации через Яндекс ID.
+
+    На продакшене встречались БД, где миграция c9e4f18a7d02 не применялась
+    (ошибочный `stamp head`). Колонки users.yandex_id / invites.yandex_id модели
+    больше не объявляют, и create_all их НЕ чистит — leftover NOT NULL yandex_id
+    ронял старт (IntegrityError при сиде администратора). SQLite < 3.35 может не
+    поддерживать DROP COLUMN, поэтому в этом случае таблица аккуратно
+    пересоздаётся по текущим метаданным с сохранением данных. Идемпотентно."""
+    def cols(table: str) -> set[str]:
+        return {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+
+    def has_table(table: str) -> bool:
+        return conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n", {"n": table}
+        ).fetchone() is not None
+
+    def fks(table: str) -> list[tuple]:
+        """Прямые FK-зависимости: (таблица-ребёнок, колонка ребёнка) на table.id."""
+        out = []
+        for t in _table_names():
+            if not _is_view(t):
+                for r in conn.exec_driver_sql(f"PRAGMA foreign_key_list({t})"):
+                    if r[2] == table and r[3] == "id":
+                        out.append((t, r[1]))
+        return out
+
+    def _table_names() -> set[str]:
+        return {r[0] for r in conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+
+    def _is_view(name: str) -> bool:
+        return conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='view' AND name=:n",
+            {"n": name}).fetchone() is not None
+
+    # Очень старые схемы: users.full_name вместо display_name. ALTER TABLE ...
+    # RENAME COLUMN поддерживается только SQLite >= 3.25; на более старых
+    # версиях пробуем его, а при неудаче помечаем колонку к переносу — её
+    # данные будут скопированы в display_name при пересоздании таблицы ниже.
+    _legacy_col_rename: dict[str, tuple[str, str]] = {}  # table -> (старая, новая)
+    if has_table("users"):
+        ucols = cols("users")
+        if "display_name" not in ucols and "full_name" in ucols:
+            try:
+                conn.exec_driver_sql("ALTER TABLE users RENAME COLUMN full_name TO display_name")
+                log.warning("migrate: users.full_name переименован в display_name")
+            except Exception:  # noqa: BLE001 — старый SQLite: перенос при recrate
+                _legacy_col_rename["users"] = ("full_name", "display_name")
+                log.warning("migrate: RENAME COLUMN не поддерживается — full_name "
+                            "будет перенесён в display_name при пересоздании таблицы")
+        # Нормализация role: Enum SQLAlchemy хранит ИМЕНА членов ('ADMIN'),
+        # легаси-строки вроде 'admin'/'member' иначе роняют старт с LookupError
+        # при любом SELECT (role -> None). CASE по lower(role) — чтобы чинить
+        # и верхний, и нижний регистр легаси-значений.
+        try:
+            conn.exec_driver_sql(
+                "UPDATE users SET role = CASE lower(role)"
+                " WHEN 'admin' THEN 'ADMIN'"
+                " WHEN 'coordinator' THEN 'COORDINATOR'"
+                " WHEN 'head' THEN 'HEAD'"
+                " ELSE 'MEMBER' END"
+                " WHERE role IS NULL OR role NOT IN"
+                " ('ADMIN','COORDINATOR','HEAD','MEMBER')")
+        except Exception:  # noqa: BLE001 — колонки role может не быть на убитых БД
+            pass
+
+    for table, legacy_col in (("users", "yandex_id"), ("invites", "yandex_id")):
+        if not has_table(table) or legacy_col not in cols(table):
+            continue
+        try:  # сначала пробуем дешёвый DROP COLUMN (SQLite >= 3.35)
+            conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {legacy_col}")
+            log.warning("migrate: удалена легаси-колонка %s.%s", table, legacy_col)
+            continue
+        except Exception:  # noqa: BLE001 — старый SQLite: пересоздаём таблицу
+            pass
+        # Пересоздание: берём ПЕРЕСЕЧЕНИЕ колонок модели и фактической таблицы.
+        # Раньше брались все колонки модели — на очень старых БД (например, с
+        # users.full_name вместо display_name) INSERT...SELECT падал с
+        # "no such column", и старт обрывался. Отсутствующие колонки после
+        # пересоздания добивает _sync_missing_columns (NULL-дефолты).
+        actual = cols(table)
+        if table not in Base.metadata.tables:
+            # Легаси-таблица, которой больше нет в моделях (invites): просто удаляем.
+            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
+            log.warning("migrate: удалена легаси-таблица %s (её больше нет в модели)", table)
+            continue
+        # Пересечение колонок модели и фактической схемы, с учётом переименований
+        # (очень старые БД: full_name -> display_name на SQLite < 3.25, где
+        # RENAME COLUMN не удался выше).
+        rename_src = {v: k for k, v in ([_legacy_col_rename[table]] if table in _legacy_col_rename else [])}
+        src_cols, dst_cols = [], []
+        for c in Base.metadata.tables[table].columns:
+            if c.name == legacy_col:
+                continue
+            if c.name in actual:
+                src_cols.append(c.name); dst_cols.append(c.name)
+            elif c.name in rename_src and rename_src[c.name] in actual:
+                src_cols.append(rename_src[c.name]); dst_cols.append(c.name)
+        # Предзаполнение колонок, которых в старой таблице нет: INSERT...SELECT
+        # с NULL в NOT NULL-колонку (login/password_hash на очень старых БД)
+        # падает ещё ДО пересоздания. Отдельно: строки легаси-учёток (яндекс-
+        # аккаунты без локального входа) имеют login/password_hash IS NULL даже
+        # когда колонки уже добавлены — COALESCE даёт им временный служебный
+        # логин 'user_<id>'; seed._backfill_missing_logins доводит такие учётки
+        # при старте (пустой хеш + must_change_password). Идемпотентно.
+        nullable_fill = {"login": "'user_' || COALESCE(id, 0)",
+                         "password_hash": "''",
+                         # datetime-колонки с server_default func.now(): ''
+                         # недопустим (CHECK на типе), подставляем текущее время
+                         "created_at": "datetime('now')",
+                         "updated_at": "datetime('now')"}
+        for c in Base.metadata.tables[table].columns:
+            if c.name in dst_cols or not src_cols:
+                continue
+            d = c.default.arg if (c.default is not None and
+                                  not callable(c.default.arg)) else None
+            if isinstance(d, bool):
+                fill = "1" if d else "0"
+            elif isinstance(d, (int, float)):
+                fill = str(d)
+            elif isinstance(d, str):
+                fill = "'" + d.replace("'", "''") + "'"
+            else:
+                fill = "''"
+            src_cols.append(f"(SELECT {fill})")
+            dst_cols.append(c.name)
+        for i, name in enumerate(dst_cols):
+            if name in nullable_fill:
+                expr = nullable_fill[name]
+                if src_cols[i].startswith("("):
+                    src_cols[i] = f"(SELECT COALESCE({src_cols[i][1:-1]}, {expr}))"
+                else:
+                    src_cols[i] = f"(SELECT COALESCE(\"{name}\", {expr}))"
+        collist_src = ", ".join(
+            s if s.startswith("(") else f'"{s}"' for s in src_cols)
+        collist_dst = ", ".join(f'"{n}"' for n in dst_cols)
+        tmp = f"{table}__migrated"
+        # Пересоздание таблицы с FK-ссылками (event_log.user_id -> users.id и т.п.)
+        # на SQLite требует временного отключения foreign_keys; PRAGMA вне
+        # транзакции, поэтому делаем это через raw driver-соединение.
+        fk_children = fks(table)
+        dbapi = conn.connection.connection if hasattr(conn.connection, "connection") else None
+        fk_prev = None
+        if fk_children and dbapi is not None:
+            fk_prev = dbapi.execute("PRAGMA foreign_keys").fetchone()[0]
+            dbapi.execute("PRAGMA foreign_keys=OFF")
+        try:
+            # DDL колонок берём из метаданных модели: «сырая» копия без типов
+            # превращала id в колонку без автоинкремента (SQLite: PK работает
+            # только как INTEGER PRIMARY KEY) — первый же INSERT нового
+            # пользователя падал с "UNIQUE constraint failed: users.login"
+            # (id=0 конфликтовал повторно).
+            tmp_tbl = schema.Table(tmp, schema.MetaData())
+            for name in dst_cols:
+                cdef = Base.metadata.tables[table].columns[name]
+                autoinc = None
+                if cdef.primary_key and isinstance(cdef.type, sa_types.Integer):
+                    # Явно INTEGER PRIMARY KEY (rowid) — иначе пересозданная
+                    # таблица теряет автоинкремент и первый INSERT падает с
+                    # "NOT NULL constraint failed: users.id".
+                    autoinc = True
+                tmp_tbl.append_column(schema.Column(
+                    name, cdef.type, primary_key=cdef.primary_key,
+                    nullable=cdef.nullable, autoincrement=autoinc))
+            coldefs = [str(schema.CreateColumn(c).compile(dialect=conn.dialect))
+                       for c in tmp_tbl.columns]
+            conn.exec_driver_sql(
+                f"CREATE TABLE {tmp} ({', '.join(coldefs)})")
+            conn.exec_driver_sql(
+                f"INSERT INTO {tmp} ({collist_dst}) SELECT {collist_src} FROM {table}")
+            conn.exec_driver_sql(f"DROP TABLE {table}")
+            conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO {table}")
+        finally:
+            if fk_children and dbapi is not None and fk_prev is not None:
+                dbapi.execute("PRAGMA foreign_keys=ON")
+        log.warning("migrate: таблица %s пересоздана без легаси-колонки %s "
+                    "(данные сохранены)", table, legacy_col)
+        # Пересозданная таблица — «сырая» копия колонок модели без PK/UNIQUE/
+        # индексов. Раньше ограничения «доживались» отдельным UNIQUE INDEX
+        # (id, login): он удовлетворяет проверке FK у детей, но НЕ делает id
+        # rowid-первичным ключом — автоинкремент не работал, и первый же
+        # ORM-INSERT нового пользователя падал с
+        # "NOT NULL constraint failed: users.id".
+        # Поэтому строим полный DDL из метаданных модели (PK INTEGER
+        # AUTOINCREMENT, NOT NULL, server_default, FK) и переносим данные из
+        # «сырой» копии вторым проходом. Ограничения UNIQUE из модели при этом
+        # НЕ переносим: на легаси-данных они могут конфликтовать (например,
+        # несколько NULL в telegram_bind_code при column-level UNIQUE); уникаль-
+        # ные индексы добираются отдельно (create_all их создаёт корректно).
+        md_tbl = Base.metadata.tables[table]
+        full_cols = []
+        for c in md_tbl.columns:
+            autoinc = None
+            if c.primary_key and isinstance(c.type, sa_types.Integer):
+                autoinc = True
+            full_cols.append(schema.Column(
+                c.name, c.type, primary_key=c.primary_key,
+                nullable=c.nullable,
+                default=c.default, server_default=c.server_default,
+                autoincrement=autoinc))
+        fks_list = [schema.ForeignKeyConstraint(
+            [fk.parent.name for fk in cons.columns],
+            [fk.target_fullname for fk in cons.referenced_columns],
+            ondelete=cons.ondelete, onupdate=cons.onupdate)
+            for cons in md_tbl.constraints
+            if isinstance(cons, schema.ForeignKeyConstraint)]
+        tmp2 = f"{table}__final"
+        full_tbl = schema.Table(tmp2, schema.MetaData(), *full_cols, *fks_list)
+        create_ddl = str(schema.CreateTable(full_tbl).compile(dialect=conn.dialect))
+        collist_all = ", ".join(f'"{c.name}"' for c in md_tbl.columns)
+        try:
+            conn.exec_driver_sql(create_ddl)
+            conn.exec_driver_sql(
+                f"INSERT INTO {tmp2} ({collist_all}) SELECT {collist_dst} FROM {table}")
+            conn.exec_driver_sql(f"DROP TABLE {table}")
+            conn.exec_driver_sql(f"ALTER TABLE {tmp2} RENAME TO {table}")
+            log.warning("migrate: схема %s восстановлена из метаданных "
+                        "(PK/автоинкремент/FK)", table)
+        except Exception:  # noqa: BLE001 — если DDL не подошёл, оставляем сырую копию + индексы
+            log.warning("migrate: не удалось применить полный DDL для %s, "
+                        "остаётся сырая копия с восстановленными индексами", table,
+                        exc_info=True)
+            with contextlib.suppress(Exception):
+                conn.exec_driver_sql(f"DROP TABLE IF EXISTS {tmp2}")
+            if table == "users":
+                with contextlib.suppress(Exception):
+                    conn.exec_driver_sql(
+                        'CREATE UNIQUE INDEX IF NOT EXISTS ix_users_id_login ON users ("id", "login")')
+        if table == "users":
+            # Уникальные ИНДЕКСЫ по метаданным (login и т.п.) — как резерв на
+            # случай отказа полного DDL; create_all позже досоздаст обычные.
+            for c in Base.metadata.tables["users"].columns:
+                if c.index or c.unique:
+                    with contextlib.suppress(Exception):
+                        conn.exec_driver_sql(
+                            f'CREATE UNIQUE INDEX IF NOT EXISTS "ix_users_{c.name}" ON users ("{c.name}")')
+
+
 def _sync_missing_columns(conn) -> None:
     """Самовосстановление схемы для легаси-БД, созданных старым create_all.
 
     Проблема на продакшене (Amvera): entrypoint при alembic_version==head выполняет
-    `stamp head` вместо `upgrade`, поэтому новые колонки (например users.yandex_login)
+    `stamp head` вместо `upgrade`, поэтому новые колонки (например users.login)
     так и не добавляются, а приложение падает с "no such column". Здесь сверяем
     фактические колонки SQLite с метаданными моделей и досоздаём отсутствующие
     (ALTER TABLE ADD COLUMN — единственная безопасная операция без пересоздания таблиц;
@@ -57,9 +297,22 @@ def _sync_missing_columns(conn) -> None:
         missing = [c for c in table.columns if c.name not in existing]
         for col in missing:
             coltype = col.type.compile(conn.dialect)
-            conn.exec_driver_sql(
-                f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype} NULL"
-            )
+            ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {coltype}"
+            if not col.nullable:
+                # SQLite требует DEFAULT для NOT NULL при ADD COLUMN; дефолт
+                # берём из Python-default модели (bool/int/str), иначе NULL.
+                d = col.default.arg if (col.default is not None and
+                                        not callable(col.default.arg)) else None
+                sqldef = {True: "1", False: "0"}.get(d)
+                if sqldef is None and isinstance(d, (int, float)):
+                    sqldef = str(d)
+                if sqldef is None and isinstance(d, str):
+                    sqldef = "'" + d.replace("'", "''") + "'"
+                if sqldef is None and d is not None:
+                    sqldef = str(d)
+                if sqldef is not None:
+                    ddl += f" NOT NULL DEFAULT {sqldef}"
+            conn.exec_driver_sql(ddl)
             log.warning("migrate: добавлена отсутствующая колонка %s.%s (%s)",
                         table.name, col.name, coltype)
         if missing:
@@ -77,6 +330,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         # Сначала досоздаём недостающие колонки в существующих таблицах (легаси-БД после
         # `alembic stamp head`), затем create_all добавляет отсутствующие таблицы/индексы.
+        await conn.run_sync(_drop_legacy_auth_columns)
         await conn.run_sync(_sync_missing_columns)
         await conn.run_sync(Base.metadata.create_all)
 
@@ -94,24 +348,19 @@ async def lifespan(app: FastAPI):
     from app.core.config import get_settings as _gs
     from app.models.core import User as _User
     from sqlalchemy import select as _select
-    _bids = _gs().bootstrap_ids
     _admins = _gs().admin_login_entries
     async with SessionLocal() as s:
-        _uids = (await s.execute(_select(_User.yandex_id, _User.login, _User.role))).all()
+        _uids = (await s.execute(_select(_User.login, _User.role))).all()
     _st = _gs()
     log.info("access check at startup: admin logins=%s (ADMIN_USERNAME=%r, ADMIN_PASSWORD %s); "
-             "BOOTSTRAP_ADMIN_YA_IDS=%r -> %s; users в БД: %s",
+             "users в БД: %s",
              [a[0] for a in _admins] or "не задан",
              _st.admin_username, "задан" if _st.admin_password else "НЕ задан",
-             _st.bootstrap_admin_ya_ids, _bids or "—",
-             [(uid or lgn, r.value) for uid, lgn, r in _uids] or "—")
-    if not _admins and not _bids:
+             [(lgn, r.value) for lgn, r in _uids] or "—")
+    if not _admins:
         log.warning("access check at startup: НЕ задано ни одной учётной записи администратора! "
-                    "Задайте ADMIN_USERNAME + ADMIN_PASSWORD (вход по логину/паролю) "
-                    "или BOOTSTRAP_ADMIN_YA_IDS — иначе в систему нельзя войти как админ.")
-    if _bids and not any((uid or "").lower() in _bids for uid, _, _ in _uids):
-        log.info("access check at startup: в BOOTSTRAP_ADMIN_YA_IDS (%s) пока нет пользователя "
-                 "в базе — он получит ADMIN при первом OAuth-входе.", _bids)
+                    "Задайте ADMIN_USERNAME + ADMIN_PASSWORD (вход по логину/паролю) — "
+                    "иначе в систему нельзя войти как админ.")
 
     # 3. Jinja: подключить папки шаблонов модулей
     from app.ui import init_templates

@@ -33,6 +33,10 @@
 </div>
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
+{% if user.must_change_password %}
+{# Первый вход с начальным паролем: не даём работать с системой до смены пароля #}
+<script>location.replace('/change-password?forced=1');</script>
+{% endif %}
 <script src="/static/js/core.js"></script>
 {% block scripts %}{% endblock %}
 </body>

@@ -13,10 +13,9 @@ services:
       DATABASE_PATH: /data/caesar.db
       # Секреты — только через .env рядом с compose-файлом (не коммитить!)
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY обязателен}
-      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:?обязателен для OAuth}
-      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:?обязателен для OAuth}
-      YANDEX_REDIRECT_URI: ${YANDEX_REDIRECT_URI:-https://example.org/auth/callback}
-      BOOTSTRAP_ADMIN_YA_IDS: ${BOOTSTRAP_ADMIN_YA_IDS:-}
+      # Единственный контур входа — логин + пароль. Администратор задаётся здесь.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD обязателен (пароль администратора)}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_NOTIFY_ENABLED: ${TELEGRAM_NOTIFY_ENABLED:-true}
       YANDEX_CAL_ENABLED: ${YANDEX_CAL_ENABLED:-true}

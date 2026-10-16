@@ -39,20 +39,21 @@ sys.exit(0)
 PY
 }
 
-# Есть ли в users колонка yandex_login (появилась в ревизии bf6f942b2cbf).
-# Её отсутствие при alembic_version==head означает легаси-БД, ошибочно наштампованную
-# на head до выхода этой ревизии (дефолтный create_all не добавляет колонки в существующие
-# таблицы) — таким БД нужен upgrade, а не stamp.
-db_has_yandex_login() {
-    python - "$1" <<'PY'
+# Состояние легаси-БД: alembic_version == head, но схема НЕ соответствует
+# текущим ревизиям. Признаки: в users есть колонка yandex_id (авторизация через
+# Яндекс ID полностью удалена ревизией c9e4f18a7d02) либо отсутствует колонка
+# login (локальный вход по логину/паролю). Такой БД нужен реальный upgrade
+# с baseline, а не stamp.
+db_is_legacy_schema() {
+    python - "$1" <<'PYEOF'
 import sqlite3, sys
 try:
     con = sqlite3.connect(sys.argv[1])
-    cols = [r[1] for r in con.execute("PRAGMA table_info(users)")]
+    cols = {r[1] for r in con.execute("PRAGMA table_info(users)")}
 except Exception:
-    sys.exit(1)
-sys.exit(0 if "yandex_login" in cols else 1)
-PY
+    sys.exit(0)  # не смогли прочитать — считаем не легаси, upgrade сам разберётся
+sys.exit(0 if ("yandex_id" in cols or "login" not in cols) else 1)
+PYEOF
 }
 
 if [ ! -f "$DB" ]; then
@@ -66,11 +67,11 @@ elif ! db_has_alembic_version "$DB"; then
     alembic stamp 0ad0082f05da
     echo "[entrypoint] Применяю последующие ревизии"
     alembic upgrade head
-elif ! db_has_yandex_login "$DB"; then
+elif db_is_legacy_schema "$DB"; then
     # Ситуация с продакшена: версия=head, но колонки новых ревизий отсутствуют
     # (БД была наштампована на head целиком). Ставим корректную базовую ревизию
-    # и догоняем схему upgrade'ом; ALTER TABLE ADD COLUMN идемпотентен к данным.
-    echo "[entrypoint] Обнаружена легаси-БД (head без колонки users.yandex_login) — перештамповываю на baseline и выполняю upgrade"
+    # и догоняем схему upgrade'ом; миграции идемпотентны к данным.
+    echo "[entrypoint] Обнаружена легаси-БД (head со старой схемой auth) — перештамповываю на baseline и выполняю upgrade"
     alembic stamp 0ad0082f05da
     alembic upgrade head
 else
