@@ -65,19 +65,27 @@ class SyncState(str, enum.Enum):
 # ======================= Пользователи =======================
 
 class User(TimestampMixin, Base):
-    """Аккаунт, создаётся только через OAuth Яндекс-ID после ручного допуска админом."""
+    """Учётная запись. Авторизация — только локальная: логин + пароль.
+
+    - Администратор задаётся переменными окружения (ADMIN_USERNAME/ADMIN_PASSWORD)
+      и синхронизируется сидом при старте (app/db/seed.sync_admin_logins).
+    - Обычные пользователи создаются администратором в разделе
+      «Администрирование» (Фамилия Имя, логин, начальный пароль) и при первом
+      входе обязаны сменить пароль (must_change_password).
+    """
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    yandex_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)  # sub из Яндекс ID; NULL для локальных админ-аккаунтов
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(160))   # «ФИО» из виджета people прототипа
-    # Логин аккаунта Яндекса (поле `login` из userinfo) — CalDAV Basic auth требует его, а не email.
+    # Логин аккаунта Яндекса (наследие прежней интеграции) — CalDAV Basic auth
+    # требует его, а не email. Сохранён только для данных старых установок.
     yandex_login: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    # Локальная учётная запись администратора (вход по логину/паролю из ADMIN_LOGINS).
-    # yandex_id у таких аккаунтов NULL — OAuth-колбэк их никогда не создаёт/не трогает.
-    login: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)
-    password_hash: Mapped[Optional[str]] = mapped_column(Text)  # pbkdf2_sha256$итерации$salt$hash
+    # Локальный логин учётной записи (уникальный). Обязателен для входа.
+    login: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)  # pbkdf2_sha256$итерации$salt$hash
+    # Принудительная смена пароля при первом входе (начальный пароль выдал админ).
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     initials: Mapped[Optional[str]] = mapped_column(String(8))
     color: Mapped[Optional[str]] = mapped_column(String(16))  # цвет аватара как в демо
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.MEMBER)
@@ -309,7 +317,30 @@ class EntityWfState(Base):
     history: Mapped[list] = mapped_column(JSON, default=list)  # [{step, who, at, comment}]
 
 
-# ======================= Аудит / очередь уведомлений =======================
+# ======================= Журнал событий / аудит / очередь уведомлений =======================
+
+class EventLog(Base):
+    """Журнал событий системы: регистрируется всё, что происходит — вход/выход,
+    смена пароля, действия администратора с пользователями и подразделениями,
+    CRUD бизнес-сущностей модулей (пишется через app.core.events.log_event).
+
+    user_id/name фиксируются денормализованно — запись остаётся читаемой даже
+    после удаления учётной записи. level: info | warning | error."""
+    __tablename__ = "event_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"),
+                                                   nullable=True, index=True)
+    user_name: Mapped[Optional[str]] = mapped_column(String(160))
+    action: Mapped[str] = mapped_column(String(60), index=True)   # login/logout/create_user/...
+    category: Mapped[str] = mapped_column(String(30), default="system", index=True)  # auth/admin/entity/dept/system
+    object: Mapped[Optional[str]] = mapped_column(String(200))    # над чем: логин, название, uid сущности
+    ip: Mapped[Optional[str]] = mapped_column(String(64))
+    level: Mapped[str] = mapped_column(String(10), default="info")
+    message: Mapped[Optional[str]] = mapped_column(Text)
+    details_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
@@ -338,12 +369,12 @@ class OutboxEvent(Base):
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
 
-# ======================= Закрытая регистрация (допуски) =======================
+# ======================= Допуски (устаревшая таблица Invite) =======================
 
 class Invite(TimestampMixin, Base):
-    """Приглашение, созданное админом: пользователь с указанным yandex_id
-    (или email яндекс-аккаунта) после OAuth-входа получает указанную роль и
-    подразделение. Самостоятельная регистрация невозможна."""
+    """УСТАРЕЛО: контур приглашений/Яндекс-допусков удалён вместе с OAuth.
+    Таблица сохранена только для совместимости со схемами старых установок
+    (в миграциях её нет — на новых БД не создаётся). Код к ней не обращается."""
     __tablename__ = "invites"
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -14,12 +14,13 @@ class Settings(BaseSettings):
     data_dir: Path = Path("/data")
     database_path: Path = Path("/data/caesar.db")
 
-    # OAuth 2.0 Яндекс ID
+    # ---------- Устаревшие переменные OAuth (авторизация через Яндекс удалена) ----------
+    # YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET / BOOTSTRAP_ADMIN_YA_IDS больше НЕ
+    # используются: вход только по логину/паролю. Переменные оставлены в классе
+    # только для совместимости со старыми .env (extra='ignore' их и так пропускает).
     yandex_client_id: str = ""
     yandex_client_secret: str = ""
     yandex_redirect_uri: str = "http://localhost:8000/auth/callback"
-    # csv Yandex sub'ей для первичного администратора. Пусто по умолчанию —
-    # иначе случайный/дефолтный id мог бы получить ADMIN (см. _bootstrap_ids).
     bootstrap_admin_ya_ids: str = ""
 
     # ---------- Администраторы: вход по логину и паролю (без Яндекса) ----------
@@ -78,15 +79,11 @@ class Settings(BaseSettings):
 
     @property
     def bootstrap_ids(self) -> list[str]:
-        """BOOTSTRAP_ADMIN_YA_IDS как чистый список строк.
+        """УСТАРЕЛО: авторизация через Яндекс ID удалена — список всегда пуст.
 
-        Терпимость к типичным ошибкам заполнения на хостинге: разделители
-        ';'/'/', переносы строк и пробелы, регистр букв в id. Сравнение с
-        ya_id из userinfo Яндекса идёт по lower()."""
-        import re
-        raw = self.bootstrap_admin_ya_ids or ""
-        parts = [p.strip() for p in re.split(r"[,;/\s]+", raw) if p.strip()]
-        return [p.lower() for p in parts]
+        Свойство сохранено только для совместимости со старыми скриптами
+        диагностики; администратор задаётся ADMIN_USERNAME/ADMIN_PASSWORD."""
+        return []
 
     # Telegram
     telegram_bot_token: str = ""
@@ -154,15 +151,15 @@ class Settings(BaseSettings):
             errors.append("DEV_LOGIN_ENABLED=true в продакшене — закрытая регистрация обходится входом по email")
         if self.seed_demo_data:
             errors.append("SEED_DEMO_DATA=true в продакшене — будут созданы демо-пользователи с детерминированными id")
-        if not self.yandex_client_id or not self.yandex_client_secret:
-            errors.append("YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET не заданы — OAuth-вход невозможен")
-        # Администратор обязан быть задан хотя бы одним способом, иначе система
-        # остаётся без управляющего контура (именно так возникало «зашёл, но админки нет»).
-        if not self.admin_login_entries and not self.bootstrap_ids:
+        # Единственный контур входа — логин/пароль. Администратор обязан быть задан,
+        # иначе система остаётся без управляющего контура (именно так возникало
+        # «зашёл, но админки нет»). OAuth через Яндекс удалён — BOOTSTRAP_ADMIN_YA_IDS
+        # больше не принимается как способ задать администратора.
+        if not self.admin_login_entries:
             errors.append(
-                "Не задан ни один администратор: заполните ADMIN_PASSWORD "
-                "(вход админа по логину/паролю; логин — ADMIN_USERNAME, по умолчанию 'admin') "
-                "или BOOTSTRAP_ADMIN_YA_IDS (вход через Яндекс)."
+                "Не задан администратор: заполните ADMIN_USERNAME + ADMIN_PASSWORD "
+                "(логин и пароль администратора; ADMIN_USERNAME по умолчанию 'admin'). "
+                "Авторизация через Яндекс ID удалена — вход только по логину/паролю."
             )
 
         # Предупреждение (не блокирует запуск): /data — стандартный путь БД. Убедитесь,

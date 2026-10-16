@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access
+from app.core.events import log_event
 from app.models.core import (
     AuditLog, DepartmentMember, Entity, EntityKind, EntityShare, EntityResponsible,
     OutboxEvent, Permission, SyncState, User,
@@ -254,6 +255,13 @@ async def _log_and_emit(session: AsyncSession, user: User, action: str,
                         ent: Entity, details: dict) -> None:
     session.add(AuditLog(user_id=user.id, action=action, entity_id=ent.id,
                          details_json={"kind": ent.kind.value, "uid": ent.uid, **details}))
+    # Дублирование в общий журнал событий системы (EventLog): виден в админке
+    # вместе с действиями пользователей/админа, а не только по конкретной сущности.
+    await log_event(session, f"entity_{action}", category="entity", user=user,
+                    object=f"{ent.kind.value}:{ent.title}"[:200], level="info",
+                    message=f"{action}: {ent.kind.value} «{ent.title}» "
+                            f"(uid {ent.uid}, модуль {ent.module_key})",
+                    details={"entity_uid": ent.uid, "kind": ent.kind.value, **details})
     # события интеграций (воркеры заберут после commit'а)
     session.add(OutboxEvent(topic="telegram.notify", payload_json={
         "action": action, "entity_id": ent.id, "entity_uid": ent.uid,

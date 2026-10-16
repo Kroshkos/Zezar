@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import build_context
 from app.core.module_registry import registry
+from app.core.events import log_event
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -71,6 +72,9 @@ async def create_department(body: DeptIn, user: User = Depends(get_current_user)
     # автор — head своего подразделения, если ещё не состоит
     if user.role in (Role.ADMIN, Role.COORDINATOR):
         pass  # глобальные роли видят всё без членства
+    await log_event(session, "create_department", category="dept", user=user,
+                    object=dept.name, level="warning",
+                    message=f"Создано подразделение '{dept.name}' ({dept.code})")
     await session.commit()
     return {"id": dept.id, "code": dept.code, "name": dept.name}
 
@@ -82,9 +86,14 @@ async def patch_department(dept_id: int, body: dict, user: User = Depends(get_cu
     dept = await session.get(Department, dept_id)
     if not dept:
         raise HTTPException(404)
+    changed = [k for k in ("name", "description", "is_active") if k in body]
     for k in ("name", "description", "is_active"):
         if k in body:
             setattr(dept, k, body[k])
+    if changed:
+        await log_event(session, "update_department", category="dept", user=user,
+                        object=dept.name, level="warning",
+                        message=f"Изменено подразделение '{dept.name}': {', '.join(changed)}")
     await session.commit()
     return {"ok": True}
 
@@ -140,6 +149,13 @@ async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_curr
     else:
         session.add(DepartmentMember(user_id=body.user_id, department_id=dept_id,
                                      role_in_dept=body.role_in_dept))
+    dept_row = await session.get(Department, dept_id)
+    await log_event(session, "add_member", category="dept", user=user,
+                    object=f"{dept_row.name if dept_row else dept_id}: {target.display_name}",
+                    level="warning",
+                    message=f"Пользователь '{target.login or target.display_name}' включён в "
+                            f"подразделение '{dept_row.name if dept_row else dept_id}' "
+                            f"(роль {body.role_in_dept.value})")
     await session.commit()
     return {"ok": True}
 
@@ -160,6 +176,14 @@ async def remove_member(dept_id: int, member_user_id: int,
         select(DepartmentMember).where(DepartmentMember.user_id == member_user_id,
                                        DepartmentMember.department_id == dept_id))
     if row:
+        tgt = await session.get(User, member_user_id)
+        dept_row = await session.get(Department, dept_id)
+        await log_event(session, "remove_member", category="dept", user=user,
+                        object=f"{dept_row.name if dept_row else dept_id}: "
+                               f"{tgt.display_name if tgt else member_user_id}",
+                        level="warning",
+                        message=f"Пользователь '{tgt.login if tgt else member_user_id}' исключён из "
+                                f"подразделения '{dept_row.name if dept_row else dept_id}'")
         await session.delete(row)
         await session.commit()
     return {"ok": True}
@@ -207,5 +231,11 @@ async def toggle_module(dept_id: int, module_key: int | str,
                                     is_enabled=enabled))
     else:
         row.is_enabled = enabled
+    dept_row = await session.get(Department, dept_id)
+    await log_event(session, "toggle_module", category="dept", user=user,
+                    object=f"{dept_row.name if dept_row else dept_id}: {module_key}",
+                    level="warning",
+                    message=f"Модуль '{module_key}' {'включён' if enabled else 'отключён'} "
+                            f"в подразделении '{dept_row.name if dept_row else dept_id}'")
     await session.commit()
     return {"ok": True}

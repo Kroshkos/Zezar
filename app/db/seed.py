@@ -157,6 +157,7 @@ async def sync_admin_logins(session: AsyncSession) -> None:
     logins = {login for login, _, _ in entries}
     for login, pwhash, name in entries:
         user = await session.scalar(select(User).where(User.login == login))
+        setattr(user, "_from_env", True)  # признак env-аккаунта для блока отзыва ниже
         if user is None:
             session.add(User(login=login, password_hash=pwhash, display_name=name,
                              role=Role.ADMIN, initials=_initials_of(name), is_active=True))
@@ -185,6 +186,16 @@ async def sync_admin_logins(session: AsyncSession) -> None:
             u.is_active = False
             log.warning("admin-logins: аккаунт '%s' удалён из ADMIN_LOGINS — отключён", u.login)
     await session.commit()
+
+
+def _looks_like_env_admin(u: User) -> bool:
+    """Похож ли заблокированный ADMIN на аккаунт старого сида env (дефолтное имя
+    'Администратор <login>' или yandex_id вида 'local:<login>')."""
+    if not u.login:
+        return False
+    if (u.display_name or "").lower() == f"администратор {u.login.lower()}":
+        return True
+    return (getattr(u, "yandex_id", "") or "").startswith(f"local:{u.login.lower()}")
 
 
 def _initials_of(name: str) -> str:
