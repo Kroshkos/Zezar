@@ -71,6 +71,7 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = ""
+    telegram_bot_username: str = ""   # например CaesarNotifyBot — для инструкции в UI
     telegram_notify_enabled: bool = True
 
     # Яндекс.Календарь (WebDAV/CalDAV)

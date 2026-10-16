@@ -68,19 +68,18 @@ async def clear_history(chat_id: int) -> None:
 # ---------------- state machine привязки «логин -> пароль» ----------------
 
 class _PendingAuth:
-    """Ждём пароль от chat_id: хеш пароля НЕ храним, храним только сам пароль
-    в памяти процесса на короткое окно (<= 3 минут) — сразу после проверки
-    запись стирается, история чата очищается."""
-    __slots__ = ("login", "pass_hash_check", "expires")
+    """Окно «логин → пароль»: помним только введённый логин, пароль не храним
+    вообще. Окно живёт <= 5 минут и закрывается ровно одной попыткой ввода
+    пароля (состояние стирается до проверки)."""
+    __slots__ = ("login", "expires")
 
     def __init__(self, login: str):
         self.login = login
-        self.expires = time.time() + 180
+        self.expires = time.time() + 300
 
 
-_pending: dict[int, _PendingAuth] = {}          # chat_id -> ожидающий логин
-_pending_pw: dict[int, tuple[str, float]] = {}  # chat_id -> (пароль, deadline)
-_throttle: dict[int, float] = {}                # chat_id -> когда можно повторить
+_pending: dict[int, _PendingAuth] = {}   # chat_id -> ожидающий логин
+_throttle: dict[int, float] = {}         # chat_id -> когда можно повторить ответ
 
 
 def _pending_put(chat_id: int, login: str) -> None:
@@ -91,8 +90,6 @@ def _gc_pending() -> None:
     now = time.time()
     for cid in [c for c, p in _pending.items() if p.expires < now]:
         _pending.pop(cid, None)
-    for cid in [c for c, (_, dl) in _pending_pw.items() if dl < now]:
-        _pending_pw.pop(cid, None)
 
 
 WELCOME = ("<b>👋 Добро пожаловать, {name}!</b>\n\n"
@@ -113,8 +110,12 @@ BAD_CREDENTIALS = ("⛔ Логин или пароль не подходят. Д
 ALREADY_BOUND = ("✅ Этот Telegram уже привязан к учётной записи <b>{name}</b>. "
                  "Сообщения удаляются — бот работает только на отправку уведомлений.")
 
-NOT_BOUND_YET = ("Аккаунт ещё не привязан. Откройте систему ЦЕЗАРЬ → «Мои интеграции» "
-                 "и напишите боту свой логин.")
+NOT_BOUND_YET = ("Чтобы привязать уведомления, отправьте мне ОДНИМ сообщением ваш "
+                 "<b>логин</b> от системы ЦЕЗАРЬ (как при входе на сайт), затем — "
+                 "пароль. Диалог будет очищен автоматически.")
+
+RESET_HINT = ("🔄 Окно ввода пароля закрыто. Чтобы начать заново — отправьте свой "
+              "<b>логин</b> от системы ЦЕЗАРЬ одним сообщением.")
 
 
 async def send_message(chat_id: int, text: str) -> bool:
@@ -147,16 +148,16 @@ def format_entity_event(p: dict) -> str:
     return "\n".join(lines)
 
 
-async def bind_by_code(session: AsyncSession, chat_id: int, code: str) -> str | None:
-    """Легас-привязка по одноразовому коду (/start <код>). Возвращает приветствие."""
-    u = await session.scalar(select(User).where(User.telegram_bind_code == code))
+async def unbind(session: AsyncSession, chat_id: int | str) -> bool:
+    """Отвязать Telegram от учётной записи (кнопка «Отвязать» в «Мои интеграции»)."""
+    u = await session.scalar(select(User).where(User.telegram_chat_id == str(chat_id)))
     if u is None:
-        return None  # код не найден — обработчик решит, что это ввод логина
-    u.telegram_chat_id = str(chat_id)
+        return False
+    u.telegram_chat_id = None
     u.telegram_bind_code = None
     u.telegram_optout = None
     await session.commit()
-    return WELCOME.format(name=_esc(u.display_name))
+    return True
 
 
 def _esc(s: str) -> str:
@@ -168,52 +169,28 @@ async def _try_login_step(session: AsyncSession, chat_id: int, text: str) -> str
     """Шаг «логин»: пользователь прислал логин (или /start <логин>).
 
     Если такой пользователь существует и ещё не привязан — запрашиваем пароль.
+    Возвращает готовый текст ответа или None (молчаливое удаление ввода).
     """
-    login = text.split(maxsplit=1)[1].strip().lower() if text.startswith("/start") else text.strip().lower()
-    if not login or len(login) > 64:
-        return "NOT_BOUND_YET"
+    if text.startswith("/start"):
+        parts = text.split(maxsplit=1)
+        login = parts[1].strip().lower() if len(parts) == 2 else ""
+    else:
+        login = " ".join(text.strip().lower().split())   # «Ivanov  I» -> «ivanov i»
+    if not login:
+        return NOT_BOUND_YET  # просто /start — объясняем сценарий
+    if len(login) > 64:
+        return None
     u = await session.scalar(select(User).where(User.login == login))
     if u is None:
         # неизвестный логин: подсказку не шлём (защита от перебора), окно не открываем
         return None
     if u.telegram_chat_id and str(u.telegram_chat_id) != str(chat_id):
-        # чат уже занят другой УЗ — отвечаем (текст поверх маркера, чтобы поллинер
-        # не удалил его как «запрос пароля») и окно не открываем
-        return "ALREADY_BOUND:" + ALREADY_BOUND.format(name=_esc(u.display_name))
+        # чат уже занят другой УЗ — отвечаем и окно не открываем
+        return ALREADY_BOUND.format(name=_esc(u.display_name))
     if u.telegram_chat_id and str(u.telegram_chat_id) == str(chat_id):
         return None  # этот же чат уже привязан — ветка «уже привязан» выше
     _pending_put(chat_id, login)
     return ASK_PASSWORD.format(login=_esc(login))
-
-
-async def _try_password_step(session: AsyncSession, upd: dict) -> str | None:
-    """Шаг «пароль»: проверяем учётные данные, стираем всё из памяти и чата."""
-    msg = upd["message"]
-    chat_id = msg["chat"]["id"]
-    text = msg["text"].strip()
-    pending = _pending.get(chat_id)
-    if pending is None or pending.expires < time.time():
-        _pending.pop(chat_id, None)
-        return None
-    login = pending.login
-    _pending.pop(chat_id, None)  # состояние живёт ровно один шаг
-    u = await session.scalar(select(User).where(User.login == login))
-    ok = bool(u and u.is_active and u.password_hash and verify_password(text, u.password_hash))
-    # Очередь на очистку диалога: и пароль, и вопрос о пароле будут удалены
-    # поллинером СРАЗУ после отправки ответа (см. handle_update).
-    if not ok:
-        now = time.time()
-        prev = _throttle.get(chat_id, 0)
-        if now - prev < 3:
-            return None  # защита от брутфорса: молчаливый пропуск частых попыток
-        _throttle[chat_id] = now
-        return BAD_CREDENTIALS
-    u.telegram_chat_id = str(chat_id)
-    u.telegram_bind_code = None
-    u.telegram_optout = None
-    await session.commit()
-    log.info("tg: chat %s привязан к пользователю '%s'", chat_id, u.login)
-    return WELCOME.format(name=_esc(u.display_name))
 
 
 class _LastAsk:
@@ -229,6 +206,7 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
     Возвращает (текст_ответа, [message_id для удаления]).
     Правила ТЗ: после успешной регистрации бот только отправляет сообщения;
     любые входящие сообщения пользователя удаляются из чата.
+    Сценарий привязки: «логин → пароль», код привязки не используется.
     """
     msg = upd.get("message") or upd.get("edited_message")
     if not msg or "text" not in msg:
@@ -251,34 +229,41 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
         if text.startswith("/help"):
             return ("Бот работает только на отправку уведомлений. "
                     "Команды: /mute — отключить, /unmute — включить."), [msg["message_id"]]
-        if text.startswith("/start ") and len(text.split()) == 2 and len(text.split()[1]) == 8:
-            pass  # возможная перепривязка по коду — уходим в легас-ветку ниже
-        else:
-            return None, [msg["message_id"]]   # «просто удаляет» сообщения пользователя
+        return None, [msg["message_id"]]   # «просто удаляет» сообщения пользователя
 
-    # не привязан: ожидаем пароль?
+    # шаг 2: ожидаем пароль — состояние закрывается ровно одной попыткой
     if chat_id in _pending:
-        reply = await _try_password_step(session, upd)
-        # очищаем диалог независимо от исхода проверки: пароль + запрос пароля
+        pending = _pending.pop(chat_id)
+        if pending.expires < time.time():
+            return RESET_HINT, [msg["message_id"]]
+        u = await session.scalar(select(User).where(User.login == pending.login))
+        ok = bool(u and u.is_active and u.password_hash
+                  and verify_password(text, u.password_hash))
+        # диалог очищаем ВСЕГДА: и введённый пароль, и вопрос о пароле
         deletes = [m for m in (_last_ask.map.pop(chat_id, None), msg["message_id"]) if m]
-        return reply, deletes
+        if not ok:
+            now = time.time()
+            if now - _throttle.get(chat_id, 0) < 3:
+                return None, deletes       # анти-брутфорс: молчаливый пропуск
+            _throttle[chat_id] = now
+            return BAD_CREDENTIALS, deletes
+        u.telegram_chat_id = str(chat_id)
+        u.telegram_bind_code = None
+        u.telegram_optout = None
+        await session.commit()
+        log.info("tg: chat %s привязан к пользователю '%s'", chat_id, u.login)
+        return WELCOME.format(name=_esc(u.display_name)), deletes
 
-    # легас: /start <код> (8 hex) — одноразовый код из «Мои интеграции»
-    if text.startswith("/start ") and len(text.split()) == 2 and len(text.split()[1]) == 8:
-        reply = await bind_by_code(session, chat_id, text.split()[1])
-        if reply:
-            return reply, []
-        # код не найден — считаем это вводом логина и продолжаем основной сценарий
-
-    # основной сценарий: первый шаг — пользователь присылает свой логин.
+    # шаг 1: пользователь присылает свой логин (или /start [<логин>])
     reply = await _try_login_step(session, chat_id, text)
-    if reply == "NOT_BOUND_YET":
-        return NOT_BOUND_YET, [msg["message_id"]]
-    if reply and reply.startswith("ALREADY_BOUND:"):
-        return reply[len("ALREADY_BOUND:"):], [msg["message_id"]]
+    if reply and reply != NOT_BOUND_YET and chat_id not in _pending:
+        # готовые ответы-подсказки без открытия окна (NOT_FOUND молча удаляется ниже)
+        return reply, [msg["message_id"]]
+    if reply == NOT_BOUND_YET:
+        return reply, [msg["message_id"]]
     if reply:  # ASK_PASSWORD — отправляем сами; id вопроса чистим после ввода пароля
         sent = await call_bot("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
         if sent:
             _last_ask.map[chat_id] = sent["message_id"]
-    # неизвестный логин/ввод до привязки — молча удаляем (подсказку не спамим)
+    # неизвестный логин/пустой ввод до привязки — молча удаляем (не спамим подсказками)
     return None, [msg["message_id"]]

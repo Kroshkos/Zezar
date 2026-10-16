@@ -42,7 +42,7 @@ function askConfirm(msg,onYes){
 }
 async function logout(){await api('/auth/logout',{method:'POST'});location.href='/login'}
 /* «Мои интеграции»: только Telegram (Яндекс.Календарь из интерфейса удалён).
-   Логика привязки: пользователь пишет боту /start <код>; код выдаётся кнопкой ниже. */
+   Привязка без кодов: пользователь пишет боту логин, затем пароль (бот чистит диалог). */
 async function openSettings(){
   const me=await api('/auth/me');
   const st=await api('/api/profile/integrations').catch(()=>({}));
@@ -50,20 +50,33 @@ async function openSettings(){
   if(st.telegram_linked){
     body+='<p>Статус Telegram: <span class="badge b-green">привязан</span>'
       +(st.telegram_muted?' <span class="badge b-gray">уведомления отключены (/unmute в боте)</span>':'')
-      +'</p><button type="button" class="btn sm ghost" onclick="tgBind(this)">🔄 Привязать заново</button>';
+      +'</p><div style="display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button type="button" class="btn sm ghost" onclick="tgShowSteps(this)">📋 Показать инструкцию</button>'
+      +'<button type="button" class="btn sm ghost" onclick="tgUnbind(this)">Отвязать Telegram</button></div>'
+      +'<div id="tgBindBox"></div>';
   }else{
-    body+='<div id="tgBindBox"><button type="button" class="btn primary sm" onclick="tgBind(this)">Получить код привязки</button></div>';
+    body+='<div id="tgBindBox"><button type="button" class="btn primary sm" onclick="tgShowSteps(this)">Как привязать Telegram</button></div>';
   }
   openModal('Мои интеграции · '+esc(me.name),body,async()=>{closeModal();},'Готово');
 }
-async function tgBind(btn){
+async function tgShowSteps(btn){
   try{
-    const r=await api('/api/profile/telegram/bind',{method:'POST'});
+    const r=await api('/api/profile/telegram/steps');
     const box=document.getElementById('tgBindBox')||btn.parentElement;
-    box.innerHTML='<p style="font-size:13px">1️⃣ Откройте бота <b>@CaesarBot</b> в Telegram<br>'
-     +'2️⃣ Отправьте команду:<br>'
-     +'<code style="display:block;background:#0f172a;color:#fff;padding:10px;border-radius:10px;margin:8px 0;font-size:15px">'+esc(r.code)+'</code>'
-     +'3️⃣ Бот сам проверит код, очистит диалог и пришлёт приветствие. Готово ✅</p>'
-     +'<button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+esc(r.code)+'\').then(()=>toast(\'Код скопирован\'))">📋 Копировать код</button>';
+    box.innerHTML='<ol style="font-size:13px;line-height:1.7;margin:6px 0 6px 18px;padding:0">'
+     +r.steps.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol>'
+     +'<code id="tgLoginCode" style="display:block;background:#0f172a;color:#fff;padding:10px;border-radius:10px;margin:8px 0;font-size:15px">'+esc(r.login)+'</code>'
+     +'<button class="btn sm" type="button" onclick="tgCopyLogin()">📋 Скопировать логин</button>'
+     +'<p style="font-size:12px;color:var(--muted);margin-top:8px">'+esc(r.note)+'</p>';
   }catch(e){}
+}
+function tgCopyLogin(){
+  const t=(document.getElementById('tgLoginCode')||{}).textContent||'';
+  if(navigator.clipboard&&t){navigator.clipboard.writeText(t).then(()=>toast('Логин скопирован'));}
+}
+async function tgUnbind(btn){
+  askConfirm('Отвязать Telegram от учётной записи? Уведомления приходить перестанут.',async()=>{
+    await api('/api/profile/telegram/unbind',{method:'POST'});
+    toast('Telegram отвязан');openSettings();
+  });
 }
