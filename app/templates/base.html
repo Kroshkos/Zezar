@@ -34,10 +34,13 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 {% if user.must_change_password %}
-{# Первый вход с начальным паролем: не даём работать с системой до смены пароля #}
+{# Первый вход с начальным паролем: не даём работать с системой до смены пароля.
+   Серверный редирект — надёжнее JS-редиректа: страница не успевает отрисоваться,
+   кнопки и модалки не «оживают» на долю секунды. #}
+<meta http-equiv="refresh" content="0;url=/change-password?forced=1">
 <script>location.replace('/change-password?forced=1');</script>
 {% endif %}
-<script src="/static/js/core.js"></script>
+<script src="/static/js/core.js?v=20261017a"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
