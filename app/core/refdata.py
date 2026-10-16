@@ -690,6 +690,37 @@ def _tpl_name(row) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Агрегатор вкладок: все разделы справочников за один запрос (для UI)
+# ---------------------------------------------------------------------------
+
+async def sections_view(session: AsyncSession, user: User,
+                        dept_id: Optional[int]) -> dict:
+    """Одна выгрузка для вкладки «Справочники» админ-панели: статусы по всем
+    наборам, приоритеты, типы (doc/soft/schol), маршруты и группы задач —
+    каждый раздел уже ограничен включёнными модулями подразделения
+    (преемственность ТЗ: шаблоны применяются согласно подключённым модулям)."""
+    mods = await enabled_modules(session, dept_id)
+    out: dict = {"department_id": dept_id, "modules_enabled": sorted(mods),
+                 "colors": COLORS, "status_sets": {}, "types": {},
+                 "prio": [], "wf": [], "groups": []}
+    for set_name in KIND_BY_SET:
+        if _module_allowed(f"status:{set_name}", mods) or dept_id is None:
+            v = await admin_view(session, user, "status", dept_id, set_name)
+            out["status_sets"][set_name] = v
+    v = await admin_view(session, user, "prio", dept_id)
+    out["prio"] = v
+    for rk, mkey in ((RefType.KIND_DOC, "docs"), (RefType.KIND_SOFT, "softs"),
+                     (RefType.KIND_SCHOL, "schols")):
+        if _module_allowed(f"type:{rk}", mods) or dept_id is None:
+            out["types"][rk] = await admin_view(session, user, "type", dept_id, rk)
+    if _module_allowed("wf", mods) or dept_id is None:
+        out["wf"] = await admin_view(session, user, "wf", dept_id)
+    if _module_allowed("groups", mods) or dept_id is None:
+        out["groups"] = await admin_view(session, user, "groups", dept_id)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Агрегатор для админ-панели: всё дерево справочника с флагами происхождения
 # ---------------------------------------------------------------------------
 

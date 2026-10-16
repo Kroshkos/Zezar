@@ -101,6 +101,23 @@ async def view(ref: str = Query(..., description="status|prio|type|wf|groups"),
     return await refdata.admin_view(session, user, ref, department_id, set)
 
 
+@router.get("/sections")
+async def sections(department_id: Optional[int] = None,
+                   user: User = Depends(get_current_user),
+                   session: AsyncSession = Depends(session_dep)):
+    """Все разделы справочников одной выгрузкой (вкладка «Справочники»):
+    статусы по наборам, приоритеты, типы, маршруты, группы задач. Разделы
+    автоматически ограничены модулями, подключёнными к подразделению."""
+    ctx = await access.build_context(session, user)
+    if not ctx.is_global and department_id is None:
+        department_id = next(iter(sorted(ctx.department_ids)), None) if ctx.department_ids else None
+        if department_id is None:
+            raise RefDataError(403, "Вы не состоите ни в одном подразделении")
+    if not ctx.is_global and department_id not in ctx.department_ids:
+        raise RefDataError(403, "Нет доступа к этому подразделению")
+    return await refdata.sections_view(session, user, department_id)
+
+
 @router.get("/effective")
 async def effective(kind: str = "task", department_id: Optional[int] = None,
                     user: User = Depends(get_current_user),
