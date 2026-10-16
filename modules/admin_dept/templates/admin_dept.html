@@ -341,10 +341,9 @@
 </section>
 {% endif %}
 
-<script id="admData" type="application/json">
-{{ {'department': department, 'can_manage': can_manage, 'is_global_admin': is_admin_global,
-    'default_tab': tab, 'departments': [{'id': d.id, 'name': d.name} for d in departments]} | tojson }}
-</script>
+{# Серверный JSON-блок: отделён от inline-скриптов, чтобы не зависеть от
+   порядка объявления блоков в base.html. #}
+<script id="admData" type="application/json">{{ adm_payload | tojson }}</script>
 {% endblock %}
 
 {% block scripts %}
@@ -353,19 +352,10 @@ const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 const IS_ADMIN = !!ADM.is_global_admin;
 let USERS_CACHE = null;
-/* Подразделения для формы создания УЗ: берём из server-side JSON (dept_list_simple),
-   при пустом значении — из выпадающего переключателя пространств в шапке. */
-window.DEPTS_FOR_CREATE=[];
-(function initDeptsForCreate(){
-  try{
-    const el=document.getElementById('deptsData');
-    if(el) window.DEPTS_FOR_CREATE=JSON.parse(el.textContent)||[];
-  }catch(e){}
-  const sel=document.getElementById('deptSel');
-  if(sel && !window.DEPTS_FOR_CREATE.length){
-    window.DEPTS_FOR_CREATE=[...sel.options].map(o=>({id:+o.value,name:o.textContent.trim()}));
-  }
-})();
+/* Подразделения для формы создания УЗ: берём из ADM.departments (активные
+   пространства, сервер передаёт их всегда — даже когда подразделений ещё нет,
+   список просто пуст и форма предложит создать пространство сначала). */
+window.DEPTS_FOR_CREATE = (ADM.departments || []).slice();
 let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
 let evTimer = null;
 
@@ -375,6 +365,8 @@ function showTab(name){
   // вкладки, недоступные текущей роли -> на безопасную
   const pane = document.getElementById('pane-'+name);
   if(!pane){ name = DEPT ? 'overview' : 'departments'; }
+  // руководитель без активного пространства не имеет scoped-вкладок
+  if(!DEPT && !IS_ADMIN && name!=='users'){ name='users'; }
   tabState = name;
   document.querySelectorAll('.adm-tab').forEach(t=>t.classList.toggle('on', t.dataset.tab===name));
   document.querySelectorAll('.adm-pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+name));
@@ -607,8 +599,4 @@ async function loadEvents(){
 
 window.addEventListener('hashchange',()=>{const h=(location.hash||'').replace('#','');if(h)showTab(h);});
 </script>
-{% if is_admin_global %}
-<script id="deptsData" type="application/json">{{ dept_list_simple | tojson }}</script>
-<script>window.DEPTS_FOR_CREATE=JSON.parse(document.getElementById('deptsData').textContent);</script>
-{% endif %}
 {% endblock %}
