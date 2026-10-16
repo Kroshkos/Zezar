@@ -281,9 +281,12 @@ class StatusSet(TimestampMixin, Base):
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
     # Шаблон создан администратором и активирован руководителем в этом
-    # подразделении (копия глобального шаблона; деактивация = удаление копии).
+    # подразделении (копия глобального шаблона). Деактивация копией НЕ удаляется,
+    # а снимается is_active — при повторной активации восстанавливается та же
+    # запись (преемственность: исторические status_key сущностей не «открепляются»).
     source_global_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("status_sets.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     __table_args__ = (UniqueConstraint("kind", "key", "department_id"),)
 
@@ -303,6 +306,8 @@ class PriorityLevel(TimestampMixin, Base):
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
     source_global_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("priority_levels.id", ondelete="SET NULL"), nullable=True)
+    # См. StatusSet.is_active: деактивация копии шаблона = снять флаг, не удалить.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     __table_args__ = (UniqueConstraint("key", "department_id"),)
 
