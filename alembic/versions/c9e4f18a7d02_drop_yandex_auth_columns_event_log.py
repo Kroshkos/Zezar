@@ -62,6 +62,19 @@ def upgrade() -> None:
     # ---------- users ----------
     if "users" in tables:
         cols = _cols("users")
+
+        # 0) Очень старые схемы (до базовой ревизии): users.full_name вместо
+        #    display_name. SQLite < 3.25 не умеет RENAME COLUMN — поэтому если
+        #    display_name отсутствует, а full_name есть, переименовываем через
+        #    batch-пересоздание таблицы (данные сохраняются).
+        if "display_name" not in cols and "full_name" in cols:
+            with op.batch_alter_table("users", recreate="always") as batch_op:
+                batch_op.alter_column("full_name",
+                                      new_column_name="display_name",
+                                      existing_type=sa.String(length=160),
+                                      existing_nullable=False)
+            cols = _cols("users")
+
         has_legacy = "yandex_id" in cols
         add_cols = []
         if "login" not in cols:
@@ -73,6 +86,11 @@ def upgrade() -> None:
             # начальным паролем) обязаны сменить пароль при первом входе.
             add_cols.append(sa.Column("must_change_password", sa.Boolean(),
                                       nullable=False, server_default=sa.false()))
+        # display_name может отсутствовать и в старых create_all-БД, где не было
+        # ни full_name, ни display_name — добавляем (nullable, заполнит админ).
+        if "display_name" not in cols:
+            add_cols.append(sa.Column("display_name", sa.String(length=160),
+                                      nullable=True))
 
         # 1) Сначала добавляем новые колонки и ПЕРЕНОСИМ данные из легаси-колок
         #    (пока они ещё существуют в таблице): 'local:<login>' -> login.
