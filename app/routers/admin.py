@@ -23,7 +23,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import build_context
@@ -32,7 +32,7 @@ from app.core.security import get_current_user, hash_password
 from app.db.seed import is_env_admin_login
 from app.deps import session_dep
 from app.models.core import (
-    DepartmentMember, EntityResponsible, EventLog, Role, User,
+    Department, DepartmentMember, EntityResponsible, EventLog, Role, User,
 )
 from sqlalchemy.orm import selectinload
 
@@ -69,18 +69,52 @@ class ResetPasswordIn(BaseModel):
 
 
 @router.get("/admin/users")
-async def list_users(user: User = Depends(get_current_user),
+async def list_users(q: str | None = None, department_id: int | None = None,
+                     user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
-    await _require_admin(session, user)
-    rows = (await session.scalars(select(User).order_by(User.display_name))).all()
-    return [{"id": u.id, "name": u.display_name, "email": u.email, "login": u.login,
-             "role": u.role.value, "active": u.is_active,
-             "env_admin": bool(is_env_admin_login(u.login)),
-             "must_change_password": bool(u.must_change_password),
-             "no_password": not bool(u.password_hash),
-             "telegram": bool(u.telegram_chat_id),
-             "calendar": bool(u.yandex_cal_app_password_enc)}
-            for u in rows]
+    """Список учётных записей. Полностью — администратору/координатору;
+    руководителю подразделения — только состав его подразделения (для назначения)."""
+    ctx = await build_context(session, user)
+    scope_depts: list[int] | None = None      # None = без ограничения (глобал)
+    if not ctx.can_admin_system:
+        heads = await session.scalars(
+            select(DepartmentMember.department_id).where(
+                DepartmentMember.user_id == user.id,
+                DepartmentMember.role_in_dept == Role.HEAD))
+        scope_depts = list(set(heads.all()))
+        if not scope_depts:
+            raise HTTPException(403, "Раздел доступен администратору/координатору "
+                                     "или руководителю подразделения")
+    stmt = select(User).order_by(User.display_name)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(or_(func.lower(User.display_name).like(like),
+                              func.lower(User.login).like(like),
+                              func.lower(User.email).like(like)))
+    rows = list((await session.scalars(stmt)).all())
+    # карта членств user_id -> [(dept_id, dept_name)]
+    mem_stmt = select(DepartmentMember.user_id, Department.id, Department.name)
+    if scope_depts is not None:
+        mem_stmt = mem_stmt.where(DepartmentMember.department_id.in_(scope_depts))
+    memberships: dict[int, list[tuple[int, str]]] = {}
+    for uid, did, dname in (await session.execute(mem_stmt)).all():
+        memberships.setdefault(uid, []).append((did, dname))
+    out = []
+    for u in rows:
+        pairs = memberships.get(u.id, [])
+        if scope_depts is not None and not pairs:
+            continue                          # руководитель видит только своих
+        out.append({"id": u.id, "name": u.display_name, "email": u.email,
+                    "login": u.login, "role": u.role.value, "active": u.is_active,
+                    "env_admin": bool(is_env_admin_login(u.login)),
+                    "must_change_password": bool(u.must_change_password),
+                    "no_password": not bool(u.password_hash),
+                    "telegram": bool(u.telegram_chat_id),
+                    "calendar": bool(u.yandex_cal_app_password_enc),
+                    "departments": [{"id": d[0], "name": d[1]} for d in pairs]})
+    if department_id:
+        out = [x for x in out if any(d["id"] == department_id for d in x["departments"])]
+    return out
 
 
 @router.post("/admin/users")
@@ -257,3 +291,66 @@ async def events_stats(user: User = Depends(get_current_user),
                        session: AsyncSession = Depends(session_dep)):
     await _require_admin(session, user)
     return await event_stats(session)
+
+
+async def _head_dept_ids(session, ctx, user):
+    """Подразделения, которыми руководит текущий пользователь (для scoped-журнала)."""
+    rows = await session.scalars(
+        select(DepartmentMember.department_id).where(
+            DepartmentMember.user_id == user.id,
+            DepartmentMember.role_in_dept == Role.HEAD))
+    ids = list(set(rows.all()))
+    if not ids and not ctx.can_admin_system:
+        raise HTTPException(403, "Раздел доступен администратору или руководителю подразделения")
+    return ids
+
+
+@router.get("/admin/dept-events")
+async def dept_events(department_id: int,
+                      limit: int = Query(100, ge=1, le=500),
+                      offset: int = Query(0, ge=0),
+                      q: str | None = None,
+                      user: User = Depends(get_current_user),
+                      session: AsyncSession = Depends(session_dep)):
+    """Журнал событий в рамках одного подразделения (для руководителя).
+
+    Фильтр по «причастности»: событие относится к подразделению, если в тексте
+    (объект/сообщение) упоминается его название, либо действие касается
+    пользователей, состоящих в этом подразделении."""
+    ctx = await build_context(session, user)
+    if not ctx.is_global:
+        my_head = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == department_id,
+            DepartmentMember.user_id == user.id,
+            DepartmentMember.role_in_dept == Role.HEAD))
+        if not my_head:
+            raise HTTPException(403, "Журнал доступен только руководителю этого подразделения")
+    dept = await session.get(Department, department_id)
+    if not dept:
+        raise HTTPException(404, "Подразделение не найдено")
+    member_ids = list(await session.scalars(
+        select(DepartmentMember.user_id).where(
+            DepartmentMember.department_id == department_id)))
+    conds = [EventLog.object.ilike(f"%{dept.name}%"),
+             EventLog.message.ilike(f"%{dept.name}%"),
+             EventLog.user_name.ilike(f"%{dept.name}%")]
+    if member_ids:
+        conds.append(EventLog.user_id.in_(member_ids))
+    stmt = select(EventLog).where(or_(*conds))
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(EventLog.object.ilike(like), EventLog.message.ilike(like),
+                              EventLog.action.ilike(like), EventLog.user_name.ilike(like)))
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = await session.scalar(count_stmt) or 0
+    rows = (await session.scalars(
+        stmt.order_by(EventLog.at.desc(), EventLog.id.desc())
+        .limit(max(1, min(limit, 500))).offset(max(0, offset)))).all()
+    return {"items": [{
+        "id": e.id,
+        "at": e.at.isoformat(timespec="seconds") + "Z" if e.at else "",
+        "user": e.user_name or ("—" if not e.user_id else f"#{e.user_id}"),
+        "action": e.action, "category": e.category, "object": e.object or "",
+        "ip": e.ip or "", "level": e.level, "message": e.message or "",
+    } for e in rows], "total": total, "department": dept.name}
