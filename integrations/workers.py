@@ -191,7 +191,12 @@ async def _cal_path(u: User) -> str | None:
 
 
 async def tg_poller(stop: asyncio.Event) -> None:
-    """Long-polling getUpdates (для webhook замените роутером /api/tg/webhook)."""
+    """Long-polling getUpdates: регистрация в боте (логин→пароль) + команды.
+
+    handle_update возвращает (текст_ответа, [message_id для удаления из чата]).
+    Ответ отправляется первым, затем входящие сообщения пользователя удаляются —
+    так пароль и логин не остаются в истории диалога.
+    """
     from app.core.config import get_settings
     offset = 0
     while not stop.is_set():
@@ -209,10 +214,15 @@ async def tg_poller(stop: asyncio.Event) -> None:
             async with SessionLocal() as session:
                 for upd in updates:
                     offset = max(offset, upd["update_id"] + 1)
-                    reply = await tg.handle_update(session, upd)
+                    reply, delete_ids = await tg.handle_update(session, upd)
+                    chat = (upd.get("message") or upd.get("edited_message") or {}).get("chat", {})
+                    chat_id = chat.get("id")
+                    if chat_id is None:
+                        continue
                     if reply:
-                        chat = upd["message"]["chat"]["id"]
-                        await tg.send_message(chat, reply)
+                        await tg.send_message(chat_id, reply)
+                    for mid in delete_ids:
+                        await tg.delete_message(chat_id, mid)
         except Exception as e:  # noqa: BLE001
             log.warning("tg poller: %s", e)
             await asyncio.sleep(5)
