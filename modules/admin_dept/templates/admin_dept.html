@@ -333,7 +333,7 @@ const IS_ADMIN = !!ADM.is_global_admin;
    чтобы в HTML для руководителя не встречалось admin-функций */
 if (IS_ADMIN) {
   const tpl = document.getElementById('tplNewUserBtn');
-  if (tpl) tpl.insertAdjacentHTML('afterend', '<button id="btnNewUser" class="btn primary sm" onclick="' + 'openCreateUser()">➕ Новый пользователь</button>');
+  if (tpl) tpl.insertAdjacentHTML('afterend', '<button id="btnNewUser" class="btn primary sm" onclick="' + 'cu()">➕ Новый пользователь</button>');
 }
 let USERS_CACHE = null;
 let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
@@ -488,7 +488,7 @@ function deptOptionsForCreate(){
   if(window.DEPTS_FOR_CREATE) opts+=window.DEPTS_FOR_CREATE.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
   return opts;
 }
-function openCreateUser(){
+function cu(){ /* admin-only: создание УЗ */
   if(!IS_ADMIN){ toast('Создание пользователей доступно только администратору','warn'); return; }
   openModal('Новый пользователь',
     '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+

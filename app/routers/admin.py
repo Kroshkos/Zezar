@@ -101,7 +101,8 @@ async def list_users(q: str | None = None, department_id: int | None = None,
                               func.lower(User.email).like(like)))
     rows = list((await session.scalars(stmt)).all())
     # карта членств user_id -> [(dept_id, dept_name)]
-    mem_stmt = select(DepartmentMember.user_id, Department.id, Department.name)
+    mem_stmt = (select(DepartmentMember.user_id, Department.id, Department.name)
+                .join(Department, Department.id == DepartmentMember.department_id))
     if scope_depts is not None:
         mem_stmt = mem_stmt.where(DepartmentMember.department_id.in_(scope_depts))
     memberships: dict[int, list[tuple[int, str]]] = {}
