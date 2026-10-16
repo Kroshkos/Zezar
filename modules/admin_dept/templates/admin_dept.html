@@ -13,12 +13,14 @@
    Сервер передаёт полные данные открытой вкладки; переключения внутри вкладок
    (поиск, фильтры) работают через API без перезагрузки страницы. #}
 
-{% set is_global_admin = is_global_admin or can_manage %}
+{% set is_admin_global = is_global_admin %}   {# администратор/координатор: вся система #}
+{% set can_manage_dept = is_global_admin or can_manage %}  {# любой управляющий (вкл. руководителя) #}
+{% set is_global_admin = can_manage_dept %}    {# совместимость: расширенный UI для управляющих #}
 {% set can_admin_modules = is_global_admin %}
 {% set tab = active_tab or ('overview' if department else 'departments') %}
 
 {% block actions %}
-{% if is_global_admin %}
+{% if is_admin_global %}
 <button class="btn primary" onclick="showTab('departments');toggleNewDept(true)"
         title="Создать новое подразделение (рабочее пространство) — количество не ограничено">＋ Подразделение</button>
 {% endif %}
@@ -50,7 +52,7 @@
 
 <!-- ===================== Вкладки ===================== -->
 <div class="adm-tabs" id="admTabs">
-  {% if is_global_admin %}
+  {% if is_admin_global %}
   <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
   {% endif %}
   <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
@@ -62,7 +64,7 @@
 </div>
 
 <!-- ===================== Подразделения (только админ) ===================== -->
-{% if is_global_admin %}
+{% if is_admin_global %}
 <section class="adm-pane" id="pane-departments">
   <div class="card pad" id="newDeptCard" style="max-width:620px;margin:0 0 14px;padding:22px;{{ 'display:none' if department else 'block' }}">
     <h3 style="margin:0 0 8px">{% if not department %}🏢 Создайте первое рабочее пространство{% else %}🏢 Новое рабочее пространство{% endif %}</h3>
@@ -115,14 +117,14 @@
 <section class="adm-pane" id="pane-overview">
   <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
     Активное пространство: <b>{{ department.name }}</b>
-    {% if is_global_admin %}<span class="muted"> — переключить пространство можно списком в шапке; вкладка «Подразделения» — управление всеми пространствами.</span>{% endif %}
+    {% if is_admin_global %}<span class="muted"> — переключить пространство можно списком в шапке; вкладка «Подразделения» — управление всеми пространствами.</span>{% endif %}
   </div>
   <div class="adm-kpi">
     <div class="k"><b>{{ members|length }}</b><span>участников</span></div>
     <div class="k"><b>{{ modules|selectattr('enabled')|list|length }}/{{ modules|length }}</b><span>модулей включено</span></div>
     <div class="k"><b>{{ shares_out|length }}</b><span>расшарено нами</span></div>
     <div class="k"><b>{{ shares_in|length }}</b><span>получено</span></div>
-    {% if is_global_admin %}<div class="k"><b>{{ departments|length }}</b><span>подразделений в системе</span></div>{% endif %}
+    {% if is_admin_global %}<div class="k"><b>{{ departments|length }}</b><span>подразделений в системе</span></div>{% endif %}
   </div>
   <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
     <div class="card pad">
@@ -159,7 +161,7 @@
   <div class="card pad" style="overflow:auto">
     <h3 style="margin:0 0 4px">👥 Участники — {{ department.name }}
       {% if not can_manage %}<span class="badge b-gray">👁 только просмотр</span>{% endif %}</h3>
-    <p class="adm-scope">{% if is_global_admin %}Управление составом любого пространства.{% else %}Видим только вашего подразделения.{% endif %}</p>
+    <p class="adm-scope">{% if is_admin_global %}Управление составом любого пространства.{% else %}Состав вашего подразделения.{% endif %}</p>
     <table class="tbl">
       <thead><tr><th>Имя</th><th>Email</th><th>Глобальная роль</th><th>Роль в пространстве</th><th>Telegram</th>
         {% if can_manage %}<th></th>{% endif %}</tr></thead>
@@ -170,10 +172,10 @@
           <td class="muted">{{ m.email }}</td>
           <td class="muted">{{ {'ADMIN':'Администратор','COORDINATOR':'Координатор','HEAD':'Руководитель','MEMBER':'Участник'}.get(m.global_role, m.global_role) }}</td>
           <td>
-            {% if is_global_admin and m.global_role != 'ADMIN' %}
+            {% if can_manage and m.global_role != 'ADMIN' %}
             <select class="roleSel" style="padding:4px 8px">
-              <option value="MEMBER" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
-              <option value="HEAD"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
+              <option value="member" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
+              <option value="head"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
             </select>
             {% elif can_manage and m.dept_role=='HEAD' %}
             <span class="badge b-purple">Руководитель</span>
@@ -195,8 +197,8 @@
     <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center">
       <input id="candQ" class="adm-search" placeholder="Поиск по ФИО / логину / email…" oninput="searchCandidates()">
       <select id="addRole" style="width:170px">
-        <option value="MEMBER">Участник</option>
-        {% if is_global_admin %}<option value="HEAD">Руководитель</option>{% endif %}
+        <option value="member">Участник</option>
+        {% if is_admin_global %}<option value="head">Руководитель</option>{% endif %}
       </select>
       <button class="btn primary" onclick="addSelectedMember()">＋ Добавить выбранных</button>
     </div>
@@ -211,11 +213,11 @@
   <div class="card pad" style="overflow:auto">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
       <h3 style="margin:0">🪪 Учётные записи</h3>
-      {% if is_global_admin %}
-      <button class="btn primary sm" onclick="openCreateUser()">➕ Новый пользователь</button>
+      {% if is_admin_global %}
+      <button id="btnNewUser" class="btn primary sm" onclick="openCreateUser()">➕ Новый пользователь</button>
       {% endif %}
     </div>
-    <p class="adm-scope">{% if is_global_admin %}
+    <p class="adm-scope">{% if is_admin_global %}
       Полный реестр всех пользователей системы: создание, роли, блокировка, сброс паролей.
       {% else %}
       Пользователи вашего подразделения: можно добавлять в пространство / исключать.
@@ -235,7 +237,7 @@
 <section class="adm-pane" id="pane-modules">
   <div class="card pad" style="overflow:auto">
     <h3 style="margin:0 0 4px">🧩 Модули рабочего пространства — {{ department.name }}</h3>
-    <p class="adm-scope">{% if can_admin_modules %}{% if is_global_admin %}Управление модулями любого пространства.{% else %}Включение/выключение немодульных плагинов в вашем пространстве.{% endif %}{% else %}Только просмотр.{% endif %}</p>
+    <p class="adm-scope">{% if can_admin_modules %}{% if is_admin_global %}Управление модулями любого пространства.{% else %}Включение/выключение немодульных плагинов в вашем пространстве.{% endif %}{% else %}Только просмотр.{% endif %}</p>
     <table class="tbl">
       <thead><tr><th>Модуль</th><th>Статус</th><th></th></tr></thead>
       <tbody>
@@ -303,11 +305,11 @@
   <div class="card pad" style="overflow:auto">
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
       <h3 style="margin:0">📜 Журнал событий</h3>
-      {% if is_global_admin %}
+      {% if is_admin_global %}
       <a class="btn sm" href="/admin/events" style="text-decoration:none">⤴ Расширенный журнал (фильтры, статистика)</a>
       {% endif %}
     </div>
-    <p class="adm-scope">{% if is_global_admin %}Все события системы, относящиеся к подразделению <b>{{ department.name }}</b> и его участникам.
+    <p class="adm-scope">{% if is_admin_global %}Все события системы, относящиеся к подразделению <b>{{ department.name }}</b> и его участникам.
       {% else %}События в рамках вашего подразделения <b>{{ department.name }}</b>.{% endif %}</p>
     <input id="evQ" class="adm-search" placeholder="Поиск по журналу…" oninput="debounceEvents()" style="margin-bottom:10px">
     <div id="evList" class="muted">Откройте вкладку для загрузки…</div>
@@ -316,7 +318,7 @@
 {% endif %}
 
 <script id="admData" type="application/json">
-{{ {'department': department, 'can_manage': can_manage, 'is_global_admin': is_global_admin,
+{{ {'department': department, 'can_manage': can_manage, 'is_global_admin': is_admin_global,
     'default_tab': tab} | tojson }}
 </script>
 {% endblock %}
@@ -480,6 +482,7 @@ function deptOptionsForCreate(){
   return opts;
 }
 function openCreateUser(){
+  if(!IS_ADMIN){ toast('Создание пользователей доступно только администратору','warn'); return; }
   openModal('Новый пользователь',
     '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+
     '<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'+
@@ -528,7 +531,7 @@ function removeUser(id){
 }
 // действия руководителя в рамках своего подразделения (через members-API)
 async function headAdd(uid){
-  try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:'MEMBER'});
+  try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:'member'});
     toast('Добавлен в подразделение'); location.reload(); }catch(e){}
 }
 async function headRemove(uid){
@@ -560,7 +563,7 @@ async function loadEvents(){
 
 window.addEventListener('hashchange',()=>{const h=(location.hash||'').replace('#','');if(h)showTab(h);});
 </script>
-{% if is_global_admin %}
+{% if is_admin_global %}
 <script id="deptsData" type="application/json">{{ dept_list_simple | tojson }}</script>
 <script>window.DEPTS_FOR_CREATE=JSON.parse(document.getElementById('deptsData').textContent);</script>
 {% endif %}

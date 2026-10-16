@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -165,6 +165,14 @@ class ModuleToggleIn(BaseModel):
 class MemberIn(BaseModel):
     user_id: int
     role_in_dept: Role = Role.MEMBER
+
+    @field_validator("role_in_dept", mode="before")
+    @classmethod
+    def _norm_role(cls, v):
+        # Принять "HEAD"/"MEMBER" в любом регистре
+        if isinstance(v, str):
+            return Role(v.lower())
+        return v
 
 
 @router.post("/departments/{dept_id}/members")

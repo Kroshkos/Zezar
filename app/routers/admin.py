@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +62,14 @@ class UserPatch(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
     telegram_chat_id: str | None = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _norm_role(cls, v):
+        # Принять "HEAD"/"MEMBER" и т.п. в любом регистре
+        if isinstance(v, str):
+            return Role(v.lower())
+        return v
 
 
 class ResetPasswordIn(BaseModel):
