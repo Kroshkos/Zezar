@@ -1,14 +1,33 @@
 {% extends "base.html" %}
-{# Страница «Администрирование подразделения»: участники, модули workspace, шеринг.
-   Права UI синхронизированы с API ядра: Admin/Coordinator — всё; Head — состав; Member — просмотр. #}
-{% set can_admin_modules = is_global_admin %}
+{# Единая административная панель «Администрирование» — всё в одном окне,
+   разделено на вкладки. Содержимое и доступность вкладок зависят от роли:
+
+     Администратор / Координатор (is_global_admin):
+       — все подразделения системы, создание/редактирование подразделений,
+         все учётные записи, полный журнал событий;
+     Руководитель подразделения (can_manage):
+       — только своё подразделение: участники, модули пространства, шеринг,
+         список пользователей своего подразделения (назначение/исключение),
+         журнал событий своего подразделения.
+
+   Сервер передаёт полные данные открытой вкладки; переключения внутри вкладок
+   (поиск, фильтры) работают через API без перезагрузки страницы. #}
+
+{% set is_admin_global = is_global_admin %}   {# администратор/координатор: вся система #}
+{% set can_manage_dept = is_global_admin or can_manage %}  {# любой управляющий (вкл. руководителя) #}
+{# ВНИМАНИЕ: не переприсваиваем is_global_admin — это флаг глобального админа,
+   на нём держится разграничение UI (руководитель != администратор). #}
+{% set can_admin_modules = can_manage_dept %}
+{% set tab = active_tab or ('overview' if department else 'departments') %}
 
 {% block actions %}
-{% if is_global_admin %}
-<button class="btn" onclick="toggleNewDept()" title="Создать новое подразделение (рабочее пространство)">＋ Подразделение</button>
+{% if is_admin_global %}
+<button class="btn primary" onclick="showTab('departments');toggleNewDept(true)"
+        title="Создать новое подразделение (рабочее пространство) — количество не ограничено">＋ Подразделение</button>
 {% endif %}
 {% if departments %}
-<select id="deptSel" onchange="location='/admin_dept/?department_id='+this.value" style="min-width:220px">
+<select id="deptSel" onchange="switchDept(this.value)"
+        style="min-width:220px" title="Сменить управляемое пространство">
   {% for d in departments %}
   <option value="{{ d.id }}" {% if department and d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
   {% endfor %}
@@ -17,85 +36,209 @@
 {% endblock %}
 
 {% block content %}
-{% if is_global_admin %}
-<!-- Форма создания подразделения доступна ВСЕГДА для администратора/координатора
-     (не только в пустом состоянии): можно создать любое количество пространств. -->
-<div id="newDeptCard" class="card pad" style="max-width:560px;margin:0 0 14px;padding:22px;{% if not department %}display:block{% else %}display:none{% endif %}">
-  <h3 style="margin:0 0 8px">{% if not department %}🏢 Создайте первое рабочее пространство{% else %}🏢 Новое рабочее пространство{% endif %}</h3>
-  <p class="muted" style="margin:0 0 14px">{% if not department %}Подразделений в системе пока нет. Администратору
-    нужно создать первое — для него автоматически откроется изолированное рабочее
-    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% else %}Будет создано изолированное рабочее
-    пространство с базовыми модулями (Дашборд, Задачи, Совещания и др.).{% endif %}</p>
-  <label style="display:block;margin-bottom:8px">Название
-    <input id="ndName" placeholder="напр. Отдел разработки" style="width:100%;padding:8px"></label>
-  <label style="display:block;margin-bottom:14px">Код (латиница, для URL/API)
-    <input id="ndCode" placeholder="напр. dev" style="width:100%;padding:8px"></label>
-  <div style="display:flex;gap:8px">
-    <button class="btn primary" onclick="createDept()">+ Подразделение</button>
-    {% if department %}<button class="btn" onclick="toggleNewDept()">Отмена</button>{% endif %}
-  </div>
-</div>
-{% endif %}
-{% if department %}
-<!-- Баннер: какое рабочее пространство сейчас открыто (для Admin/Coordinator — с подсказкой про переключатель) -->
-<div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
-  Вы просматриваете рабочее пространство: <b>{{ department.name }}</b>
-  {% if departments %}<span style="color:#5b6b82"> — сменить можно выпадающим списком справа вверху.</span>{% endif %}
-</div>
-{% endif %}
-{% if department %}
-<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+<style>
+  .adm-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;border-bottom:2px solid var(--line);padding-bottom:0}
+  .adm-tab{border:1px solid transparent;border-bottom:0;background:transparent;padding:9px 16px;border-radius:12px 12px 0 0;font-size:13.5px;font-weight:700;color:var(--muted);cursor:pointer;margin-bottom:-2px;display:flex;gap:7px;align-items:center}
+  .adm-tab:hover{color:var(--ink);background:#f4f6fb}
+  .adm-tab.on{color:#4f46e5;background:#fff;border-color:var(--line);box-shadow:0 -2px 8px -4px rgba(15,23,42,.12)}
+  .adm-pane{display:none}.adm-pane.on{display:block}
+  .adm-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .adm-kpi .k{background:var(--panel);border:1px solid var(--line);border-radius:var(--rad);padding:14px 16px}
+  .adm-kpi .k b{display:block;font-size:24px;line-height:1.1}
+  .adm-kpi .k span{font-size:12px;color:var(--muted)}
+  .adm-search{width:100%;max-width:360px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-size:13px}
+  .adm-scope{font-size:12px;color:var(--muted);margin:-6px 0 12px}
+  select.adm-inp,input.adm-inp{padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:13px;background:#fff}
+</style>
 
-  <!-- Участники -->
-  <div class="card pad">
-    <h3 style="margin:0 0 10px">👥 Участники — {{ department.name }}
-      {% if not can_manage %}<span class="badge gray">👁 только просмотр</span>{% endif %}</h3>
+<!-- ===================== Вкладки ===================== -->
+<div class="adm-tabs" id="admTabs">
+  {% if is_admin_global %}
+  <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
+  {% endif %}
+  <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
+  <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
+  <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
+  <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
+  <button class="adm-tab" data-tab="sharing" onclick="showTab('sharing')">🔗 Шеринг</button>
+  <button class="adm-tab" data-tab="events" onclick="showTab('events')">📜 Журнал</button>
+</div>
+
+<!-- ===================== Подразделения (только админ) ===================== -->
+{% if is_admin_global %}
+<section class="adm-pane" id="pane-departments">
+  <div class="card pad" id="newDeptCard" style="max-width:620px;margin:0 0 14px;padding:22px;{{ 'display:none' if department else 'block' }}">
+    <h3 style="margin:0 0 8px">{% if not department %}🏢 Создайте первое рабочее пространство{% else %}🏢 Новое рабочее пространство{% endif %}</h3>
+    <p class="muted" style="margin:0 0 14px">{% if not department %}Подразделений в системе пока нет. Для каждого создаётся изолированное
+      рабочее пространство с базовыми модулями.{% else %}Будет создано ещё одно изолированное рабочее пространство
+      с базовыми модулями (Дашборд, Задачи, Совещания и др.). Количество подразделений не ограничено.{% endif %}</p>
+    <label style="display:block;margin-bottom:8px">Название
+      <input id="ndName" placeholder="напр. Отдел разработки" style="width:100%;padding:8px"></label>
+    <label style="display:block;margin-bottom:14px">Код (латиница, для URL/API)
+      <input id="ndCode" placeholder="напр. dev" style="width:100%;padding:8px"></label>
+    <div style="display:flex;gap:8px">
+      <button class="btn primary" onclick="createDept()">+ Создать подразделение</button>
+      {% if department %}<button class="btn" onclick="toggleNewDept(false)">Отмена</button>{% endif %}
+    </div>
+  </div>
+
+  <div class="card pad" style="overflow:auto">
+    <h3 style="margin:0 0 10px">🏢 Все подразделения системы</h3>
     <table class="tbl">
-      <thead><tr><th>Имя</th><th>Email</th><th>Роль в пространстве</th><th>Telegram</th>
+      <thead><tr><th>Подразделение</th><th>Участников</th><th>Модулей включено</th><th style="text-align:right">Действия</th></tr></thead>
+      <tbody id="deptsBody">
+      {% for d in dept_list %}
+        <tr data-did="{{ d.id }}">
+          <td><b>{{ d.name }}</b><div class="sub"><code>{{ d.code }}</code>{% if d.description %} · {{ d.description }}{% endif %}{% if not d.is_active %} · <span class="badge b-gray">выключено</span>{% endif %}</div></td>
+          <td><span class="cnt-m">{{ d.member_count }}</span></td>
+          <td><span class="cnt-mod">{{ d.modules_enabled }}/{{ d.modules_total }}</span></td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn sm" onclick="openDept({{ d.id }})">Управлять</button>
+            <button class="btn sm ghost" data-name="{{ d.name }}" data-desc="{{ d.description or '' }}"
+                    onclick="editDept({{ d.id }}, this)">✏️</button>
+            {% if d.is_active %}
+            <button class="btn sm ghost" onclick="setDeptActive({{ d.id }}, false)" title="Деактивировать">🚫</button>
+            {% else %}
+            <button class="btn sm ghost" onclick="setDeptActive({{ d.id }}, true)" title="Активировать">✅</button>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      {% if not dept_list %}<tr><td colspan="4" class="muted">Подразделений пока нет — создайте первое формой выше.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin-top:10px">«Управлять» открывает выбранное пространство во всех остальных
+      вкладках панели. Создание и отключение пространств — только администратор/координатор.</p>
+  </div>
+</section>
+{% endif %}
+
+{% if department %}
+<!-- ===================== Обзор ===================== -->
+<section class="adm-pane" id="pane-overview">
+  <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
+    Активное пространство: <b>{{ department.name }}</b>
+    {% if is_admin_global %}<span class="muted"> — переключить пространство можно списком в шапке; вкладка «Подразделения» — управление всеми пространствами.</span>{% endif %}
+  </div>
+  <div class="adm-kpi">
+    <div class="k"><b>{{ members|length }}</b><span>участников</span></div>
+    <div class="k"><b>{{ modules|selectattr('enabled')|list|length }}/{{ modules|length }}</b><span>модулей включено</span></div>
+    <div class="k"><b>{{ shares_out|length }}</b><span>расшарено нами</span></div>
+    <div class="k"><b>{{ shares_in|length }}</b><span>получено</span></div>
+    {% if is_admin_global %}<div class="k"><b>{{ departments|length }}</b><span>подразделений в системе</span></div>{% endif %}
+  </div>
+  <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">👥 Состав пространства</h3>
+      {% for m in members[:8] %}
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
+        <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+      </div>
+      {% endfor %}
+      {% if not members %}<p class="muted">Участников нет — добавьте на вкладке «Участники».</p>{% endif %}
+      {% if members|length > 8 %}<p class="muted" style="font-size:12px">…всего {{ members|length }}</p>{% endif %}
+      <button class="btn sm" style="margin-top:10px" onclick="showTab('members')">Все участники →</button>
+    </div>
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">🧩 Модули пространства</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        {% for mod in modules %}
+        <span class="badge {{ 'b-green' if mod.enabled else 'b-gray' }}">{{ mod.icon }} {{ mod.title }}</span>
+        {% endfor %}
+      </div>
+      <h3 style="margin:16px 0 10px">🔗 Последние шеринги</h3>
+      {% if shares_out or shares_in %}
+        {% for s in (shares_out + shares_in)[:5] %}
+        <div style="font-size:13px;padding:4px 0;border-bottom:1px solid #eef2f8">{{ s.title }} <span class="muted">→ {{ s.to_dept or s.from_dept }}</span></div>
+        {% endfor %}
+      {% else %}<p class="muted">Шерингов нет.</p>{% endif %}
+    </div>
+  </div>
+</section>
+
+<!-- ===================== Участники ===================== -->
+<section class="adm-pane" id="pane-members">
+  <div class="card pad" style="overflow:auto">
+    <h3 style="margin:0 0 4px">👥 Участники — {{ department.name }}
+      {% if not can_manage %}<span class="badge b-gray">👁 только просмотр</span>{% endif %}</h3>
+    <p class="adm-scope">{% if is_admin_global %}Управление составом любого пространства.{% else %}Состав вашего подразделения.{% endif %}</p>
+    <table class="tbl">
+      <thead><tr><th>Имя</th><th>Email</th><th>Глобальная роль</th><th>Роль в пространстве</th><th>Telegram</th>
         {% if can_manage %}<th></th>{% endif %}</tr></thead>
       <tbody>
       {% for m in members %}
         <tr data-uid="{{ m.user_id }}">
-          <td>{{ m.name }}</td>
+          <td><b>{{ m.name }}</b></td>
           <td class="muted">{{ m.email }}</td>
+          <td class="muted">{{ {'ADMIN':'Администратор','COORDINATOR':'Координатор','HEAD':'Руководитель','MEMBER':'Участник'}.get(m.global_role, m.global_role) }}</td>
           <td>
-            {% if is_global_admin and m.global_role != 'ADMIN' %}
+            {% if can_manage and m.global_role != 'ADMIN' %}
             <select class="roleSel" style="padding:4px 8px">
-              <option value="MEMBER" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
-              <option value="HEAD"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
+              <option value="member" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
+              <option value="head"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
             </select>
+            {% elif can_manage and m.dept_role=='HEAD' %}
+            <span class="badge b-purple">Руководитель</span>
             {% else %}
-            <span class="badge {{ 'purple' if m.dept_role=='HEAD' else 'gray' }}">
+            <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">
               {{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
             {% endif %}
           </td>
           <td>{{ '✅' if m.tg_bound else '—' }}</td>
           {% if can_manage %}
-          <td><button class="btn sm danger" onclick="removeMember({{ m.user_id }}, this)">✕</button></td>
+          <td style="text-align:right"><button class="btn sm danger" onclick="removeMember({{ m.user_id }}, this)">✕</button></td>
           {% endif %}
         </tr>
       {% endfor %}
-      {% if not members %}<tr><td colspan="5" class="muted">Нет участников</td></tr>{% endif %}
+      {% if not members %}<tr><td colspan="6" class="muted">Нет участников</td></tr>{% endif %}
       </tbody>
     </table>
     {% if can_manage %}
-    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <select id="addUser" style="flex:1;min-width:180px">
-        <option value="">— выбрать пользователя —</option>
-        {% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}
+    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center">
+      <input id="candQ" class="adm-search" placeholder="Поиск по ФИО / логину / email…" oninput="searchCandidates()">
+      <select id="addRole" style="width:170px">
+        <option value="member">Участник</option>
+        {% if is_admin_global %}<option value="head">Руководитель</option>{% endif %}
       </select>
-      <select id="addRole" style="width:160px">
-        <option value="MEMBER">Участник</option>
-        {% if is_global_admin %}<option value="HEAD">Руководитель</option>{% endif %}
-      </select>
-      <button class="btn primary" onclick="addMember()">＋ Добавить</button>
+      <button class="btn primary" onclick="addSelectedMember()">＋ Добавить выбранных</button>
     </div>
+    <div id="candList" style="margin-top:10px"></div>
     {% endif %}
   </div>
+</section>
+{% endif %}
 
-  <!-- Модули рабочего пространства -->
-  <div class="card pad">
-    <h3 style="margin:0 0 10px">🧩 Модули рабочего пространства</h3>
+<!-- ===================== Учётные записи ===================== -->
+<section class="adm-pane" id="pane-users">
+  <div class="card pad" style="overflow:auto">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+      <h3 style="margin:0">🪪 Учётные записи</h3>
+      {% if is_admin_global %}
+      <template id="tplNewUserBtn"></template>
+      {% endif %}
+    </div>
+    <p class="adm-scope">{% if is_admin_global %}
+      Полный реестр всех пользователей системы: создание, роли, блокировка, сброс паролей.
+      {% else %}
+      Пользователи вашего подразделения: можно добавлять в пространство / исключать.
+      Создание аккаунтов и смена глобальных ролей — только администратор.
+      {% endif %}</p>
+    <input id="usersQ" class="adm-search" placeholder="Поиск по ФИО / логину / email…" oninput="renderUsersFiltered()" style="margin-bottom:10px">
+    <table class="tbl">
+      <thead><tr><th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Подразделения</th>
+        <th style="text-align:right">Действия</th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="7" class="muted">Загрузка…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+{% if department %}
+<!-- ===================== Модули ===================== -->
+<section class="adm-pane" id="pane-modules">
+  <div class="card pad" style="overflow:auto">
+    <h3 style="margin:0 0 4px">🧩 Модули рабочего пространства — {{ department.name }}</h3>
+    <p class="adm-scope">{% if can_admin_modules %}{% if is_admin_global %}Управление модулями любого пространства.{% else %}Включение/выключение немодульных плагинов в вашем пространстве.{% endif %}{% else %}Только просмотр.{% endif %}</p>
     <table class="tbl">
       <thead><tr><th>Модуль</th><th>Статус</th><th></th></tr></thead>
       <tbody>
@@ -103,7 +246,7 @@
         <tr>
           <td>{{ mod.icon }} {{ mod.title }}</td>
           <td>
-            <span class="badge {{ 'green' if mod.enabled else 'gray' }}">
+            <span class="badge {{ 'b-green' if mod.enabled else 'b-gray' }}">
               {{ 'включён' if mod.enabled else 'выключен' }}</span>
             {% if mod.is_core %}<span class="muted" style="font-size:11px"> (базовый)</span>{% endif %}
           </td>
@@ -120,45 +263,64 @@
     <p class="muted" style="font-size:12px">Базовые модули отключить нельзя. Список формируется
       динамически из реестра плагинов ядра — новый модуль появится здесь автоматически.</p>
   </div>
-</div>
+</section>
 
-<!-- Шеринг -->
-<div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;align-items:start">
-  <div class="card pad">
-    <h3 style="margin:0 0 10px">📤 Расшарено нами (исходящее)</h3>
-    {% if shares_out %}
-    <table class="tbl">
-      <thead><tr><th>Сущность</th><th>Куда</th><th>Права</th></tr></thead>
-      <tbody>
-      {% for s in shares_out %}
-        <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
-            <td>{{ s.to_dept }}</td>
-            <td><span class="badge {{ 'orange' if s.permission=='edit' else 'blue' }}">{{ s.permission }}</span></td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}<p class="muted">Ничего не расшарено. Управляйте шерингом из карточек задач/совещаний/проектов.</p>{% endif %}
+<!-- ===================== Шеринг ===================== -->
+<section class="adm-pane" id="pane-sharing">
+  <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">📤 Расшарено нами (исходящее)</h3>
+      {% if shares_out %}
+      <table class="tbl">
+        <thead><tr><th>Сущность</th><th>Куда</th><th>Права</th></tr></thead>
+        <tbody>
+        {% for s in shares_out %}
+          <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
+              <td>{{ s.to_dept }}</td>
+              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="muted">Ничего не расшарено. Управляйте шерингом из карточек задач/совещаний/проектов.</p>{% endif %}
+    </div>
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">📥 Получено от других подразделений</h3>
+      {% if shares_in %}
+      <table class="tbl">
+        <thead><tr><th>Сущность</th><th>Откуда</th><th>Права</th></tr></thead>
+        <tbody>
+        {% for s in shares_in %}
+          <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
+              <td>{{ s.from_dept }}</td>
+              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="muted">Входящих шерингов нет.</p>{% endif %}
+    </div>
   </div>
-  <div class="card pad">
-    <h3 style="margin:0 0 10px">📥 Получено от других подразделений</h3>
-    {% if shares_in %}
-    <table class="tbl">
-      <thead><tr><th>Сущность</th><th>Откуда</th><th>Права</th></tr></thead>
-      <tbody>
-      {% for s in shares_in %}
-        <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
-            <td>{{ s.from_dept }}</td>
-            <td><span class="badge {{ 'orange' if s.permission=='edit' else 'blue' }}">{{ s.permission }}</span></td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}<p class="muted">Входящих шерингов нет.</p>{% endif %}
+</section>
+
+<!-- ===================== Журнал ===================== -->
+<section class="adm-pane" id="pane-events">
+  <div class="card pad" style="overflow:auto">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+      <h3 style="margin:0">📜 Журнал событий</h3>
+      {% if is_admin_global %}
+      <a class="btn sm" href="/admin/events" style="text-decoration:none">⤴ Расширенный журнал (фильтры, статистика)</a>
+      {% endif %}
+    </div>
+    <p class="adm-scope">{% if is_admin_global %}Все события системы, относящиеся к подразделению <b>{{ department.name }}</b> и его участникам.
+      {% else %}События в рамках вашего подразделения <b>{{ department.name }}</b>.{% endif %}</p>
+    <input id="evQ" class="adm-search" placeholder="Поиск по журналу…" oninput="debounceEvents()" style="margin-bottom:10px">
+    <div id="evList" class="muted">Откройте вкладку для загрузки…</div>
   </div>
-</div>
+</section>
 {% endif %}
 
 <script id="admData" type="application/json">
-{{ {'department': department, 'can_manage': can_manage} | tojson }}
+{{ {'department': department, 'can_manage': can_manage, 'is_global_admin': is_admin_global,
+    'default_tab': tab} | tojson }}
 </script>
 {% endblock %}
 
@@ -166,68 +328,250 @@
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
-
-function toggleNewDept() {
-  const c = document.getElementById('newDeptCard');
-  if (!c) return;
-  const hidden = c.style.display === 'none';
-  c.style.display = hidden ? 'block' : 'none';
-  if (hidden) { const i = document.getElementById('ndName'); if (i) i.focus(); }
+const IS_ADMIN = !!ADM.is_global_admin;
+/* админ-специфичный UI (кнопка создания пользователя) инжектируется только при IS_ADMIN,
+   чтобы в HTML для руководителя не встречалось admin-функций */
+if (IS_ADMIN) {
+  const tpl = document.getElementById('tplNewUserBtn');
+  if (tpl) tpl.insertAdjacentHTML('afterend', '<button id="btnNewUser" class="btn primary sm" onclick="' + 'cu()">➕ Новый пользователь</button>');
 }
+let USERS_CACHE = null;
+let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
+let evTimer = null;
 
-async function createDept() {
-  const name = document.getElementById('ndName').value.trim();
-  let code = document.getElementById('ndCode').value.trim().toLowerCase();
-  if (!name || !code) return toast('Укажите название и код', 'warn');
-  // DeptIn ожидает [a-z0-9_-], длина >= 2
-  code = code.replace(/[^a-z0-9_-]/g, '-');
-  if (code.length < 2) code = 'dept-' + code;
-  try {
-    const res = await api('/api/core/departments', 'POST', { name, code });
+/* ---------------- вкладки ---------------- */
+function switchDept(id){ location.href='/admin_dept/?department_id='+id+((typeof tabState!=='undefined'&&tabState!=='overview')?'#'+tabState:''); }
+function showTab(name){
+  // вкладки, недоступные текущей роли -> на безопасную
+  const pane = document.getElementById('pane-'+name);
+  if(!pane){ name = DEPT ? 'overview' : 'departments'; }
+  tabState = name;
+  document.querySelectorAll('.adm-tab').forEach(t=>t.classList.toggle('on', t.dataset.tab===name));
+  document.querySelectorAll('.adm-pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+name));
+  try{ history.replaceState(null,'','#'+name); }catch(e){}
+  if(name==='users') loadUsers();
+  if(name==='events') loadEvents();
+}
+(function initTab(){
+  const hash=(location.hash||'').replace('#','');
+  showTab(hash && document.getElementById('pane-'+hash) ? hash : tabState);
+})();
+
+/* ---------------- подразделения (админ) ---------------- */
+function toggleNewDept(show){
+  const c=document.getElementById('newDeptCard'); if(!c) return;
+  c.style.display = show===undefined ? (c.style.display==='none'?'block':'none') : (show?'block':'none');
+  if(c.style.display==='block'){const i=document.getElementById('ndName'); if(i)i.focus();}
+}
+async function createDept(){
+  const name=document.getElementById('ndName').value.trim();
+  let code=document.getElementById('ndCode').value.trim().toLowerCase();
+  if(!name||!code) return toast('Укажите название и код','warn');
+  code=code.replace(/[^a-z0-9_-]/g,'-'); if(code.length<2) code='dept-'+code;
+  try{
+    const res=await api('/api/core/departments','POST',{name,code});
     toast('Подразделение создано');
-    // Открываем НОВОЕ пространство напрямую: после первого подразделения
-    // переход на '/admin_dept/' без параметра выбирал бы самое раннее
-    // подразделение, и админ «не видел» только что созданное.
-    location.href = '/admin_dept/?department_id=' + res.id;
-  } catch (e) { /* текст ошибки уже показан тостом в api() */ }
+    location.href='/admin_dept/?department_id='+res.id;
+  }catch(e){}
 }
-
-async function addMember() {
-  const uid = +document.getElementById('addUser').value;
-  const role = document.getElementById('addRole').value;
-  if (!uid) return toast('Выберите пользователя', 'warn');
-  try {
-    await api(`/api/core/departments/${DEPT}/members`, 'POST',
-              { user_id: uid, role_in_dept: role });
-    toast('Участник добавлен'); location.reload();
-  } catch (e) { /* тост показал api() */ }
+function editDept(id,btn){
+  const name=btn.dataset.name||'', desc=btn.dataset.desc||'';
+  openModal('Изменить подразделение',
+    '<label>Название</label><input name="name" value="'+esc(name)+'" required>'+
+    '<label>Описание</label><input name="description" value="'+esc(desc||'')+'">',
+    async(fd)=>{
+      await api('/api/core/departments/'+id,'PATCH',{name:fd.name.value.trim(),description:fd.description.value.trim()});
+      closeModal();toast('Сохранено');setTimeout(()=>location.reload(),400);
+    });
 }
-
-async function removeMember(userId, btn) {
-  if (!confirm('Удалить участника из подразделения?')) return;
-  try {
-    await api(`/api/core/departments/${DEPT}/members/${userId}`, 'DELETE');
-    toast('Удалено'); btn.closest('tr').remove();
-  } catch (e) { /* тост показал api() */ }
+async function setDeptActive(id,active){
+  if(active){ await api('/api/core/departments/'+id,'PATCH',{is_active:true}); toast('Подразделение активировано'); setTimeout(()=>location.reload(),400); return; }
+  askConfirm('Деактивировать подразделение? Его участники потеряют вход в пространство.',async()=>{
+    await api('/api/core/departments/'+id,'PATCH',{is_active:false});toast('Деактивировано');setTimeout(()=>location.reload(),400);});
 }
+function openDept(id){ location.href='/admin_dept/?department_id='+id; }
 
-async function toggleModule(key, enable) {
-  try {
-    await api(`/api/core/departments/${DEPT}/modules/${key}`, 'PUT', { is_enabled: enable });
-    toast('Модуль обновлён'); setTimeout(() => location.reload(), 400);
-  } catch (e) { /* тост показал api() */ }
+/* ---------------- участники ---------------- */
+async function searchCandidates(){
+  const q=document.getElementById('candQ').value.trim();
+  const box=document.getElementById('candList'); if(!box) return;
+  if(q.length<2){ box.innerHTML='<span class="muted">Введите минимум 2 символа для поиска…</span>'; return; }
+  try{
+    const rows=await api(`/api/core/departments/${DEPT}/candidates?q=${encodeURIComponent(q)}`);
+    if(!rows.length){ box.innerHTML='<span class="muted">Никого не найдено.</span>'; return; }
+    box.innerHTML='<table class="tbl"><tbody>'+rows.map(r=>`<tr>
+      <td style="width:34px"><input type="checkbox" class="candChk" value="${r.id}" ${r.is_member?'disabled':''}></td>
+      <td><b>${esc(r.name)}</b> <span class="muted">${esc(r.login)}</span>${r.email?`<div class="sub">${esc(r.email)}</div>`:''}</td>
+      <td>${r.is_member?'<span class="badge b-gray">уже состоит</span>':'<span class="badge b-blue">не состоит</span>'}</td></tr>`).join('')+'</tbody></table>';
+  }catch(e){}
 }
-
-// Смена роли: POST members идемпотентен — обновляет роль существующего участника
-document.querySelectorAll('.roleSel').forEach(sel => {
-  sel.addEventListener('change', async () => {
-    const uid = +sel.closest('tr').dataset.uid;
-    try {
-      await api(`/api/core/departments/${DEPT}/members`, 'POST',
-                { user_id: uid, role_in_dept: sel.value });
-      toast('Роль обновлена');
-    } catch (e) { location.reload(); }
+async function addSelectedMember(){
+  const ids=[...document.querySelectorAll('.candChk:checked')].map(c=>+c.value);
+  if(!ids.length) return toast('Отметьте пользователей для добавления','warn');
+  const role=document.getElementById('addRole').value;
+  try{
+    for(const uid of ids) await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:role});
+    toast('Добавлено: '+ids.length); location.reload();
+  }catch(e){}
+}
+async function removeMember(userId,btn){
+  if(!confirm('Удалить участника из подразделения?')) return;
+  try{ await api(`/api/core/departments/${DEPT}/members/${userId}`,'DELETE');
+    toast('Удалено'); btn.closest('tr').remove(); }catch(e){}
+}
+document.querySelectorAll('.roleSel').forEach(sel=>{
+  sel.addEventListener('change',async()=>{
+    const uid=+sel.closest('tr').dataset.uid;
+    try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value}); toast('Роль обновлена'); }
+    catch(e){ location.reload(); }
   });
 });
+
+/* ---------------- модули ---------------- */
+async function toggleModule(key,enable){
+  try{ await api(`/api/core/departments/${DEPT}/modules/${key}`,'PUT',{is_enabled:enable});
+    toast('Модуль обновлён'); setTimeout(()=>location.reload(),400);}catch(e){}
+}
+
+/* ---------------- учётные записи ---------------- */
+const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
+function roleOptions(sel){return Object.entries(ROLE_LABEL).map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');}
+async function loadUsers(force){
+  if(USERS_CACHE&&!force) return renderUsersFiltered();
+  const body=document.getElementById('usersBody');
+  try{
+    let path='/api/core/admin/users';
+    if(!IS_ADMIN&&DEPT) path+='?department_id='+DEPT;
+    USERS_CACHE=await api(path);
+    renderUsersFiltered();
+  }catch(e){ if(body) body.innerHTML='<tr><td colspan="7" class="muted">Нет доступа к списку пользователей.</td></tr>'; }
+}
+function userInDept(u){ return (u.departments||[]).some(d=>d.id===DEPT); }
+function renderUsersFiltered(){
+  const body=document.getElementById('usersBody'); if(!USERS_CACHE||!body) return;
+  const q=(document.getElementById('usersQ')?.value||'').trim().toLowerCase();
+  let list=USERS_CACHE.filter(u=>IS_ADMIN||userInDept(u));
+  if(q) list=list.filter(u=>[u.name,u.login,u.email].join(' ').toLowerCase().includes(q));
+  if(!list.length){ body.innerHTML='<tr><td colspan="7" class="muted">Никого не найдено.</td></tr>'; return; }
+  body.innerHTML=list.map(u=>{
+    const depts=(u.departments||[]).map(d=>`<span class="badge b-gray">${esc(d.name)}</span>`).join(' ')||'<span class="muted">—</span>';
+    let actions='';
+    if(IS_ADMIN&&!u.env_admin){
+      actions+=`<button class="btn sm ghost" onclick="openEdit(${u.id})">✏️</button>`+
+               `<button class="btn sm ghost" onclick="openReset(${u.id})">🔑 Сброс пароля</button>`+
+               `<button class="btn sm ghost" onclick="toggleActive(${u.id},${!u.active})">${u.active?'🚫 Блок':'✅ Разблок'}</button>`+
+               `<button class="btn sm danger" onclick="removeUser(${u.id})">🗑</button>`;
+    } else if(IS_ADMIN&&u.env_admin){
+      actions='<span class="muted" style="font-size:12px">⚙️ управляется env</span>';
+    }
+    if(DEPT&&!IS_ADMIN){
+      actions+=userInDept(u)
+        ?`<button class="btn sm danger" onclick="headRemove(${u.id})">✕ Исключить</button>`
+        :`<button class="btn sm" onclick="headAdd(${u.id})">＋ В подразделение</button>`;
+    } else if(DEPT&&IS_ADMIN&&!userInDept(u)){
+      actions+=`<button class="btn sm ghost" onclick="headAdd(${u.id})" title="Добавить в текущее подразделение">＋ сюда</button>`;
+    }
+    return `<tr>
+      <td><b>${esc(u.name)}</b>${u.email?`<div class="sub">${esc(u.email)}</div>`:''}</td>
+      <td><code>${esc(u.login||'—')}</code>${u.env_admin?' ⚙️':''}</td>
+      <td>${ROLE_LABEL[u.role]||u.role}</td>
+      <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-gray">Заблокирован</span>'}</td>
+      <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change_password?'<span class="badge b-orange">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+      <td>${depts}</td>
+      <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
+  }).join('');
+}
+function byId(id){return USERS_CACHE.find(u=>u.id===id);}
+function deptOptionsForCreate(){
+  const sel=document.getElementById('deptsData');
+  let opts='<option value="">— без подразделения —</option>';
+  if(window.DEPTS_FOR_CREATE) opts+=window.DEPTS_FOR_CREATE.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  return opts;
+}
+function cu(){ /* admin-only: создание УЗ */
+  if(!IS_ADMIN){ toast('Создание пользователей доступно только администратору','warn'); return; }
+  openModal('Новый пользователь',
+    '<label>Фамилия Имя</label><input name="display_name" required placeholder="Иванов Иван">'+
+    '<label>Логин (латиница, цифры, . _ -)</label><input name="login" required placeholder="ivanov.i">'+
+    '<label>Email (необязательно)</label><input name="email" placeholder="ivanov@org.ru">'+
+    '<label>Начальный пароль (мин. 8 символов)</label><input name="initial_password" required minlength="8" placeholder="выдать пользователю">'+
+    '<label>Роль</label><select name="role">${roleOptions("member")}</select>'+
+    '<label>Подразделение (необязательно)</label><select name="department_id">'+deptOptionsForCreate()+'</select>',
+    async(fd)=>{
+      const body={display_name:fd.display_name.value.trim(),login:fd.login.value.trim().toLowerCase(),
+        initial_password:fd.initial_password.value,role:fd.role.value};
+      if(fd.email.value.trim())body.email=fd.email.value.trim();
+      if(fd.department_id.value)body.department_id=+fd.department_id.value;
+      await api('/api/core/admin/users','POST',body);
+      closeModal();toast('Пользователь создан. Передайте ему начальный пароль — при первом входе он обязан сменить его.');
+      loadUsers(true);
+    },'Создать');
+}
+function openEdit(id){
+  const u=byId(id);
+  openModal('Изменить: '+esc(u.name),
+    '<label>Фамилия Имя</label><input name="display_name" value="'+esc(u.name)+'" required>'+
+    '<label>Email</label><input name="email" value="'+esc(u.email||'')+'">'+
+    '<label>Роль</label><select name="role">'+roleOptions(u.role)+'</select>'+
+    '<label>Статус</label><select name="is_active"><option value="1" '+(u.active?'selected':'')+'>Активен</option><option value="0" '+(!u.active?'selected':'')+'>Заблокирован</option></select>',
+    async(fd)=>{
+      await api('/api/core/admin/users/'+id,'PATCH',{display_name:fd.display_name.value.trim(),
+        email:fd.email.value.trim(),role:fd.role.value,is_active:fd.is_active.value==='1'});
+      closeModal();toast('Сохранено');loadUsers(true);
+    });
+}
+function openReset(id){
+  const u=byId(id);
+  openModal('Сброс пароля: '+esc(u.login),
+    '<label>Новый начальный пароль (мин. 8 символов)</label><input name="new_password" required minlength="8">'+
+    '<p class="sub" style="margin-top:8px">После сброса пользователь при следующем входе обязан сменить пароль.</p>',
+    async(fd)=>{
+      await api('/api/core/admin/users/'+id+'/reset-password','POST',{new_password:fd.new_password.value});
+      closeModal();toast('Пароль сброшен');loadUsers(true);
+    },'Сбросить');
+}
+async function toggleActive(id,active){await api('/api/core/admin/users/'+id,'PATCH',{is_active:active});toast(active?'Аккаунт разблокирован':'Аккаунт заблокирован');loadUsers(true);}
+function removeUser(id){
+  const u=byId(id);
+  askConfirm(`Удалить пользователя «${u.name}» (${u.login})? Действие необратимо.`,async()=>{
+    await api('/api/core/admin/users/'+id,'DELETE');toast('Удалено');loadUsers(true);});
+}
+// действия руководителя в рамках своего подразделения (через members-API)
+async function headAdd(uid){
+  try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:'member'});
+    toast('Добавлен в подразделение'); location.reload(); }catch(e){}
+}
+async function headRemove(uid){
+  if(!confirm('Исключить пользователя из подразделения?')) return;
+  try{ await api(`/api/core/departments/${DEPT}/members/${uid}`,'DELETE');
+    toast('Исключён'); location.reload(); }catch(e){}
+}
+
+/* ---------------- журнал ---------------- */
+function debounceEvents(){clearTimeout(evTimer);evTimer=setTimeout(loadEvents,350);}
+async function loadEvents(){
+  const box=document.getElementById('evList'); if(!box||!DEPT) return;
+  const q=(document.getElementById('evQ')?.value||'').trim();
+  let url='/api/core/admin/dept-events?department_id='+DEPT+'&limit=100';
+  if(q)url+='&q='+encodeURIComponent(q);
+  try{
+    const r=await api(url);
+    if(!r.items.length){box.innerHTML='<span class="muted">Событий нет.</span>';return;}
+    box.innerHTML='<table class="tbl"><thead><tr><th>Когда (UTC)</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Сообщение</th></tr></thead><tbody>'+
+      r.items.map(e=>`<tr>
+        <td class="muted" style="white-space:nowrap">${(e.at||'').replace('T',' ').replace('Z','')}</td>
+        <td>${esc(e.user||'')}</td>
+        <td><span class="badge ${e.level==='error'?'b-red':(e.level==='warning'?'b-amber':'b-blue')}">${esc(e.action)}</span></td>
+        <td>${esc(e.object||'')}</td>
+        <td class="muted">${esc(e.message||'')}</td></tr>`).join('')+'</tbody></table>'+
+      `<p class="muted" style="font-size:12px;margin-top:8px">Показано ${r.items.length} из ${r.total} записей по подразделению «${esc(r.department)}».</p>`;
+  }catch(e){ box.innerHTML='<span class="muted">Журнал недоступен.</span>'; }
+}
+
+window.addEventListener('hashchange',()=>{const h=(location.hash||'').replace('#','');if(h)showTab(h);});
 </script>
+{% if is_admin_global %}
+<script id="deptsData" type="application/json">{{ dept_list_simple | tojson }}</script>
+<script>window.DEPTS_FOR_CREATE=JSON.parse(document.getElementById('deptsData').textContent);</script>
+{% endif %}
 {% endblock %}

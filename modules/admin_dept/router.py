@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -74,45 +74,80 @@ async def _pick_department(session: AsyncSession, ctx: access.AccessContext,
 
 @router.get("/")
 async def admin_dept_page(request: Request, department_id: int | None = None,
+                          tab: str | None = None,
                           user: User = Depends(get_current_user),
                           session: AsyncSession = Depends(session_dep)):
+    """Единая административная панель (всё в одном окне — вкладки).
+
+    Наполнение зависит от роли: администратор/координатор видит все
+    подразделения, учётные записи и журнал целиком; руководитель — только
+    своё подразделение (участники, модули, шеринг, состав своего отдела,
+    журнал своего подразделения)."""
     ctx = await access.build_context(session, user)
     dept = await _pick_department(session, ctx, department_id)
 
+    async def _dept_list(include_inactive=False):
+        """Агрегаты по всем подразделениям для вкладки «Подразделения»."""
+        dsel = select(Department)
+        if not include_inactive:
+            dsel = dsel.where(Department.is_active == True)  # noqa: E712
+        rows = (await session.scalars(dsel.order_by(Department.name))).all()
+        total_mods = len(registry.all())
+        out = []
+        for d in rows:
+            mc = await session.scalar(
+                select(func.count(DepartmentMember.id)).where(
+                    DepartmentMember.department_id == d.id)) or 0
+            ws = await session.scalar(select(Workspace).where(Workspace.department_id == d.id))
+            en = 0
+            if ws:
+                wm = (await session.scalars(select(WorkspaceModule).where(
+                    WorkspaceModule.workspace_id == ws.id))).all()
+                en = sum(1 for x in wm if x.is_enabled)
+            out.append({"id": d.id, "code": d.code, "name": d.name,
+                        "description": d.description or "", "is_active": bool(d.is_active),
+                        "member_count": mc, "modules_enabled": en, "modules_total": total_mods})
+        return out
+
     # --- пустое состояние ----------------------------------------------------
-    # Подразделений ещё нет (первый запуск): вместо сырого JSON рендерим
-    # страницу с формой «+ Подразделение». Кнопка работает через тот же API
-    # ядра, что и обычный CRUD пространств.
     if dept is None:
         all_users = (await session.scalars(
             select(User).where(User.is_active == True)  # noqa: E712
             .order_by(User.display_name))).all()
+        depts_all = await _dept_list(include_inactive=True) if ctx.is_global else []
         return await render_page(
             request, "admin_dept.html", module_key=MODULE_KEY, user=user,
             session=session,
-            page_title="Администрирование подразделения",
-            page_sub="Сначала создайте первое рабочее пространство (подразделение)",
+            page_title="Администрирование",
+            page_sub="Единая панель управления системой и рабочими пространствами",
             counts={MODULE_KEY: 0},
-            is_global_admin=(user.role.value == "ADMIN"),
-            department=None, departments=[], can_manage=True,
+            is_global_admin=ctx.can_admin_system,
+            can_manage=ctx.can_admin_system,
+            active_tab=tab or ("departments" if ctx.can_admin_system else "overview"),
+            department=None,
+            departments=[{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]],
+            dept_list=depts_all,
+            dept_list_simple=[{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]],
             members=[], modules=[], shares_out=[], shares_in=[],
             users=[{"id": u.id, "name": u.display_name} for u in all_users],
         )
 
-    # --- все подразделения (для глобальных ролей) -----------------------------
-    # Вычисляем ДО основного блока и всегда передаём в шаблон: на странице
-    # «Администрирование» админ/координатор должен видеть и переключатель
-    # пространств, и форму создания нового подразделения — независимо от того,
-    # какое пространство открыто сейчас. Раньше список подразделений собирался
-    # только при открытом пространстве, а форма создания существовала лишь в
-    # пустом состоянии: после первого подразделения UI лишался кнопки «+
-    # Подразделение», и казалось, что создать можно только одно.
-    depts = []
+    # --- все подразделения ---------------------------------------------------
+    # Админ/координатор: все активные пространства системы (переключатель +
+    # вкладка «Подразделения»). Руководитель: только свои подразделения.
     if ctx.is_global:
-        depts = [{"id": d.id, "name": d.name} for d in
-                 (await session.scalars(
-                     select(Department).where(Department.is_active == True)  # noqa: E712
-                     .order_by(Department.name))).all()]
+        scope_depts = [{"id": d.id, "name": d.name} for d in
+                       (await session.scalars(
+                           select(Department).where(Department.is_active == True)  # noqa: E712
+                           .order_by(Department.name))).all()]
+        dept_list = await _dept_list(include_inactive=True)
+    else:
+        mine = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1]),
+                                     Department.is_active == True)  # noqa: E712
+            .order_by(Department.name))).all()
+        scope_depts = [{"id": d.id, "name": d.name} for d in mine]
+        dept_list = []
 
     # --- состав участников --------------------------------------------------
     members = (await session.scalars(
@@ -173,13 +208,16 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
 
     return await render_page(
         request, "admin_dept.html", module_key=MODULE_KEY, user=user, session=session,
-        page_title="Администрирование подразделения",
-        is_global_admin=(user.role.value == "ADMIN"),
-        page_sub="Участники, модули рабочего пространства и межпространственный шеринг",
+        page_title="Администрирование",
+        is_global_admin=ctx.can_admin_system,
+        can_manage=can_manage,
+        active_tab=tab or ("departments" if ctx.can_admin_system and dept is None else "overview"),
+        page_sub="Единая панель: подразделения, участники, учётные записи, модули, шеринг, журнал",
         counts={MODULE_KEY: len(member_rows)},
         department={"id": dept.id, "name": dept.name},
-        departments=depts,
-        can_manage=can_manage,
+        departments=scope_depts,
+        dept_list=dept_list,
+        dept_list_simple=[{"id": d["id"], "name": d["name"]} for d in dept_list if d["is_active"]],
         members=member_rows,
         modules=module_rows,
         shares_out=shares_out,
