@@ -439,3 +439,99 @@ class OutboxEvent(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+
+# ================= Сценарии уведомлений и рассылки (Telegram) =================
+
+class NotifyScenario(Base):
+    """Сценарий уведомления в Telegram.
+
+    - Базовые (is_base=True) создаёт/редактирует/удаляет ТОЛЬКО администратор;
+      они применимы ко всем пользователям и НЕ могут быть отключены пользователем
+      (флаг включён принудительно).
+    - Пользовательские сценарии создаёт пользователь в окне «Интеграции»;
+      видимость: private (только автор), department (подразделение), global (все).
+    - event_key — тип события ядра: assigned | executor_added | status_changed |
+      due_soon | overdue | created | comment | custom.
+    - entity_kinds — список видов сущностей (EntityKind), к которым применяется
+      ('' пустой = все); module_keys — то же для модулей.
+    - template — текст уведомления; плейсхолдеры: {title} {kind} {module}
+      {action} {changed} {due_date} {actor} {link}.
+    - department_id/source_global_id/is_active — та же модель преемственности
+      шаблонов, что и в справочниках refdata.
+    """
+    __tablename__ = "notify_scenarios"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    event_key: Mapped[str] = mapped_column(String(50), index=True)
+    entity_kinds: Mapped[list] = mapped_column(JSON, default=list)
+    module_keys: Mapped[list] = mapped_column(JSON, default=list)
+    template: Mapped[str] = mapped_column(Text, default="")
+    is_base: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), default="private")  # private|department|global
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=True, index=True)
+    source_global_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("notify_scenarios.id", ondelete="SET NULL"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class UserNotifyPref(Base):
+    """Настройка пользователя по сценарию: включено/выключено.
+
+    Для базовых (неотключаемых) сценариев запись не создаётся — эффективное
+    значение всегда True (сервер защищает от выключения).
+    """
+    __tablename__ = "user_notify_prefs"
+    __table_args__ = (UniqueConstraint("user_id", "scenario_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    scenario_id: Mapped[int] = mapped_column(
+        ForeignKey("notify_scenarios.id", ondelete="CASCADE"), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class NotifyTemplate(Base):
+    """Шаблон ручного уведомления (администрирование). Плейсхолдеры: {name} {login}."""
+    __tablename__ = "notify_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Notification(Base):
+    """Уведомление ручной рассылки: черновик с датой-временем отправки или факт."""
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    send_at: Mapped[datetime] = mapped_column(DateTime, index=True)   # naive UTC
+    audience_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    # {"mode":"all"} | {"mode":"users","user_ids":[..]} |
+    # {"mode":"department","department_id":N,"include_head":true} |
+    # {"mode":"heads"}
+    status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
+    # scheduled | sent | canceled
+    created_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    recipients_count: Mapped[int] = mapped_column(Integer, default=0)
+    delivered_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
