@@ -123,6 +123,14 @@ async def get_current_user(request: Request):
         if user is not None:
             for m in user.memberships:
                 _ = m.department_id  # скаляр уже загружен; связь department не трогаем
+        # Инвалидация кэша прав (acl_epoch): если сервер поднял эпоху ACL
+        # (смена ролей/участников), кука со старым epoch протухла — принудительный
+        # перевход. Куки без поля acl_epoch (выпущены до патча) принимаются как раньше.
+        if user is not None and "acl_epoch" in data:
+            from app.core.permcache import get_epoch, token_needs_refresh
+            if token_needs_refresh(data, await get_epoch(session)):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                                    "Сессия устарела (права изменены), войдите снова")
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись заблокирована")
     return user
