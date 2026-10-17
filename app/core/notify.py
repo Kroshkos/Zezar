@@ -204,10 +204,19 @@ def build_ctx(p: dict) -> dict:
 
 # ---------------- enqueue helpers (вызываются из HTTP-транзакций) ----------------
 
-def link_for(uid: str) -> str:
+KIND_PAGE = {
+    "task": "/tasks", "project": "/projects", "doc": "/docs", "soft": "/softs",
+    "grant": "/grants", "scholarship": "/schols", "priority": "/priority",
+    "meeting": "/meetings",
+}
+
+
+def link_for(uid: str, kind: str = "") -> str:
+    """Ссылка на сущность в системе (открывает профиль по клику из Telegram)."""
     from app.core.config import get_settings
     base = (get_settings().public_base_url or "").rstrip("/")
-    return f"{base}/?entity={uid}"
+    page = KIND_PAGE.get(kind or "", "/")
+    return f"{base}{page}?entity={uid}"
 
 
 async def emit_entity_event(session: AsyncSession, *, action: str, ent: Entity,
@@ -217,7 +226,7 @@ async def emit_entity_event(session: AsyncSession, *, action: str, ent: Entity,
         "action": action, "event_keys": sorted(ACTION_EVENT_KEYS.get(action, {action})),
         "entity_id": ent.id, "entity_uid": ent.uid,
         "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-        "actor": actor_name, "details": details, "link": link_for(ent.uid),
+        "actor": actor_name, "details": details, "link": link_for(ent.uid, ent.kind.value),
     }))
 
 
@@ -250,7 +259,7 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "action": "due_soon", "event_keys": ["due_soon"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
-            "details": {"due_date": ent.due_date}, "link": link_for(ent.uid)}))
+            "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     await session.commit()
     return cnt

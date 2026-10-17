@@ -11,9 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import decrypt_secret, encrypt_secret, get_current_user
 from app.deps import session_dep
-from app.models.core import Department, Role, User
+from app.models.core import Department, EntityKind, Role, User
 from app.ui import render_page, templates as core_templates
 
 router = APIRouter()
@@ -177,6 +178,8 @@ async def telegram_steps(user: User = Depends(get_current_user)):
     return {
         "bot": bot,
         "login": user.login,
+        "bot_configured": bool(s.telegram_bot_token),
+        "public_base_url": s.public_base_url,
         "steps": [
             f"Откройте в Telegram чат с ботом {bot} и нажмите /start (или сразу напишите сообщение).",
             "Первым сообщением отправьте ваш логин от системы ЦЕЗАРЬ — вот он: " + user.login,
@@ -188,6 +191,15 @@ async def telegram_steps(user: User = Depends(get_current_user)):
                 "игнорирует и удаляет. Команды: /mute — отключить уведомления, "
                 "/unmute — включить.",
     }
+
+
+@router.post("/api/profile/calendar/unbind")
+async def calendar_unbind(user: User = Depends(get_current_user),
+                          session: AsyncSession = Depends(session_dep)):
+    """Отвязать Яндекс.Календарь (app-пароль стирается, синхронизация останавливается)."""
+    user.yandex_cal_app_password_enc = None
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/api/profile/telegram/unbind")
@@ -208,3 +220,27 @@ async def integrations_state(user: User = Depends(get_current_user)):
             "calendar_linked": bool(decrypt_secret(user.yandex_cal_app_password_enc)),
             "calendar_name": user.yandex_cal_name,
             "email": user.email}
+
+
+@router.get("/integrations")
+async def integrations_page(request: Request,
+                            user: User = Depends(get_current_user),
+                            session: AsyncSession = Depends(session_dep)):
+    """Полноценное окно «Интеграции» (не модалка): Telegram-привязка, сценарии
+    уведомлений (базовые неотключаемые + пользовательские), тест доставки."""
+    from app.core import notify as notify_core
+    scenarios = await notify_core.scenarios_for_user(session, user)
+    return templates.TemplateResponse(request, "integrations.html", {
+        "user": user,
+        "page_title": "Интеграции",
+        "scenarios": scenarios,
+        "event_keys": ["assigned", "executor_added", "status_changed", "due_soon",
+                       "overdue", "created", "updated", "shared", "done", "custom"],
+        "entity_kinds": [k.value for k in EntityKind],
+        "entity_kind_labels": notify_core.ENTITY_KIND_LABELS,
+        "telegram_linked": bool(user.telegram_chat_id),
+        "telegram_muted": user.telegram_optout == "all",
+        "calendar_linked": bool(decrypt_secret(user.yandex_cal_app_password_enc)),
+        "calendar_name": user.yandex_cal_name or "Цезарь",
+        "public_base_url": get_settings().public_base_url,
+    })

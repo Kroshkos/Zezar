@@ -69,6 +69,10 @@
           title="Справочники: статусы, типы, приоритеты, маршруты, группы задач. Данные хранятся в базе данных.">📚 Справочники</button>
   {% endif %}
   <button class="adm-tab" data-tab="sharing" onclick="showTab('sharing')">🔗 Шеринг</button>
+  {% if is_admin_global %}
+  <button class="adm-tab" data-tab="notify" onclick="showTab('notify')"
+          title="Базовые сценарии уведомлений, шаблоны и рассылки. Данные хранятся в базе.">🔔 Уведомления</button>
+  {% endif %}
   <button class="adm-tab" data-tab="events" onclick="showTab('events')">📜 Журнал</button>
 </div>
 
@@ -349,11 +353,76 @@
     <div id="evList" class="muted">Откройте вкладку для загрузки…</div>
   </div>
 </section>
+{% if is_admin_global %}
+<!-- ===================== Уведомления (Telegram): сценарии / шаблоны / рассылки ===================== -->
+<section class="adm-pane" id="pane-notify">
+  <div id="ntgStatus" class="card pad" style="margin-bottom:14px"><span class="muted">Проверка конфигурации доставки…</span></div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">🛡 Базовые сценарии уведомлений</h3>
+      <span class="muted">Применимы ко всем пользователям; пользователь не может их отключить</span>
+      <button class="btn sm primary" style="margin-left:auto" onclick="nscForm()">➕ Создать</button>
+    </div>
+    <div id="nscList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">📄 Шаблоны уведомлений</h3>
+      <span class="muted">Для ручных рассылок; плейсхолдеры {name} {login}</span>
+      <button class="btn sm primary" style="margin-left:auto" onclick="ntplForm()">➕ Создать</button>
+    </div>
+    <div id="ntplList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <h3 style="margin:0 0 8px">📣 Рассылка пользователям</h3>
+    <p class="muted" style="margin:0 0 10px">Наименование, содержание, дата/время отправки и аудитория: все, конкретные пользователи, участники подразделения (± руководитель), все руководители. Отправка — фактическая доставка в Telegram через очередь.</p>
+    <form id="bcFrm" style="display:grid;gap:9px;max-width:720px">
+      <label class="sub">Шаблон (подставит название и текст)
+        <select name="template_id" class="adm-inp" onchange="bcApplyTpl(this.value)"><option value="">— без шаблона —</option></select></label>
+      <label class="sub">Наименование уведомления<input name="title" class="adm-inp" required maxlength="300"></label>
+      <label class="sub">Содержание<textarea name="body" rows="4" class="adm-inp" required></textarea></label>
+      <label class="sub">Дата и время отправки<input name="send_at" type="datetime-local" class="adm-inp" required></label>
+      <label class="sub">Кому отправить
+        <select name="mode" class="adm-inp" onchange="bcAudChange()">
+          <option value="all">Всем пользователям</option>
+          <option value="users">Конкретным пользователям</option>
+          <option value="department">Подразделению (участники + руководитель)</option>
+          <option value="heads">Всем руководителям подразделений</option>
+        </select></label>
+      <div id="bcAudUsers" style="display:none">
+        <label class="sub">Пользователи (Ctrl/Cmd+клик — несколько)<select name="user_ids" multiple size="6" class="adm-inp" id="bcUserSel"></select></label>
+      </div>
+      <div id="bcAudDept" style="display:none">
+        <label class="sub">Подразделение<select name="department_id" class="adm-inp" id="bcDeptSel"></select></label>
+        <label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" name="include_head" checked> включить руководителя подразделения</label>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" type="submit">📨 Отправить</button>
+        <span id="bcPreview" class="muted"></span>
+      </div>
+    </form>
+    <h4 style="margin:16px 0 6px">История рассылок</h4>
+    <div id="bcList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">🚚 Очередь доставки (Telegram)</h3>
+      <button class="btn sm ghost" style="margin-left:auto" onclick="loadOutbox()">⟳ Обновить</button>
+    </div>
+    <div id="ntgOutbox" class="muted">Откройте вкладку для загрузки…</div>
+  </div>
+</section>
+{% endif %}
 {% else %}
 {# Нет активного пространства — заглушки, чтобы JS showTab() не падал #}
 <section class="adm-pane" id="pane-modules"></section>
 <section class="adm-pane" id="pane-refdata"></section>
 <section class="adm-pane" id="pane-sharing"></section>
+{% if is_admin_global %}<section class="adm-pane" id="pane-notify"></section>{% endif %}
 <section class="adm-pane" id="pane-events">
   <div class="card pad"><p class="muted" style="margin:0">Журнал доступен после выбора подразделения.</p></div>
 </section>
