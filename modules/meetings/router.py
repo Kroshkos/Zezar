@@ -18,7 +18,8 @@ from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, Entity, EntityKind, EntityShare, Permission, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
+    StatusSet, User,
 )
 from app.models.module_payloads import MeetingPayload
 from app.ui import render_page
@@ -47,6 +48,8 @@ class MeetingIn(BaseModel):
     description: str | None = ""
     department_id: int | None = None         # для админа/координатора: чьё пространство
     responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []        # исполнители/ответственные (несколько, как в прототипе)
+    project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
 
     model_config = {"populate_by_name": True}
 
@@ -55,8 +58,15 @@ async def _load_payload(session: AsyncSession, ent_id: int) -> MeetingPayload | 
     return await session.scalar(select(MeetingPayload).where(MeetingPayload.entity_id == ent_id))
 
 
+def _executors(ent: Entity) -> list[dict]:
+    """Список исполнителей [{id,name}] из денормализованного extra_json."""
+    return (ent.extra_json or {}).get("executors") or []
+
+
 def _meet_dict(ent: Entity, p: MeetingPayload | None, perm: Permission | None,
-               resp_names: list[str], cross_dept: bool = False) -> dict:
+               resp_names: list[str], cross_dept: bool = False,
+               project_title: str | None = None) -> dict:
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -68,6 +78,10 @@ def _meet_dict(ent: Entity, p: MeetingPayload | None, perm: Permission | None,
         "agenda": (p.agenda if p else []) or [],
         "decisions": (p.decisions if p else []) or [],
         "linked_task_uids": (p.linked_task_uids if p else []) or [],
+        "project_entity_uid": p.project_entity_uid if p else None,
+        "project_title": project_title or "",
+        "executors": execs,
+        "executor_names": [e["name"] for e in execs] or resp_names,
         "responsibles": resp_names,
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
@@ -93,6 +107,49 @@ async def _pick_department(session: AsyncSession, user: User, body: MeetingIn) -
     return mine[0]
 
 
+async def _visible_projects(session: AsyncSession, ctx: access.AccessContext) -> list[Entity]:
+    """Доступные пользователю проекты (для привязки сущностей модуля)."""
+    ents = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             access.entity_filter(ctx))
+        .options(selectinload(Entity.shares)))).all()
+    out = []
+    for ent in ents:
+        if await access.resolve_permission(session, ctx, ent) is None:
+            continue
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
+                and ent.owner_department_id not in ctx.department_ids:
+            continue
+        out.append(ent)
+    return out
+
+
+async def _project_titles(session: AsyncSession, payloads: list[MeetingPayload | None]) -> dict[str, str]:
+    """uid проекта -> заголовок (для карточек/форм; uid хранится в payload)."""
+    puids = {p.project_entity_uid for p in payloads if p and p.project_entity_uid}
+    if not puids:
+        return {}
+    rows = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             Entity.uid.in_(puids)))).all()
+    return {e.uid: e.title for e in rows}
+
+
+async def _check_project(session: AsyncSession, ctx: access.AccessContext,
+                         project_uid: str | None) -> None:
+    """Привязка к проекту: сущность проекта должна существовать и быть доступна."""
+    if not project_uid:
+        return
+    parent = await session.scalar(
+        select(Entity).where(Entity.uid == project_uid,
+                             Entity.kind == EntityKind.PROJECT))
+    if not parent:
+        raise HTTPException(404, "Проект не найден")
+    if not await access.resolve_permission(session, ctx, parent):
+        raise HTTPException(403, "Нет доступа к выбранному проекту")
+
+
 # ---------------- HTML ----------------
 
 @router.get("")
@@ -104,14 +161,14 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         select(Entity).where(Entity.kind == EntityKind.MEETING, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
         .order_by(Entity.due_date.desc()))).all()
-    items = []
+    payloads: list[MeetingPayload | None] = []
+    rows: list[tuple] = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
         # Инвариант изоляции пространств (см. list_meetings)
-        cross = bool(await session.scalar(
-        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
+        cross = await _has_shares(session, ent)
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
@@ -121,8 +178,13 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append(_meet_dict(ent, await _load_payload(session, ent.id), perm,
-                                resp_names, cross_dept=cross))
+        pl = await _load_payload(session, ent.id)
+        payloads.append(pl)
+        rows.append((ent, pl, perm, resp_names, cross))
+    ptitles = await _project_titles(session, payloads)
+    items = [_meet_dict(e, pl, p, rn, cross_dept=c,
+                        project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+             for e, pl, p, rn, c in rows]
     # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
     # администратора + собственные/активированные записи подразделения; набор
     # ограничен подключённым модулем данного workspace.
@@ -135,6 +197,22 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         depts = [{"id": d.id, "name": d.name} for d in
                  (await session.scalars(
                      select(Department).where(Department.is_active == True))).all()]  # noqa: E712
+    else:
+        drows = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
+        depts = [{"id": d.id, "name": d.name} for d in drows]
+    # сотрудники для назначения ответственных/исполнителей (несколько) — как people в прототипе
+    members = (await session.scalars(
+        select(DepartmentMember).where(
+            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+    people: list[dict] = []
+    for m in members:
+        u = await session.get(User, m.user_id)
+        if u and u.is_active and not any(x["id"] == u.id for x in people):
+            people.append({"id": u.id, "name": u.display_name})
+    # проекты для привязки совещания (связанность категорий в рамках модулей)
+    projects = [{"uid": e.uid, "title": e.title}
+                for e in await _visible_projects(session, ctx)]
     return await render_page(
         request, "meetings.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Совещания",
@@ -142,7 +220,7 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         counts={MODULE_KEY: len(items)},
         meetings=items,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        departments=depts,
+        departments=depts, people=people, projects=projects,
     )
 
 
@@ -155,13 +233,13 @@ async def list_meetings(user: User = Depends(get_current_user),
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.MEETING, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles)))).all()
-    out = []
+    rows: list[tuple] = []
+    payloads: list[MeetingPayload | None] = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             continue
-        cross = bool(await session.scalar(
-        select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
+        cross = await _has_shares(session, ent)
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue
@@ -171,21 +249,28 @@ async def list_meetings(user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append(_meet_dict(ent, await _load_payload(session, ent.id), perm,
-                              resp_names, cross_dept=cross))
-    return out
+        pl = await _load_payload(session, ent.id)
+        payloads.append(pl)
+        rows.append((ent, pl, perm, resp_names, cross))
+    ptitles = await _project_titles(session, payloads)
+    return [_meet_dict(e, pl, p, rn, cross_dept=c,
+                       project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+            for e, pl, p, rn, c in rows]
 
 
 @router.post("")
 async def create_meeting(body: MeetingIn, user: User = Depends(get_current_user),
                          session: AsyncSession = Depends(session_dep)):
     dept_id = await _pick_department(session, user, body)
+    ctx = await access.build_context(session, user)
+    await _check_project(session, ctx, body.project_entity_uid)
     ent = await entity_service.create_entity(
         session, user, kind=EntityKind.MEETING, module_key=MODULE_KEY,
         owner_department_id=dept_id, title=body.title.strip(),
         description=body.description or None, status_key=body.status_key,
         due_date=body.due_date or None,
         responsible_user_id=body.responsible_user_id or user.id,
+        executor_user_ids=body.executor_user_ids or None,
     )
     # нормализуем 'HH:MM' -> 'HH:MM:00', иначе fmt_iso в ICS-хуке не распознает значение
     t = (body.time_ or "").strip()
@@ -196,13 +281,14 @@ async def create_meeting(body: MeetingIn, user: User = Depends(get_current_user)
         entity_id=ent.id, num=body.num or None, chair=body.chair or None,
         secretary=body.secretary or None, attendees=body.attendees or None,
         time_=body.time_ or None, location=body.location or None,
-        start_at=start_at, agenda=[], decisions=[], linked_task_uids=[]))
+        start_at=start_at, project_entity_uid=body.project_entity_uid or None,
+        agenda=[], decisions=[], linked_task_uids=[]))
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
 _MEET_FIELDS = {"num", "chair", "secretary", "attendees", "location", "agenda",
-                "decisions", "linked_task_uids"}
+                "decisions", "linked_task_uids", "project_entity_uid"}
 
 
 @router.patch("/{uid}")
@@ -220,12 +306,20 @@ async def patch_meeting(uid: str, body: dict, user: User = Depends(get_current_u
                     if k in {"title", "description", "status_key", "due_date"}}
     if "time" in body:
         body["time_"] = body.pop("time")
+    if "project_entity_uid" in body and body["project_entity_uid"]:
+        await _check_project(session, ctx, body["project_entity_uid"])
     await entity_service.update_entity(session, user, ent, core_changes)
+    if "executor_user_ids" in body:
+        try:
+            await entity_service.set_executors(
+                session, user, ent, body["executor_user_ids"] or [])
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     payload = await _load_payload(session, ent.id)
     if payload:
         for f in _MEET_FIELDS:
             if f in body:
-                setattr(payload, f, body[f])
+                setattr(payload, f, body[f] or None if isinstance(body[f], str) else body[f])
         if "time_" in body or "due_date" in body:
             d = body.get("due_date", ent.due_date)
             t = (body.get("time_", payload.time_) or "").strip()

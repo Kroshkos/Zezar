@@ -37,7 +37,7 @@ function renderTaskTable(){
               (t.perm!=='full'&&t.shared_to!==false?'':'');
     return '<tr><td style="min-width:230px"><div class="nm">'+esc(t.title)+'</div>'
       +'<div class="sub">'+esc(t.description||'')+'</div></td>'
-      +'<td style="font-size:12.5px">'+esc(t.responsibles.join(', ')||'—')+'</td>'
+      +'<td style="font-size:12.5px">'+esc((t.executor_names&&t.executor_names.length?t.executor_names:t.responsibles).join(', ')||'—')+'</td>'
       +'<td><span class="badge '+pr.color+'">'+pr.label+'</span></td>'
       +'<td style="font-size:12.5px;white-space:nowrap">'+fmt(t.due_date)+(od?' <span class="badge b-red">просрочено</span>':'')+'</td>'
       +'<td style="font-size:12px">'+esc(deptName(t.department_id))+(t.can_share?' <button class="icobtn" title="Расшарить" onclick="shareTask(\''+t.uid+'\')">🔗</button>':'')+'</td>'
@@ -66,8 +66,17 @@ function taskFormModal(uid){
   const t=uid?D.tasks.find(x=>x.uid===uid):null;
   const prioSel=D.priorities.map(p=>'<option value="'+p.key+'" '+(t&&t.priority_key===p.key?'selected':'')+'>'+esc(p.label)+'</option>').join('');
   const statSel=D.statuses.map(s=>'<option value="'+s.key+'" '+(t&&t.status_key===s.key?'selected':'')+'>'+esc(s.label)+'</option>').join('');
+  // Исполнители — может быть несколько (мульти-select, как «Добавить сотрудника/исполнителя» в прототипе)
+  let execSel='';
+  if(D.people.length){
+    const cur=new Set((t&&t.executors||[]).map(e=>String(e.id)));
+    execSel='<div style="grid-column:1/-1"><label>Исполнители (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+      +'<select name="executor_user_ids" id="texec" multiple size="4" style="width:100%">'
+      +D.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';
+  }
   let respSel='';
-  if(D.people.length){respSel='<div><label>Ответственный</label><select name="responsible_user_id">'
+  if(D.people.length){respSel='<div><label>Ответственный (основной)</label><select name="responsible_user_id">'
     +D.people.map(p=>'<option value="'+p.id+'" '+(t&&t.responsibles.includes(p.name)?'selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></div>';}
   let deptSel='';
   if(D.departments.length&&!t){deptSel='<div><label>Подразделение</label><select name="department_id">'
@@ -78,19 +87,25 @@ function taskFormModal(uid){
     +'<div><label>Срок</label><input type="date" name="due_date" value="'+(t&&t.due_date||'')+'"></div>'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
     +respSel+deptSel+'</div>'
+    +execSel
     +'<label>Описание</label><textarea name="description" rows="2">'+esc(t?t.description:'')+'</textarea>';
   openModal(t?'Редактирование задачи':'Новая задача',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите текст задачи');return}
     const pl={title:fd.title.trim(),description:fd.description,priority_key:fd.priority_key,
               due_date:fd.due_date||null,status_key:fd.status_key};
+    const sel=f.querySelector('#texec');
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(f.responsible_user_id)pl.responsible_user_id=+f.responsible_user_id.value;
     if(f.department_id)pl.department_id=+f.department_id.value;
     if(t){
       await api('/api/tasks/'+t.uid,{method:'PATCH',body:JSON.stringify(pl)});
-      Object.assign(t,pl);toast('Сохранено · уведомим ответственных');
+      Object.assign(t,pl);
+      if(pl.executor_user_ids)t.executor_names=pl.executor_user_ids.map(id=>(D.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+      toast('Сохранено · уведомим исполнителей');
     }else{
       const r=await api('/api/tasks',{method:'POST',body:JSON.stringify(pl)});
       D.tasks.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
+        executor_names:(pl.executor_user_ids||[]).map(id=>(D.people.find(p=>p.id===id)||{}).name||'').filter(Boolean),
         department_id:pl.department_id||(D.people[0]&&0)},pl));
       toast('Задача создана');
     }

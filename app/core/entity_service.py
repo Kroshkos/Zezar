@@ -40,6 +40,7 @@ async def create_entity(
     status_key: str | None = None, priority_key: str | None = None,
     due_date: str | None = None, tags: list | None = None,
     extra_json: dict | None = None, responsible_user_id: int | None = None,
+    executor_user_ids: list[int] | None = None,
     share_with: list[tuple[int, Permission]] | None = None,
 ) -> Entity:
     """Создание сущности.
@@ -48,6 +49,11 @@ async def create_entity(
     в котором участвуют несколько подразделений): [(dept_id, permission), ...].
     Для каждого участвующего подразделения создаётся свой ответственный/слот
     (инвариант ТЗ «несколько ответственных» реализуется через ensure_responsibles).
+
+    executor_user_ids — исполнители (может быть несколько, как в прототипе).
+    Хранятся денормализованно в extra_json['executors']=[{id,name}]; если
+    исполнитель состоит в подразделении-владельце, он дополнительно получает
+    слот ответственного в этом пространстве (доступ + уведомления).
     """
     ent = Entity(
         uid=_uid(), kind=kind, module_key=module_key,
@@ -56,6 +62,17 @@ async def create_entity(
         due_date=due_date, tags=tags or [], extra_json=extra_json or {},
         sync_state=SyncState.PENDING, cal_uid=f"caesar-{uuid.uuid4().hex[:10]}@app",
     )
+    # Исполнители (несколько, как в прототипе): денормализованно в extra_json —
+    # без миграции схемы, имена фиксируются на момент назначения (историчность).
+    exec_ids = [e for e in dict.fromkeys(executor_user_ids or []) if e]
+    if exec_ids:
+        users = (await session.scalars(select(User).where(User.id.in_(exec_ids)))).all()
+        umap = {u.id: u.display_name for u in users}
+        missing = [e for e in exec_ids if e not in umap]
+        if missing:
+            raise ValueError(f"Исполнители не найдены: {missing}")
+        ent.extra_json = {**ent.extra_json,
+                          "executors": [{"id": e, "name": umap[e]} for e in exec_ids]}
     session.add(ent)
     await session.flush()
     for dept_id, perm in (share_with or []):
@@ -131,10 +148,78 @@ async def create_entity(
                 entity_id=ent.id, department_id=external_resp_dept,
                 user_id=responsible_user_id))
     await access.ensure_responsibles(session, ent)
+    # Исполнители из подразделения-владельца получают слот ответственного в этом
+    # пространстве (доступ + уведомления). Слот владельца занят «основным» —
+    # освобождаем его только если явного responsible не задавали (тогда основным
+    # становится первый исполнитель); иначе исполнители занимают свободные слоты
+    # принимающих подразделений (уже расшаренных выше) либо игнорируются как
+    # purely-информационные (полный список живёт в extra_json.executors).
+    for e in exec_ids:
+        if e == responsible_user_id:
+            continue
+        slot = await session.scalar(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.user_id.is_(None),
+                EntityResponsible.department_id.in_(
+                    select(DepartmentMember.department_id).where(
+                        DepartmentMember.user_id == e))))
+        if slot is not None:
+            slot.user_id = e
     await _log_and_emit(session, user, "create", ent,
                         {"title": title, "responsible_user_id": responsible_user_id,
+                         "executors": exec_ids,
                          "shared_with": [d for d, _ in (share_with or [])]})
     return ent
+
+
+async def set_executors(
+    session: AsyncSession, user: User, ent: Entity, executor_user_ids: list[int],
+) -> None:
+    """Обновление списка исполнителей сущности (может быть несколько).
+
+    Синхронизирует денормализованный extra_json['executors'] и слоты
+    ответственных внутри подразделений, которым сущность принадлежит/расшарена.
+    """
+    ids = [e for e in dict.fromkeys(executor_user_ids or []) if e]
+    users = (await session.scalars(select(User).where(User.id.in_(ids)))).all() if ids else []
+    umap = {u.id: u.display_name for u in users}
+    missing = [e for e in ids if e not in umap]
+    if missing:
+        raise ValueError(f"Исполнители не найдены: {missing}")
+    ent.extra_json = {**(ent.extra_json or {}),
+                      "executors": [{"id": e, "name": umap[e]} for e in ids]}
+    # освобождаем неиспользуемые слоты, занимаемые бывшими исполнителями
+    slots = (await session.scalars(
+        select(EntityResponsible).where(
+            EntityResponsible.entity_id == ent.id,
+            EntityResponsible.is_primary == False))).all()  # noqa: E712
+    for s in slots:
+        if s.user_id and s.user_id not in ids and s.user_id != (
+                await session.scalar(
+                    select(EntityResponsible.user_id).where(
+                        EntityResponsible.entity_id == ent.id,
+                        EntityResponsible.is_primary == True))):  # noqa: E712
+            s.user_id = None
+    for e in ids:
+        occupied = await session.scalar(
+            select(EntityResponsible.id).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.user_id == e))
+        if occupied:
+            continue
+        slot = await session.scalar(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.user_id.is_(None),
+                EntityResponsible.department_id.in_(
+                    select(DepartmentMember.department_id).where(
+                        DepartmentMember.user_id == e))))
+        if slot is not None:
+            slot.user_id = e
+    ent.sync_state = SyncState.PENDING
+    await _log_and_emit(session, user, "update", ent,
+                        {"changed": {"executors": ids}})
 
 
 async def update_entity(

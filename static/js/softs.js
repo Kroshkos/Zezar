@@ -26,8 +26,10 @@ function renderSoftCards(){
       +'<h3 style="margin:11px 0 5px">'+esc(s.title||'Разработка')+'</h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+sfmt(s.due_date)
       +(s.env?' · 🖥 '+esc(s.env):'')+'</div>'
-      +(s.responsibles.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(s.responsibles.join(', '))+'</div>':'')
+      +(s.executor_names&&s.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(s.executor_names.join(', '))+'</div>':'')
+      +(!s.executor_names&&s.responsibles.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(s.responsibles.join(', '))+'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
+      +(s.project_title?'<span class="lchip">📁 '+esc(s.project_title)+'</span>':'')
       +(s.repo_url?'<a class="lchip" href="'+esc(s.repo_url)+'" target="_blank" rel="noopener">🗂 репозиторий</a>':'')
       +(s.cross_dept?'<span class="lchip">🔗 межпространственное</span>':'')
       +(s.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')
@@ -53,28 +55,63 @@ function softFormModal(uid){
   let deptSel='';
   if(SD.departments.length&&!s){deptSel='<div><label>Подразделение</label><select name="department_id">'
     +SD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
+  // Тип ПО — из иерархического справочника (админ + подразделение)
+  let typeField='';
+  if(SD.soft_types&&SD.soft_types.length){
+    typeField='<div><label>Тип ПО</label><select name="soft_type">'
+      +'<option value="">— не указан —</option>'
+      +SD.soft_types.map(t=>'<option value="'+esc(t.label)+'" '+((s&&s.soft_type===t.label)?'selected':'')+'>'+esc(t.label)+'</option>').join('')
+      +'</select></div>';
+  } else {
+    typeField='<div><label>Тип ПО</label><input name="soft_type" value="'+esc(s&&s.soft_type||'')+'"></div>';
+  }
+  // Привязка к проекту (связанность категорий в рамках подключённых модулей)
+  let projSel='';
+  if(SD.projects&&SD.projects.length){
+    projSel='<div><label>Проект (привязка)</label><select name="project_entity_uid">'
+      +'<option value="">— без привязки —</option>'
+      +SD.projects.map(p=>'<option value="'+p.uid+'" '+(s&&s.project_entity_uid===p.uid?'selected':'')+'>'+esc(p.title)+'</option>').join('')
+      +'</select></div>';}
+  else if(s&&s.project_title){projSel='<input type="hidden" name="project_entity_uid" value="'+esc(s.project_entity_uid||'')+'">';}
+  // Исполнители — может быть несколько (мульти-select, как в задачах/проектах)
+  let execSel='';
+  if(SD.people&&SD.people.length){
+    const cur=new Set(((s&&s.executors)||[]).map(e=>String(e.id)));
+    execSel='<div style="grid-column:1/-1"><label>Исполнители (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+      +'<select name="executor_user_ids" id="sexec" multiple size="4" style="width:100%">'
+      +SD.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';}
   const body='<label>Название *</label><input name="title" required value="'+esc(s?s.title:'')+'">'
     +'<div class="frow">'
     +'<div><label>Дата (план/релиз)</label><input type="date" name="due_date" value="'+(s&&s.due_date||'')+'"></div>'
-    +'<div><label>Тип ПО</label><input name="soft_type" value="'+esc(s&&s.soft_type||'')+'"></div>'
+    +typeField
     +'<div><label>Окружение/стенд</label><input name="env" value="'+esc(s&&s.env||'')+'"></div>'
     +'</div><div class="frow">'
     +'<div><label>Репозиторий</label><input name="repo_url" placeholder="https://…" value="'+esc(s&&s.repo_url||'')+'"></div>'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
-    +'</div>'+deptSel
+    +'</div><div class="frow">'+deptSel+projSel+'</div>'
+    +execSel
     +'<label>Описание</label><textarea name="description" rows="2">'+esc(s?s.description:'')+'</textarea>';
   openModal(s?'Редактирование записи':'Новая разработка',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите название');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
               status_key:fd.status_key,soft_type:fd.soft_type,env:fd.env,repo_url:fd.repo_url};
+    if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
+    const sel=f.querySelector('#sexec');
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(f.department_id)pl.department_id=+f.department_id.value;
+    const enames=(pl.executor_user_ids||[]).map(id=>(SD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+    const ptitle=pl.project_entity_uid?((SD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
     if(s){
       await api('/api/softs/'+s.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(s,pl);
+      if(pl.executor_user_ids)s.executor_names=enames;
+      if(pl.project_entity_uid!==undefined)s.project_title=ptitle;
       toast('Сохранено · событие обновится в календарях');
     }else{
       const r=await api('/api/softs',{method:'POST',body:JSON.stringify(pl)});
-      SD.softs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],stages:[]},pl));
+      SD.softs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],stages:[],
+        executor_names:enames,project_title:ptitle},pl));
       toast('Запись создана');
     }
     closeModal();renderSoftCards();

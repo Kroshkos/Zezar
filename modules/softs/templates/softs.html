@@ -18,7 +18,8 @@
 <div class="empty" id="sempty" hidden>💻<p>Записей нет. Нажмите «＋ Новая разработка».</p></div>
 
 <script id="softData" type="application/json">
-{{ {'softs': softs, 'statuses': statuses, 'departments': departments} | tojson }}
+{{ {'softs': softs, 'statuses': statuses, 'departments': departments,
+    'people': people, 'projects': projects, 'soft_types': soft_types} | tojson }}
 </script>
 {% endblock %}
 
