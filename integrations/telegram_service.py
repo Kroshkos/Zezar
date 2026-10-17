@@ -39,7 +39,10 @@ async def call_bot(method: str, **kwargs) -> dict | None:
     """Вызов произвольного метода Bot API (sendMessage/deleteChatMessage и т.п.)."""
     s = get_settings()
     if not s.telegram_bot_token:
-        return None
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN не задан — уведомления в Telegram не доставляются. "
+            "Задайте токен бота в переменных окружения приложения (Amvera: "
+            "«Переменные и секреты») и перезапустите сервис.")
     async with _bot_session() as client:
         r = await client.post(BOT_API.format(token=s.telegram_bot_token, method=method),
                               json=kwargs)

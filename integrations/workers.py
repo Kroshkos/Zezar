@@ -95,6 +95,10 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     получателя проверяется: хотя бы один включённый сценарий с event_key из
     p['event_keys'] подходит под kind/module сущности. Базовые сценарии всегда
     включены — отключить их пользователь не может.
+
+    p['target_user_ids'] — адресная доставка (назначение ответственного/
+    исполнителя): уведомление получают ТОЛЬКО эти пользователи, остальные
+    участники не задействуются.
     """
     if not _gs().telegram_notify_enabled:
         return
@@ -103,6 +107,11 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     if ent is None:
         return
     recipients = await _recipients_map(session, ent_id)
+    targets = p.get("target_user_ids")
+    if targets:
+        # адресное событие: цели НЕ обязаны уже быть в карте получателей
+        # (слот исполнителя мог ещё не создаться к моменту enqueue)
+        recipients = {int(t): ["resp", "exec"] for t in targets if t}
     if not recipients:
         return
     ctx = notify_core.build_ctx(p)
@@ -134,7 +143,14 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
 
 
 async def _handle_tg_notify(session, p: dict) -> None:
-    await _deliver_by_scenarios(session, p, ["resp", "exec"])
+    payload = dict(p or {})
+    if "event_keys" not in payload:
+        # обратная совместимость: события, поставленные до introduction
+        # event_keys (например, legacy OutboxEvent из entity_service)
+        from app.core.notify import ACTION_EVENT_KEYS
+        action = payload.get("action", "")
+        payload["event_keys"] = sorted(ACTION_EVENT_KEYS.get(action, {action}))
+    await _deliver_by_scenarios(session, payload, ["resp", "exec"])
 
 
 async def _handle_tg_due(session, p: dict) -> None:
