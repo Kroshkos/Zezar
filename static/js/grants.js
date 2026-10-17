@@ -23,7 +23,7 @@ function renderGrantCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+esc(g.amount||'')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(g.title||'Грант')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+g.uid+'\');return false">'+esc(g.title||'Грант')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">🏦 '+esc(g.program||'—')
       +' · 📅 дедлайн '+gfmt(g.due_date)
       +(g.submitted_at?' · подан '+gfmt(g.submitted_at):'')+'</div>'

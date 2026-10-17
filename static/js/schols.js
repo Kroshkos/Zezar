@@ -23,7 +23,7 @@ function renderScholCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+esc(x.amount||'')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(x.title||'Стипендия')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+x.uid+'\');return false">'+esc(x.title||'Стипендия')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">👨‍🎓 '+esc(x.person_name||'—')
       +' · 🏅 '+esc(x.schol_type||'—')+' · 📅 '+xfmt(x.due_date)+'</div>'
       +(x.executor_names&&x.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(x.executor_names.join(', '))+'</div>':'')

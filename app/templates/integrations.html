@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{# Полноценное окно «Интеграции» (по образцу sipm_lite_v3.html, но данные — из БД):
+   - привязка Telegram + инструкция;
+   - Яндекс.Календарь (app-пароль CalDAV);
+   - сценарии уведомлений: базовые (неотключаемые) + пользовательские (создать/редактировать/удалить/вкл-выкл);
+   - проверка доставки: тестовое сообщение в Telegram. #}
+{% block actions %}
+<a class="btn" href="/" style="text-decoration:none">← В систему</a>
+{% endblock %}
+{% block content %}
+
+<div class="frow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:16px">
+  <div class="card pad">
+    <h3 style="margin:0 0 8px">💬 Telegram</h3>
+    <p class="sub" style="margin:0 0 10px">Бот присылает уведомления о назначении, смене статуса и сроках. Ссылки в сообщениях ведут на систему: <b>{{ public_base_url }}</b></p>
+    {% if telegram_linked %}
+      <p>Статус: <span class="badge b-green">привязан</span>
+        {% if telegram_muted %}<span class="badge b-gray">уведомления отключены командой /mute в боте</span>{% endif %}</p>
+    {% else %}
+      <p>Статус: <span class="badge b-red">не привязан</span></p>
+    {% endif %}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn sm" onclick="tgShowSteps()">📋 Инструкция привязки</button>
+      {% if telegram_linked %}<button type="button" class="btn sm ghost" onclick="tgTest()">📮 Проверить доставку</button>
+      <button type="button" class="btn sm ghost" onclick="tgUnbind()">Отвязать</button>{% endif %}
+    </div>
+    <div id="tgBindBox"></div>
+  </div>
+
+  <div class="card pad">
+    <h3 style="margin:0 0 8px">📅 Яндекс.Календарь</h3>
+    <p class="sub" style="margin:0 0 10px">Сроки задач и проектов синхронизируются в ваш календарь Яндекса (CalDAV).</p>
+    {% if calendar_linked %}
+      <p>Статус: <span class="badge b-green">подключён</span> · календарь «{{ calendar_name }}»</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn sm" onclick="calForm()">🔄 Переподключить</button>
+        <button type="button" class="btn sm ghost" onclick="calUnbind()">Отключить</button>
+      </div>
+    {% else %}
+      <p>Статус: <span class="badge b-red">не подключён</span></p>
+      <button type="button" class="btn sm primary" onclick="calForm()">Подключить календарь</button>
+    {% endif %}
+    <div id="calBox"></div>
+  </div>
+</div>
+
+<div class="card pad">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+    <h3 style="margin:0">🔔 Сценарии уведомлений</h3>
+    <span class="sub">Что изменилось — и придёт уведомление в Telegram</span>
+    <button class="btn sm primary" style="margin-left:auto" onclick="scnForm()">➕ Мой сценарий</button>
+  </div>
+  <p class="sub" style="margin:0 0 12px">Базовые сценарии администратора (назначение исполнителем, приближение срока и т.п.) действуют для всех и <b>не отключаются</b>. Пользовательские сценарии можно создавать, редактировать, удалять и включать/выключать.</p>
+  <div id="scnList"><p class="sub">Загрузка…</p></div>
+</div>
+
+<script id="intgData" type="application/json">{{ {'scenarios': scenarios, 'event_keys': event_keys, 'entity_kinds': entity_kinds, 'kind_labels': entity_kind_labels, 'telegram_linked': telegram_linked} | tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/integrations.js?v=20261017a"></script>
+{% endblock %}

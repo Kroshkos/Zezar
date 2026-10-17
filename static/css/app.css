@@ -238,3 +238,9 @@ table.tbl{width:100%;border-collapse:collapse}
   .topbar,.content{padding-left:16px;padding-right:16px}
   .paper{padding:26px}
 }
+
+/* Ссылка на профиль сущности (клик по названию в таблице/карточке) */
+.entlink{color:inherit;text-decoration:none;border-bottom:1px dashed #a5b4fc;cursor:pointer}
+.entlink:hover{color:var(--acc);border-bottom-style:solid}
+a.lchip{text-decoration:none;cursor:pointer;display:inline-block}
+a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}

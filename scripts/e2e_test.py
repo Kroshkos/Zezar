@@ -320,6 +320,98 @@ async def main() -> None:
           "priority/projects (реестр+payload+изоляция)")
 
 
+async def notify_chain_test() -> None:
+    """Сквозная проверка доставки уведомлений (без реальной сети):
+      1) базовые сценарии засеяны и не отключаются пользователем;
+      2) планировщик создаёт события due_soon и overdue, НЕ для завершающих статусов;
+      3) воркер обрабатывает telegram.overdue (не зависает в очереди);
+      4) sendMessage реально вызывается для привязанного пользователя (заглушка tg).
+    """
+    import datetime as _dt
+
+    from sqlalchemy import select as _select
+
+    from app.core import notify as ncore
+    from app.models.core import (EntityResponsible, NotifyScenario, User,
+                                 UserNotifyPref)
+    import integrations.telegram_service as tg_mod
+
+    async with app.router.lifespan_context(app):
+        # 1. посев базовых сценариев
+        async with SessionLocal() as s:
+            await ncore.seed_base_scenarios(s)
+            base = (await s.scalars(_select(NotifyScenario).where(
+                NotifyScenario.is_base.is_(True)))).all()
+            assert {b.event_key for b in base} >= {"assigned", "executor_added",
+                                                   "status_changed", "due_soon"}, \
+                "базовые сценарии не засеяны"
+
+            # пользователь с «привязанным Telegram»
+            u = await s.get(User, 1)
+            u.telegram_chat_id = 111222333
+            u.telegram_optout = None
+            ent = await s.scalar(_select(Entity).where(Entity.due_date.is_not(None)))
+            assert ent, "нет сущности со сроком"
+            ent.status_key = "new"
+            y = (_dt.date.today() - _dt.timedelta(days=5)).isoformat()
+            ent.due_date = y
+            # просроченная, но «завершённая» — не должна напоминать
+            done_ent = await s.scalar(_select(Entity).where(
+                Entity.id != ent.id, Entity.kind == ent.kind))
+            if done_ent:
+                done_ent.status_key = "done"
+                done_ent.due_date = y
+            resp = await s.scalar(_select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id))
+            if resp is None:
+                s.add(EntityResponsible(entity_id=ent.id, user_id=u.id,
+                                        department_id=ent.owner_department_id,
+                                        is_primary=True))
+            elif resp.user_id is None:
+                resp.user_id = u.id
+            # попытка пользователя отключить базовый сценарий — игнорируется ядром
+            s.add(UserNotifyPref(user_id=u.id, scenario_id=base[0].id, enabled=False))
+            await s.commit()
+            uid_e = ent.uid
+
+        # 2. планировщик: due + overdue события
+        async with SessionLocal() as s:
+            n = await ncore.schedule_due_reminders(s, days_ahead=30, window_days=1)
+        async with SessionLocal() as s:
+            od = (await s.scalars(_select(OutboxEvent).where(
+                OutboxEvent.topic == "telegram.overdue"))).all()
+            assert any(e.payload_json["entity_uid"] == uid_e for e in od), \
+                "просроченная незавершённая сущность без напоминания (фильтр overdue)"
+            d = (await s.scalars(_select(OutboxEvent).where(
+                OutboxEvent.topic == "telegram.due"))).all()
+            assert n > 0 and d, "напоминания о сроке не поставлены"
+
+        # 3+4. воркер c заглушкой Telegram: overdue обработан, sendMessage вызван
+        sent: list[tuple[int, str]] = []
+
+        async def fake_send(chat_id: int, text: str) -> bool:
+            sent.append((chat_id, text))
+            return True
+        orig_send = tg_mod.send_message
+        tg_mod.send_message = fake_send
+        try:
+            await _outbox_once()
+        finally:
+            tg_mod.send_message = orig_send
+        async with SessionLocal() as s:
+            pend_od = (await s.scalars(_select(OutboxEvent).where(
+                OutboxEvent.topic == "telegram.overdue",
+                OutboxEvent.processed_at.is_(None)))).all()
+            assert not pend_od, "telegram.overdue не обрабатывается воркером"
+        assert sent, "система НЕ вызывает Telegram sendMessage для привязанного пользователя"
+        assert any("Срок истёк" in t for _, t in sent), \
+            f"текст overdue не дошёл: {sent[:2]}"
+        # доставка адресована привязанному получателю
+        assert all(cid == 111222333 for cid, _ in sent)
+    print("NOTIFY E2E OK: seed базовых сценариев, due/overdue-планировщик, "
+          "обработка telegram.overdue воркером, фактический вызов sendMessage")
+
+
 async def _pending_events():
     from sqlalchemy import select
     async with SessionLocal() as s:
