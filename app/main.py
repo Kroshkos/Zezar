@@ -712,6 +712,11 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan, docs_url="/api/docs-op
 async def security_headers(request, call_next):
     """Базовые заголовки безопасности (без CDN-зависимостей, CSP под локальные ресурсы)."""
     response = await call_next(request)
+    # Мягкая инвалидация кэша прав: если get_current_user пометил куку протухшей
+    # по acl_epoch, перезаписываем её свежей в этом же ответе — пользователю не
+    # нужен перевход после чужих/собственных изменений ролей.
+    from app.core.security import attach_fresh_session_cookie
+    await attach_fresh_session_cookie(request, response)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
