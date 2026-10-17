@@ -32,6 +32,9 @@
 {% if departments %}
 <select id="deptSel" onchange="switchDept(this.value)"
         style="min-width:220px" title="Сменить управляемое пространство">
+  {% if is_admin_global %}
+  <option value="0" {% if not department %}selected{% endif %}>🌐 Вся система</option>
+  {% endif %}
   {% for d in departments %}
   <option value="{{ d.id }}" {% if department and d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
   {% endfor %}
@@ -61,14 +64,20 @@
   <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
   {% endif %}
   <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
-  <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
-  <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
-  <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
   {% if department %}
+  <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
+  {% endif %}
+  <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
+  {% if department %}
+  <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
+  {% endif %}
+  {% if department or is_admin_global %}
   <button class="adm-tab" data-tab="refdata" onclick="showTab('refdata')"
           title="Справочники: статусы, типы, приоритеты, маршруты, группы задач. Данные хранятся в базе данных.">📚 Справочники</button>
   {% endif %}
+  {% if department %}
   <button class="adm-tab" data-tab="sharing" onclick="showTab('sharing')">🔗 Шеринг</button>
+  {% endif %}
   {% if is_admin_global %}
   <button class="adm-tab" data-tab="notify" onclick="showTab('notify')"
           title="Базовые сценарии уведомлений, шаблоны и рассылки. Данные хранятся в базе.">🔔 Уведомления</button>

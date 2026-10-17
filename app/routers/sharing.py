@@ -21,7 +21,7 @@ from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
     Department, DepartmentMember, Entity, EntityResponsible, EntityShare,
-    Permission, User,
+    Permission, Role, User,
 )
 
 router = APIRouter()
@@ -84,6 +84,73 @@ async def unshare(uid: str, dept_id: int, user: User = Depends(get_current_user)
             or can_manage_sharing(perm)):
         raise HTTPException(403)
     await entity_service.unshare_entity(session, user, ent, dept_id)
+    await session.commit()
+    return {"ok": True}
+
+
+class SharePermIn(BaseModel):
+    permission: Permission
+
+
+@router.patch("/entities/{uid}/shares/{dept_id}")
+async def patch_share(uid: str, dept_id: int, body: SharePermIn,
+                      user: User = Depends(get_current_user),
+                      session: AsyncSession = Depends(session_dep)):
+    """Изменение уровня прав исходящего шеринга (владелец сущности / глобальная роль)."""
+    ent = await _get_entity(session, uid)
+    ctx = await build_context(session, user)
+    perm = await resolve_permission(session, ctx, ent)
+    owner_here = ent.owner_department_id in ctx.department_ids
+    if not (ctx.is_global or (owner_here and can_write(perm))):
+        raise HTTPException(403, "Права шеринга меняет только подразделение-владелец")
+    row = await session.scalar(select(EntityShare).where(
+        EntityShare.entity_id == ent.id,
+        EntityShare.target_department_id == dept_id))
+    if row is None:
+        raise HTTPException(404, "Шеринг не найден")
+    await entity_service.share_entity(session, user, ent, dept_id, body.permission)
+    await session.commit()
+    return {"ok": True, "permission": body.permission.value}
+
+
+@router.post("/entities/{uid}/shares/reject")
+async def reject_share(uid: str, body: dict, user: User = Depends(get_current_user),
+                       session: AsyncSession = Depends(session_dep)):
+    """Отказ принимающей стороны от полученного шеринга.
+
+    Подразделение-получатель удаляет себе доступ к чужой сущности; владелец
+    получает событие в журнал («отказ принят»). Требуется HEAD получателя
+    (или глобальная роль).
+    """
+    ent = await _get_entity(session, uid)
+    ctx = await build_context(session, user)
+    target_dept_id = body.get("department_id") or next(
+        iter(sorted(ctx.department_ids)), None)
+    if not ctx.is_global and target_dept_id not in ctx.department_ids:
+        raise HTTPException(403, "Нельзя отклонить шеринг чужого подразделения")
+    # право отказа — только у руководителя принимающего пространства (или админа)
+    if not ctx.is_global:
+        head = await session.scalar(select(DepartmentMember).where(
+            DepartmentMember.department_id == target_dept_id,
+            DepartmentMember.user_id == user.id,
+            DepartmentMember.role_in_dept == Role.HEAD))
+        if head is None:
+            raise HTTPException(403, "Отклонять шеринг может руководитель подразделения")
+    row = await session.scalar(select(EntityShare).where(
+        EntityShare.entity_id == ent.id,
+        EntityShare.target_department_id == target_dept_id))
+    if row is None:
+        raise HTTPException(404, "Входящий шеринг не найден")
+    await session.delete(row)
+    await session.flush()
+    await access.ensure_responsibles(session, ent)
+    from app.core.events import log_event
+    await log_event(session, "share_rejected", category="entity", user=user,
+                    object=f"{ent.kind.value}:{ent.title}"[:200], level="info",
+                    message=f"Подразделение #{target_dept_id} отказалось от шеринга "
+                            f"«{ent.title}»",
+                    details={"entity_uid": ent.uid, "kind": ent.kind.value,
+                             "target_department_id": target_dept_id, "rejected": True})
     await session.commit()
     return {"ok": True}
 
