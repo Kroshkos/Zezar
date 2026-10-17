@@ -20,10 +20,10 @@ from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
     Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
-    PriorityLevel, Role, User,
+    PriorityLevel, Role, User, WfTemplate,
 )
 from app.core import refdata
-from app.models.module_payloads import ProjectPayload
+from app.models.module_payloads import ProjectPayload, TaskPayload
 from app.ui import render_page
 
 router = APIRouter()
@@ -49,8 +49,14 @@ class ProjectIn(BaseModel):
     priority_key: str | None = "medium"
     due_date: str | None = None              # срок завершения проекта (календарная веха)
     customer: str | None = ""                # заказчик
-    budget: str | None = ""                  # бюджет / источник финансирования
-    stages_json: str | None = None           # JSON [{name, branches:[...]}] — как wfTemplates демо
+    code: str | None = ""                    # код проекта (П-01) — как в прототипе
+    leader_user_id: int | None = None        # руководитель проекта из участников подразделения
+    start_date: str | None = None            # дата начала
+    end_date: str | None = None              # дата окончания
+    grant_entity_uid: str | None = None      # связанный грант
+    priority_indicator_uid: str | None = None  # показатель Приоритет-2030
+    stages_json: str | None = None           # JSON [{name, state, deadline, branches:[...]}] — маршрут (wf)
+    wf_template_id: int | None = None        # маршрут по шаблону (wfTemplates демо)
     links_json: str | None = None            # JSON [{label, url}]
     department_id: int | None = None         # для админа/координатора: чьё пространство
     responsible_user_id: int | None = None
@@ -65,16 +71,28 @@ async def _load_payload(session: AsyncSession, ent_id: int) -> ProjectPayload | 
 
 def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False,
-               parent_title: str | None = None) -> dict:
+               parent_title: str | None = None, leader_name: str | None = None,
+               grant_title: str | None = None, prio_ind_title: str | None = None) -> dict:
     stages = (p.stages if p else []) or []
-    done = sum(1 for s in stages if s.get("done"))
+    done = sum(1 for s in stages if s.get("done") or s.get("state") == "done")
     execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "priority_key": ent.priority_key,
         "due_date": ent.due_date, "department_id": ent.owner_department_id,
         "cross_dept": cross_dept,
-        "customer": p.customer if p else "", "budget": p.budget if p else "",
+        "customer": p.customer if p else "",
+        # бюджет/источник удалён из формы и карточек по ТЗ (связь с финансированием —
+        # через связанный грант)
+        "code": (p.code if p else "") or "",
+        "leader_user_id": p.leader_user_id if p else None,
+        "leader_name": leader_name or "",
+        "start_date": p.start_date if p else None,
+        "end_date": p.end_date if p else None,
+        "grant_entity_uid": p.grant_entity_uid if p else None,
+        "grant_title": grant_title or "",
+        "priority_indicator_uid": p.priority_indicator_uid if p else None,
+        "priority_indicator_title": prio_ind_title or "",
         "stages": stages, "stage_done": done, "stage_total": len(stages),
         "progress": round(done / len(stages) * 100) if stages else 0,
         "links": (p.links if p else []) or [],
@@ -89,6 +107,43 @@ def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
         "can_share": access.can_manage_sharing(perm),
         "sync_state": ent.sync_state.value,
     }
+
+
+async def _linked_titles(session: AsyncSession, payloads: list[ProjectPayload]) -> tuple[dict, dict, dict[int, str]]:
+    """Заголовки связанных сущностей для карточек/формы:
+    returns ({grant_uid: title}, {prio_uid: title}, {user_id: name})."""
+    guids = {p.grant_entity_uid for p in payloads if getattr(p, "grant_entity_uid", None)}
+    puids = {p.priority_indicator_uid for p in payloads
+             if getattr(p, "priority_indicator_uid", None)}
+    gmap: dict[str, str] = {}
+    pmap: dict[str, str] = {}
+    if guids:
+        for e in (await session.scalars(select(Entity).where(
+                Entity.kind == EntityKind.GRANT, Entity.uid.in_(guids)))).all():
+            gmap[e.uid] = e.title
+    if puids:
+        for e in (await session.scalars(select(Entity).where(
+                Entity.kind == EntityKind.PRIORITY, Entity.uid.in_(puids)))).all():
+            pmap[e.uid] = e.title
+    lids = {p.leader_user_id for p in payloads if getattr(p, "leader_user_id", None)}
+    lmap: dict[int, str] = {}
+    if lids:
+        for u in (await session.scalars(select(User).where(User.id.in_(lids)))).all():
+            lmap[u.id] = u.display_name
+    return gmap, pmap, lmap
+
+
+async def _check_linked(session: AsyncSession, ctx: access.AccessContext, uid: str | None,
+                        kind: EntityKind, label: str) -> None:
+    """Связанная сущность (грант / показатель Приоритет-2030) должна существовать
+    и быть доступна текущему пользователю — преемственность между модулями."""
+    if not uid:
+        return
+    ent = await session.scalar(select(Entity).where(Entity.uid == uid, Entity.kind == kind))
+    if not ent:
+        raise HTTPException(404, f"{label} не найден")
+    if not await access.resolve_permission(session, ctx, ent):
+        raise HTTPException(403, f"Нет доступа к связанному объекту: {label}")
 
 
 async def _parent_titles(session: AsyncSession, payloads: list[ProjectPayload]) -> dict[str, str]:
@@ -182,13 +237,19 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
     pairs = await _visible_entities(session, ctx, EntityKind.PROJECT)
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
     ptitles = await _parent_titles(session, list(payloads.values()))
+    gmap, pimap, lmap = await _linked_titles(session, list(payloads.values()))
     items = [_proj_dict(e, payloads[e.id], p, await _resp_names(session, e),
-                        cross_dept=c, parent_title=ptitles.get(payloads[e.id].parent_uid or ""))
+                        cross_dept=c,
+                        parent_title=ptitles.get(payloads[e.id].parent_uid or ""),
+                        leader_name=lmap.get(payloads[e.id].leader_user_id or 0, "") if payloads[e.id] else "",
+                        grant_title=gmap.get((payloads[e.id].grant_entity_uid if payloads[e.id] else "") or ""),
+                        prio_ind_title=pimap.get((payloads[e.id].priority_indicator_uid if payloads[e.id] else "") or ""))
              for e, p, c in sorted(pairs, key=lambda x: (x[0].due_date or "9999"))]
     dept = await refdata.context_dept(session, user, None)
     modules = await refdata.enabled_modules(session, dept)
     statuses = await refdata.effective_statuses(session, EntityKind.PROJECT, dept, modules)
     prios = await refdata.effective_priorities(session, dept, modules)
+    wf_templates = await refdata.effective_templates(session, dept, modules)
     depts: list[dict] = []
     if ctx.is_global:
         depts = [{"id": d.id, "name": d.name} for d in
@@ -209,6 +270,11 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
         u = await session.get(User, m.user_id)
         if u and u.is_active and not any(x["id"] == u.id for x in people):
             people.append({"id": u.id, "name": u.display_name})
+    # справочники связанных модулей: гранты и показатели Приоритет-2030
+    grants = [{"uid": e.uid, "title": e.title} for e, _, _ in
+              await _visible_entities(session, ctx, EntityKind.GRANT)]
+    indicators = [{"uid": e.uid, "title": e.title} for e, _, _ in
+                  await _visible_entities(session, ctx, EntityKind.PRIORITY)]
     return await render_page(
         request, "projects.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Проектная работа",
@@ -217,7 +283,8 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
         projects=items,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
-        departments=depts, people=people,
+        wf_templates=[{"id": t.id, "name": t.name, "steps": t.steps or []} for t in wf_templates],
+        departments=depts, people=people, me=user.id, grants=grants, indicators=indicators,
     )
 
 
@@ -230,19 +297,80 @@ async def list_projects(user: User = Depends(get_current_user),
     pairs = await _visible_entities(session, ctx, EntityKind.PROJECT)
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
     ptitles = await _parent_titles(session, list(payloads.values()))
+    gmap, pimap, lmap = await _linked_titles(session, list(payloads.values()))
     out = []
     for ent, perm, cross in pairs:
         pl = payloads[ent.id]
         out.append(_proj_dict(ent, pl, perm, await _resp_names(session, ent),
                               cross_dept=cross,
-                              parent_title=ptitles.get((pl.parent_uid if pl else "") or "")))
+                              parent_title=ptitles.get((pl.parent_uid if pl else "") or ""),
+                              leader_name=lmap.get(pl.leader_user_id or 0, "") if pl else "",
+                              grant_title=gmap.get((pl.grant_entity_uid if pl else "") or ""),
+                              prio_ind_title=pimap.get((pl.priority_indicator_uid if pl else "") or "")))
     return out
+
+
+def _build_stages(raw: list) -> list[dict]:
+    """Нормализация этапов маршрута (wf): каждый этап получает state/taskId/branches.
+    Для каждого этапа автозадача создаётся отдельно (см. _create_stage_tasks)."""
+    out = []
+    for i, s in enumerate(raw):
+        if not isinstance(s, dict) or not str(s.get("name", "")).strip():
+            continue
+        out.append({
+            "name": str(s["name"]).strip(),
+            "state": ("active" if i == 0 else "pending"),
+            "date": "", "deadline": str(s.get("deadline") or ""),
+            "comment": "", "taskId": "", "branches": s.get("branches") or [],
+        })
+    return out
+
+
+async def _create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
+                              stages: list[dict], dept_id: int,
+                              leader_user_id: int | None) -> None:
+    """Автозадачи этапов маршрута проекта (создание/редактирование — по образцу
+    createStepTask из sipm_lite_v3.html): «<проект> — этап: <название>».
+    Исполнитель — руководитель проекта (или автор), срок — дедлайн этапа."""
+    resp = leader_user_id or user.id
+    for i, s in enumerate(stages):
+        if s.get("taskId"):
+            continue
+        t = await entity_service.create_entity(
+            session, user, kind=EntityKind.TASK, module_key="tasks",
+            owner_department_id=dept_id,
+            title=f"{ent.title} — этап: {s['name']}",
+            description=("Автозадача этапа «" + s["name"] + "». Завершение задачи "
+                         "закрывает этап и переводит маршрут на следующий."),
+            status_key="progress" if s["state"] == "active" else "new",
+            priority_key="medium", due_date=s.get("deadline") or None,
+            responsible_user_id=resp)
+        session.add(TaskPayload(entity_id=t.id, project_entity_uid=ent.uid))
+        s["taskId"] = t.uid
+    # ответвления (условия) на холсте маршрута — тоже получают автозадачи
+    for s in stages:
+        for br in (s.get("branches") or []):
+            if not isinstance(br, dict):
+                continue
+            for bs in (br.get("steps") or []):
+                if isinstance(bs, dict) and not bs.get("taskId"):
+                    t = await entity_service.create_entity(
+                        session, user, kind=EntityKind.TASK, module_key="tasks",
+                        owner_department_id=dept_id,
+                        title=f"{ent.title} — ветка «{br.get('name', '')}»: {bs.get('name', '')}",
+                        description=f"Автозадача этапа ветки «{br.get('name', '')}».",
+                        status_key="new", priority_key="medium",
+                        due_date=bs.get("deadline") or None,
+                        responsible_user_id=resp)
+                    session.add(TaskPayload(entity_id=t.id, project_entity_uid=ent.uid))
+                    bs["taskId"] = t.uid
 
 
 @router.post("")
 async def create_project(body: ProjectIn, user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
     dept_id = await _pick_department(session, user, body)
+    ctx = await access.build_context(session, user)
     # родительский проект: проверяем существование и доступность
     if body.parent_uid:
         parent = await session.scalar(
@@ -250,9 +378,29 @@ async def create_project(body: ProjectIn, user: User = Depends(get_current_user)
                                  Entity.kind == EntityKind.PROJECT))
         if not parent:
             raise HTTPException(404, "Родительский проект не найден")
-        pctx = await access.build_context(session, user)
-        if not await access.resolve_permission(session, pctx, parent):
+        if not await access.resolve_permission(session, ctx, parent):
             raise HTTPException(403, "Нет доступа к родительскому проекту")
+    # связанные сущности других модулей (грант, показатель Приоритет-2030)
+    await _check_linked(session, ctx, body.grant_entity_uid, EntityKind.GRANT, "Грант")
+    await _check_linked(session, ctx, body.priority_indicator_uid,
+                        EntityKind.PRIORITY, "Показатель Приоритет-2030")
+    # руководитель проекта — только из участников подразделения-владельца
+    if body.leader_user_id:
+        if not await session.scalar(select(DepartmentMember.id).where(
+                DepartmentMember.user_id == body.leader_user_id,
+                DepartmentMember.department_id == dept_id)):
+            raise HTTPException(422, "Руководитель проекта должен быть участником подразделения")
+    # Маршрут (workflow): по шаблону (wfTemplates демо) или индивидуальный;
+    # при отсутствии того и другого — дефолт как в прототипе.
+    stages_raw = _parse_json_field(body.stages_json, [])
+    if not stages_raw and body.wf_template_id:
+        tpl = await session.get(WfTemplate, body.wf_template_id)
+        if tpl is None or not tpl.is_active:
+            raise HTTPException(404, "Шаблон маршрута не найден или деактивирован")
+        stages_raw = [{"name": n} for n in (tpl.steps or ["Подготовка", "Утверждение"])]
+    if not stages_raw:
+        stages_raw = [{"name": "Подготовка"}, {"name": "Утверждение"}]
+    stages = _build_stages(stages_raw)
     # Межпространственный контекст проекта: участники получают EDIT и свой слот
     # ответственного (инвариант ТЗ «несколько ответственных»).
     mine = set((await session.scalars(
@@ -272,24 +420,32 @@ async def create_project(body: ProjectIn, user: User = Depends(get_current_user)
             session, user, kind=EntityKind.PROJECT, module_key=MODULE_KEY,
             owner_department_id=dept_id, title=body.title.strip(),
             description=body.description or None, status_key=body.status_key,
-            priority_key=body.priority_key, due_date=body.due_date or None,
-            responsible_user_id=body.responsible_user_id or user.id,
+            priority_key=body.priority_key, due_date=body.end_date or body.due_date or None,
+            responsible_user_id=body.responsible_user_id or body.leader_user_id or user.id,
             executor_user_ids=body.executor_user_ids,
             share_with=share_with,
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+    await _create_stage_tasks(session, user, ent, stages, dept_id, body.leader_user_id)
     session.add(ProjectPayload(
-        entity_id=ent.id, stages=_parse_json_field(body.stages_json, []),
-        customer=body.customer or None, budget=body.budget or None,
+        entity_id=ent.id, stages=stages,
+        customer=body.customer or None,
         links=_parse_json_field(body.links_json, []),
-        parent_uid=body.parent_uid or None))
+        parent_uid=body.parent_uid or None,
+        code=(body.code or "").strip() or None,
+        leader_user_id=body.leader_user_id,
+        start_date=body.start_date or None, end_date=body.end_date or None,
+        grant_entity_uid=body.grant_entity_uid or None,
+        priority_indicator_uid=body.priority_indicator_uid or None))
     await session.commit()
-    return {"uid": ent.uid, "ok": True}
+    return {"uid": ent.uid, "ok": True, "stage_tasks": len([s for s in stages if s.get("taskId")])}
 
 
 _PROJ_CORE = {"title", "description", "status_key", "priority_key", "due_date"}
-_PROJ_PAYLOAD = {"customer", "budget", "stages", "links", "parent_uid"}
+_PROJ_PAYLOAD = {"customer", "stages", "links", "parent_uid", "code",
+                 "leader_user_id", "start_date", "end_date",
+                 "grant_entity_uid", "priority_indicator_uid"}
 
 
 @router.patch("/{uid}")
@@ -326,8 +482,32 @@ async def patch_project(uid: str, body: dict, user: User = Depends(get_current_u
                 raise HTTPException(403, "Нет доступа к родительскому проекту")
             await _cycle_guard(session, new_parent, self_uid=uid)
         payload.parent_uid = new_parent
-    for f in (_PROJ_PAYLOAD - {"parent_uid"}) & set(body):
+    # связанные сущности других модулей — с проверкой доступности
+    if "grant_entity_uid" in body:
+        g = (body["grant_entity_uid"] or "").strip() or None
+        await _check_linked(session, ctx, g, EntityKind.GRANT, "Грант")
+        payload.grant_entity_uid = g
+    if "priority_indicator_uid" in body:
+        pi = (body["priority_indicator_uid"] or "").strip() or None
+        await _check_linked(session, ctx, pi, EntityKind.PRIORITY,
+                            "Показатель Приоритет-2030")
+        payload.priority_indicator_uid = pi
+    if "leader_user_id" in body:
+        lid = body["leader_user_id"] or None
+        if lid and not await session.scalar(select(DepartmentMember.id).where(
+                DepartmentMember.user_id == int(lid),
+                DepartmentMember.department_id == ent.owner_department_id)):
+            raise HTTPException(422, "Руководитель проекта должен быть участником подразделения")
+        payload.leader_user_id = int(lid) if lid else None
+    for f in (_PROJ_PAYLOAD - {"parent_uid", "grant_entity_uid",
+                               "priority_indicator_uid", "leader_user_id"}) & set(body):
         setattr(payload, f, body[f])
+    # «Дата окончания» проекта синхронизируется с календарной вехой due_date
+    if body.get("end_date"):
+        await entity_service.update_entity(
+            session, user, ent, {"due_date": body["end_date"]})
+    elif "due_date" in body and not body.get("end_date"):
+        payload.end_date = body["due_date"] or None
     if "executor_user_ids" in body:
         try:
             await entity_service.set_executors(

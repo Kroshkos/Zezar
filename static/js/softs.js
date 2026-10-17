@@ -23,7 +23,7 @@ function renderSoftCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+esc(s.soft_type||'—')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(s.title||'Разработка')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+s.uid+'\');return false">'+esc(s.title||'Разработка')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+sfmt(s.due_date)
       +(s.env?' · 🖥 '+esc(s.env):'')+'</div>'
       +(s.executor_names&&s.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(s.executor_names.join(', '))+'</div>':'')

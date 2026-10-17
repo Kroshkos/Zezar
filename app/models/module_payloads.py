@@ -54,14 +54,26 @@ class ProjectPayload(TimestampMixin, Base):
 
     entity_id: Mapped[int] = mapped_column(
         ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True)
-    stages: Mapped[list] = mapped_column(JSON, default=list)   # [{name, branches:[...]}] — как в демо
+    # Маршрут (workflow): этапы [{name,state,date,deadline,comment,taskId,branches:[...]}]
+    # — автозадачи создаются на каждый этап; ответвления и условия — на холсте маршрута
+    # (по образу wfCanvas из sipm_lite_v3.html).
+    stages: Mapped[list] = mapped_column(JSON, default=list)
     customer: Mapped[Optional[str]] = mapped_column(String(200))
+    # бюджет/источник финансирования удалён из формы проекта по ТЗ (поле остаётся
+    # в БД для исторических данных, но не заполняется и не отображается)
     budget: Mapped[Optional[str]] = mapped_column(String(64))
     links: Mapped[list] = mapped_column(JSON, default=list)
     # Иерархия проектов: проект может быть частью другого проекта (родитель —
     # uid сущности kind=project; хранится uid, а не FK id — устойчивость при
     # репликации/синхронизации пространств и отсутствие каскадного удаления).
     parent_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    code: Mapped[Optional[str]] = mapped_column(String(64))               # код проекта (П-01)
+    leader_user_id: Mapped[Optional[int]] = mapped_column(                # руководитель проекта
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    start_date: Mapped[Optional[str]] = mapped_column(String(32))         # дата начала (ISO)
+    end_date: Mapped[Optional[str]] = mapped_column(String(32))           # дата окончания (ISO)
+    grant_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)   # связанный грант
+    priority_indicator_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # показатель Приоритет-2030
 
 
 class DocPayload(TimestampMixin, Base):

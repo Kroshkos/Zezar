@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""   # например CaesarNotifyBot — для инструкции в UI
     telegram_notify_enabled: bool = True
+    # Публичный адрес системы для ссылок в уведомлениях (кнопка «Открыть» в Telegram)
+    public_base_url: str = "https://zezar-patfiz.waw0.amvera.tech"
+    # Напоминания «приближается срок»: за сколько дней и как часто проверять
+    due_remind_days_ahead: int = 3
+    due_reminder_interval_seconds: int = 3600
 
     # Яндекс.Календарь (WebDAV/CalDAV)
     yandex_cal_enabled: bool = True

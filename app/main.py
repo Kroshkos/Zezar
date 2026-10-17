@@ -647,6 +647,10 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as s:
         await registry.sync_table(s)
         await bootstrap(s)
+    # базовые сценарии уведомлений (нельзя отключить пользователю) — идемпотентно
+    from app.core.notify import seed_base_scenarios
+    async with SessionLocal() as s:
+        await seed_base_scenarios(s)
 
     # Диагностика доступа сразу при старте (видно в логах Amvera без входа):
     # сколько админов по логину/паролю видит процесс и какие учётки лежат в базе.
@@ -676,8 +680,9 @@ async def lifespan(app: FastAPI):
     stop = asyncio.Event()
     if settings.workers_enabled:
         try:
-            from integrations.workers import outbox_worker, tg_poller
+            from integrations.workers import notifier_worker, outbox_worker, tg_poller
             tasks.append(asyncio.create_task(outbox_worker(stop)))
+            tasks.append(asyncio.create_task(notifier_worker(stop)))
             if settings.telegram_bot_token:
                 tasks.append(asyncio.create_task(tg_poller(stop)))
         except Exception as e:  # noqa: BLE001
@@ -725,14 +730,16 @@ if STATIC_DIR.is_dir():
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
-from app.routers import admin, auth, departments, pages, refdata, sharing  # noqa: E402
+from app.routers import admin, auth, departments, notify, pages, profile, refdata, sharing  # noqa: E402
 
 app.include_router(auth.router)                    # /auth/*
 app.include_router(pages.router)                   # /login, /, /api/profile/*
 app.include_router(departments.router, prefix="/api/core", tags=["core-departments"])
 app.include_router(sharing.router, prefix="/api/core", tags=["core-sharing"])
+app.include_router(profile.router, prefix="/api/core", tags=["core-profile"])
 app.include_router(admin.router, prefix="/api/core", tags=["core-admin"])
 app.include_router(refdata.router, prefix="/api/core/refdata", tags=["core-refdata"])
+app.include_router(notify.router, prefix="/api/core", tags=["core-notify"])
 
 
 @app.exception_handler(Exception)

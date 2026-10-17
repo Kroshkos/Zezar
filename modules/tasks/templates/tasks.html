@@ -31,10 +31,11 @@
 
 <script id="taskData" type="application/json">
 {{ {'tasks': tasks, 'statuses': statuses, 'priorities': priorities,
-    'departments': departments, 'people': people} | tojson }}
+    'departments': departments, 'people': people, 'me': me} | tojson }}
 </script>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/profile.js"></script>
 <script src="/static/js/tasks.js"></script>
 {% endblock %}

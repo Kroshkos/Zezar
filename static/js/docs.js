@@ -23,7 +23,7 @@ function renderDocCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+(d.number?'№ '+esc(d.number):'без номера')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(d.title||'Документ')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+d.uid+'\');return false">'+esc(d.title||'Документ')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+dfmt(d.due_date)
       +(d.doc_type?' · 📑 '+esc(d.doc_type):'')
       +(d.issued_at?' · выдан '+dfmt(d.issued_at):'')+'</div>'

@@ -130,13 +130,18 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         depts = [{"id": d.id, "name": d.name} for d in
                  (await session.scalars(
                      select(Department).where(Department.is_active == True))).all()]  # noqa: E712
+    else:
+        rows = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
+        depts = [{"id": d.id, "name": d.name} for d in rows]
     members = (await session.scalars(
         select(DepartmentMember).where(
-            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+            DepartmentMember.department_id.in_(
+                ctx.department_ids or [d["id"] for d in depts] or [-1])))).all()
     people: list[dict] = []
     for m in members:
         u = await session.get(User, m.user_id)
-        if u and u.is_active:
+        if u and u.is_active and not any(x["id"] == u.id for x in people):
             people.append({"id": u.id, "name": u.display_name})
     return await render_page(
         request, "tasks.html", module_key=MODULE_KEY, user=user, session=session,
@@ -145,7 +150,7 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         tasks=items,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
-        departments=depts, people=people,
+        departments=depts, people=people, me=user.id,
     )
 
 
@@ -258,6 +263,15 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
                 session, user, ent, ent.owner_department_id, body["responsible_user_id"])
         except PermissionError as e:
             raise HTTPException(400, str(e))
+    # Привязка к проекту: проверяем существование и доступность проекта (как в docs/grants/meetings)
+    if body.get("project_entity_uid"):
+        parent = await session.scalar(
+            select(Entity).where(Entity.uid == body["project_entity_uid"],
+                                 Entity.kind == EntityKind.PROJECT))
+        if not parent:
+            raise HTTPException(404, "Проект не найден")
+        if not await access.resolve_permission(session, ctx, parent):
+            raise HTTPException(403, "Нет доступа к выбранному проекту")
     payload = await _load_payload(session, ent.id)
     if payload:
         for f in ("group_key", "project_entity_uid"):

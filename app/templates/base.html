@@ -18,7 +18,7 @@
       {% endfor %}
     </nav>
     <div class="side-foot">
-      <button onclick="openSettings()">⚙️ Мои интеграции</button>
+      <button onclick="location.href='/integrations'">⚙️ Интеграции</button>
       <button onclick="logout()">🚪 Выход</button>
       <div class="hint">{{ user.display_name }} · {{ {'admin':'Администратор','coordinator':'Координатор','head':'Руководитель','member':'Участник'}[user.role.value] }}</div>
     </div>

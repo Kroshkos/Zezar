@@ -23,7 +23,7 @@ function renderPrioCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+esc(p.direction||'—')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(p.title||'Показатель')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+p.uid+'\');return false">'+esc(p.title||'Показатель')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📈 цель: '+esc(p.target_value||'—')
       +' · факт: '+esc(p.current_value||'—')+' · 📅 '+pfmt(p.due_date)+'</div>'
       +(p.executor_names&&p.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(p.executor_names.join(', '))+'</div>':'')
