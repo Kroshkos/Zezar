@@ -12,9 +12,11 @@ Bootstrap/seed базы (идемпотентен): справочники ст�
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -136,10 +138,19 @@ async def sync_admin_logins(session: AsyncSession) -> None:
                 log.info("admin-logins: легаси-учётка '%s' привязана к логину '%s'",
                          name, login)
             else:
-                session.add(User(login=login, password_hash=pwhash, display_name=name,
-                                 role=Role.ADMIN, initials=_initials_of(name), is_active=True,
-                                 must_change_password=False))
-                log.info("admin-logins: создана учётная запись администратора '%s' (%s)", login, name)
+                # Демонстрационная учётка (_demo) могла быть создана раньше env-админа
+                # в той же транзакции bootstrap (flush виден, но commit ещё не было):
+                # не плодим дубль по login, а «повышаем» найденную учётку до ADMIN.
+                demo = await session.scalar(
+                    select(User).where(User.login == login).execution_options(populate_existing=True))
+                if demo is not None:
+                    user = demo
+                    log.info("admin-logins: существующая учётка '%s' синхронизирована как администратор", login)
+                else:
+                    session.add(User(login=login, password_hash=pwhash, display_name=name,
+                                     role=Role.ADMIN, initials=_initials_of(name), is_active=True,
+                                     must_change_password=False))
+                    log.info("admin-logins: создана учётная запись администратора '%s' (%s)", login, name)
         else:
             changed = []
             if user.password_hash != pwhash:
@@ -232,10 +243,28 @@ async def bootstrap(session: AsyncSession) -> None:
     # --- демо-данные для локальной разработки (как в прототипе) ---
     # В продакшене запрещены (fail-fast в main.py), но дополнительно защищаемся и здесь:
     # seed включается только явным флагом SEED_DEMO_DATA=true (или dev-режимом).
-    if (s.seed_demo_data or s.dev_login_enabled) and not s.is_production:
-        await _demo(session)
-
-    await session.commit()
+    # Идемпотентность на конкурентных стартах (несколько воркеров gunicorn):
+    # два процесса могут одновременно вставить env-админов -> IntegrityError
+    # на UNIQUE(users.login). Откатываем транзакцию и повторяем bootstrap:
+    # ко второму проходу строки уже видны, все проверки «если нет — создать»
+    # срабатывают как no-op. Повтор ограничен двумя попытками, при повторном
+    # конфликте ошибка поднимается наверх (не маскируем реальные проблемы).
+    for attempt in range(2):
+        try:
+            if (s.seed_demo_data or s.dev_login_enabled) and not s.is_production:
+                await _demo(session)
+            await session.commit()
+            return
+        except IntegrityError:
+            await session.rollback()
+            if attempt == 1:
+                raise
+            log.info("seed: конфликт уникальности (параллельный старт?) — "
+                     "повторяю bootstrap после отката")
+            await _backfill_missing_logins(session)
+            await sync_admin_logins(session)
+    with contextlib.suppress(Exception):
+        await session.commit()
 
 
 DEMO_DEPTS = [("dep-strat", "Управление стратегических инициатив"),
@@ -274,14 +303,21 @@ async def _demo(session: AsyncSession) -> None:
 
     users = {}
     # Демо-вход: логин из колонки login, пароль demo12345 (только dev-режим).
+    # Защита от UNIQUE(users.login): env-администратор с тем же логином мог быть
+    # создан в этой же транзакции (sync_admin_logins выполняется до _demo) —
+    # берём существующую учётку вместо вставки дубля.
     for login, email, name, role, dept_code in DEMO_USERS:
-        u = User(login=login, email=email, display_name=name,
-                 password_hash=hash_password("demo12345"),
-                 must_change_password=False,
-                 initials="".join(w[0] for w in name.split()[:2]),
-                 color="#4c7dff", role=role)
-        session.add(u)
-        await session.flush()
+        u = await session.scalar(select(User).where(func.lower(User.login) == login))
+        if u is None:
+            u = User(login=login, email=email, display_name=name,
+                     password_hash=hash_password("demo12345"),
+                     must_change_password=False,
+                     initials="".join(w[0] for w in name.split()[:2]),
+                     color="#4c7dff", role=role)
+            session.add(u)
+            await session.flush()
+        elif not u.email:
+            u.email = email
         session.add(DepartmentMember(user_id=u.id, department_id=depts[dept_code].id,
                                      role_in_dept=Role.HEAD if role == Role.HEAD else Role.MEMBER))
         users[email] = u
