@@ -95,66 +95,70 @@ def _target_defs(table: str) -> list:
 def _rebuild(table: str, *, drop_unique_key: bool = False) -> None:
     """Полное приведение таблицы к целевой схеме модели (move-and-copy).
 
-    copy_from — целевой sa.Table, собранный из Column(...) моделей ядра, где
-    ForeignKey("departments.id") указан ЯВНО на уровне колонки. Alembic сам
-    создаёт временную таблицу, копирует данные SELECT'ом по ПЕРЕСЕЧЕНИЮ колонок
-    (старые + добавленные read как NULL) и переименовывает. Так мы обходим
-    дефект batch.create_foreign_key(): он игнорирует referent_table и строит
-    self-FK (первая редакция ревизии — см. docstring модуля).
+    Механика Alembic batch с copy_from=<целевая таблица>: временная таблица
+    создаётся по ЦЕЛЕВОЙ схеме (Column(...) моделей ядра, где ForeignKey
+    указан явно на уровне колонки — без дефекта self-FK из
+    batch.create_foreign_key()), а INSERT..SELECT переносит данные только по
+    колонкам, реально присутствующим в СТАРОЙ таблице. Поэтому недостающие
+    колонки иерархии добавляем отдельным простым ALTER ADD COLUMN ДО
+    пересоздания; после recreate целевые FK/UNIQUE уже на месте.
 
-    drop_unique_key: legacy UNIQUE(key) у priority_levels не переносится
-    (скоуп-уникальность обеспечит уникальный индекс на шаге 3).
+    drop_unique_key: legacy UNIQUE(key) у priority_levels не переносится в
+    целевую схему (скоуп-уникальность — уникальный индекс на шаге 3 upgrade).
     """
+    cur_cols = _cols(table)
+    add_cols = []
+    if "department_id" not in cur_cols:
+        add_cols.append(sa.Column("department_id", sa.Integer(), nullable=True))
+    if "source_global_id" not in cur_cols:
+        add_cols.append(sa.Column("source_global_id", sa.Integer(), nullable=True))
+    if "is_active" not in cur_cols:
+        add_cols.append(sa.Column("is_active", sa.Boolean(), nullable=False,
+                                  server_default=sa.true()))
+    if add_cols:
+        # plain ALTER (batch без recreate='always' выполняет их напрямую)
+        with op.batch_alter_table(table) as batch:
+            for c in add_cols:
+                batch.add_column(c)
+        cur_cols |= {c.name for c in add_cols}
+
     cols = _target_defs(table)
     constraints: list = []
     if table == "status_sets":
         constraints.append(sa.UniqueConstraint("kind", "key", "department_id",
                                                name="uq_status_sets_kind"))
-    args = [*cols, *constraints]
-    target = sa.Table(table, sa.MetaData(), *args)
-    if drop_unique_key:
-        # исключаем перенос legacy-ограничения (для priority_levels его в
-        # целевой схеме и так нет — UniqueConstraint("key","department_id")
-        # из модели не переносим табличным ограничением, чтобы не конфликтовать
-        # с SQLite NULL!=NULL; контроль — сервисом + уникальным индексом шага 3)
-        pass
+    target = sa.Table(table, sa.MetaData(), *cols, *constraints)
     with op.batch_alter_table(table, recreate="always", copy_from=target):
         pass
 
 
 def _ensure_columns(table: str) -> None:
-    """Недостающие колонки иерархии + корректные FK одним безопасным путём:
-
-    - если хватает только ADD COLUMN (FK уже корректны, UNIQUE не мешает) —
-      делаем простой ALTER (без пересоздания);
-    - иначе (нет FK / битый self-FK / legacy UNIQUE(key) у приоритетов) —
-      полное пересоздание по целевой схеме модели (_rebuild).
-    """
-    cols = _cols(table)
+    """Приводит таблицу справочника к целевой схеме модели: недостающие
+    колонки иерархии + корректные FK (+ снятие legacy UNIQUE(key))."""
     fks = _fk_map(table)
-    add_cols = []
-    if "department_id" not in cols:
-        add_cols.append(sa.Column("department_id", sa.Integer(), nullable=True))
-    if "source_global_id" not in cols:
-        add_cols.append(sa.Column("source_global_id", sa.Integer(), nullable=True))
-    if "is_active" not in cols:
-        add_cols.append(sa.Column("is_active", sa.Boolean(), nullable=False,
-                                  server_default=sa.true()))
-
     fk_ok = (fks.get(("department_id",)) == ("departments", ("id",))
-             and (("source_global_id",) not in cols
+             and (("source_global_id",) not in _cols(table)
                   or fks.get(("source_global_id",)) == (table, ("id",))))
     need_uniq_drop = (table == "priority_levels"
                       and "uq_priority_levels_key" in _uq_names(table))
 
-    if add_cols and fk_ok and not need_uniq_drop:
-        # редкий случай: колонки есть частично, схема FK уже правильная
-        with op.batch_alter_table(table) as batch:
-            for c in add_cols:
-                batch.add_column(c)
-    elif not fk_ok or need_uniq_drop:
+    if not fk_ok or need_uniq_drop:
         _rebuild(table, drop_unique_key=need_uniq_drop)
-    # если add_cols пуст, fk_ok и UNIQUE не мешает — таблица уже в целевом виде
+    else:
+        cols = _cols(table)
+        add_cols = []
+        if "department_id" not in cols:
+            add_cols.append(sa.Column("department_id", sa.Integer(), nullable=True))
+        if "source_global_id" not in cols:
+            add_cols.append(sa.Column("source_global_id", sa.Integer(),
+                                      nullable=True))
+        if "is_active" not in cols:
+            add_cols.append(sa.Column("is_active", sa.Boolean(), nullable=False,
+                                      server_default=sa.true()))
+        if add_cols:
+            with op.batch_alter_table(table) as batch:
+                for c in add_cols:
+                    batch.add_column(c)
 
 
 def upgrade() -> None:
