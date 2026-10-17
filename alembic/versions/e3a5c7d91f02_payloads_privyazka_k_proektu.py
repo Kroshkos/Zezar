@@ -25,7 +25,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _TABLES = ("doc_payloads", "soft_payloads", "grant_payloads",
-           "scholar_payloads", "priority_payloads")
+           "scholar_payloads", "priority_payloads", "meeting_payloads")
 
 
 def _insp():

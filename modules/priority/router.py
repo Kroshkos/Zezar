@@ -60,7 +60,7 @@ def _executors(ent: Entity) -> list[dict]:
 def _prio_dict(ent: Entity, p: PriorityPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False,
                project_title: str | None = None) -> dict:
-             execs = _executors(ent)
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,

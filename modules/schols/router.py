@@ -58,7 +58,7 @@ def _executors(ent: Entity) -> list[dict]:
 def _schol_dict(ent: Entity, p: ScholarPayload | None, perm: Permission | None,
                 resp_names: list[str], cross_dept: bool = False,
                 project_title: str | None = None) -> dict:
-              execs = _executors(ent)
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -164,8 +164,11 @@ async def schols_page(request: Request, user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append(_schol_dict(ent, await _load_payload(session, ent.id), perm,
-                                 resp_names, cross_dept=cross))
+        items.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in items])
+    cards = [_schol_dict(e, pl, p, rn, cross_dept=c,
+                         project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+             for e, pl, p, rn, c in items]
     # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
     # администратора + собственные/активированные записи подразделения; набор
     # ограничен подключённым модулем данного workspace.
@@ -178,14 +181,30 @@ async def schols_page(request: Request, user: User = Depends(get_current_user),
         depts = [{"id": d.id, "name": d.name} for d in
                  (await session.scalars(
                      select(Department).where(Department.is_active == True))).all()]  # noqa: E712
+    else:
+        rows = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
+        depts = [{"id": d.id, "name": d.name} for d in rows]
+    # сотрудники для назначения исполнителей (несколько) — как people в прототипе
+    members = (await session.scalars(
+        select(DepartmentMember).where(
+            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+    people: list[dict] = []
+    for m in members:
+        u = await session.get(User, m.user_id)
+        if u and u.is_active and not any(x["id"] == u.id for x in people):
+            people.append({"id": u.id, "name": u.display_name})
+    # проекты для привязки стипендии (связанность категорий в рамках модулей)
+    projects = [{"uid": e.uid, "title": e.title}
+                for e in await _visible_projects(session, ctx)]
     return await render_page(
         request, "schols.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Стипендии",
         page_sub="Назначения и выплаты; сроки синхронизируются с Яндекс.Календарём",
-        counts={MODULE_KEY: len(items)},
-        schols=items,
+        counts={MODULE_KEY: len(cards)},
+        schols=cards,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        departments=depts,
+        departments=depts, people=people, projects=projects,
     )
 
 
@@ -213,31 +232,40 @@ async def list_schols(user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append(_schol_dict(ent, await _load_payload(session, ent.id), perm,
-                               resp_names, cross_dept=cross))
-    return out
+        out.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in out])
+    return [_schol_dict(e, pl, p, rn, cross_dept=c,
+                        project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+            for e, pl, p, rn, c in out]
 
 
 @router.post("")
 async def create_schol(body: ScholIn, user: User = Depends(get_current_user),
                        session: AsyncSession = Depends(session_dep)):
     dept_id = await _pick_department(session, user, body)
-    ent = await entity_service.create_entity(
-        session, user, kind=EntityKind.SCHOL, module_key=MODULE_KEY,
-        owner_department_id=dept_id, title=body.title.strip(),
-        description=body.description or None, status_key=body.status_key,
-        due_date=body.due_date or None,
-        responsible_user_id=body.responsible_user_id or user.id,
-    )
+    ctx = await access.build_context(session, user)
+    await _check_project(session, ctx, body.project_entity_uid)
+    try:
+        ent = await entity_service.create_entity(
+            session, user, kind=EntityKind.SCHOL, module_key=MODULE_KEY,
+            owner_department_id=dept_id, title=body.title.strip(),
+            description=body.description or None, status_key=body.status_key,
+            due_date=body.due_date or None,
+            responsible_user_id=body.responsible_user_id or user.id,
+            executor_user_ids=body.executor_user_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     session.add(ScholarPayload(
         entity_id=ent.id, person_name=body.person_name or None,
-        schol_type=body.schol_type or None, amount=body.amount or None))
+        schol_type=body.schol_type or None, amount=body.amount or None,
+        project_entity_uid=body.project_entity_uid or None))
     await session.flush()
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
-_SCHOL_FIELDS = {"person_name", "schol_type", "amount"}
+_SCHOL_FIELDS = {"person_name", "schol_type", "amount", "project_entity_uid"}
 
 
 @router.patch("/{uid}")
@@ -254,11 +282,25 @@ async def patch_schol(uid: str, body: dict, user: User = Depends(get_current_use
     core_changes = {k: v for k, v in body.items()
                     if k in {"title", "description", "status_key", "due_date"}}
     await entity_service.update_entity(session, user, ent, core_changes)
+    if "executor_user_ids" in body:
+        try:
+            await entity_service.set_executors(
+                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    if "responsible_user_id" in body:
+        try:
+            await entity_service.assign_responsible(
+                session, user, ent, ent.owner_department_id, body["responsible_user_id"])
+        except PermissionError as e:
+            raise HTTPException(400, str(e))
     payload = await _load_payload(session, ent.id)
     if payload:
+        if "project_entity_uid" in body:
+            await _check_project(session, ctx, body["project_entity_uid"])
         for f in _SCHOL_FIELDS:
             if f in body:
-                setattr(payload, f, body[f])
+                setattr(payload, f, body[f] or None)
     await session.commit()
     return {"ok": True}
 

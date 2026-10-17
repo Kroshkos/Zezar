@@ -42,6 +42,7 @@ class MeetingPayload(TimestampMixin, Base):
     agenda: Mapped[list] = mapped_column(JSON, default=list)          # [{q, who, minutes}]
     decisions: Mapped[list] = mapped_column(JSON, default=list)       # [{text, who, due, taskId}]
     linked_task_uids: Mapped[list] = mapped_column(JSON, default=list)
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту (связанность категорий)
     location: Mapped[Optional[str]] = mapped_column(String(200))
     start_at: Mapped[Optional[str]] = mapped_column(String(32))       # ISO datetime для календаря
     end_at: Mapped[Optional[str]] = mapped_column(String(32))
