@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect as sa_inspect, schema, text, types as sa_types
 
@@ -647,6 +647,13 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as s:
         await registry.sync_table(s)
         await bootstrap(s)
+    # Синхронизировать локальный mirror эпохи ACL с БД после стартового
+    # сидинга (bootstrap может менять роли в обход bump_epoch этого процесса):
+    # иначе TTL-кэш вернёт 0, свежая cookie получит epoch из БД (>0) и любой
+    # запрос сразу получит ложный 401 «сессия устарела».
+    from app.core.permcache import get_epoch as _acl_get_epoch
+    async with SessionLocal() as s:
+        await _acl_get_epoch(s)
     # базовые сценарии уведомлений (нельзя отключить пользователю) — идемпотентно
     from app.core.notify import seed_base_scenarios
     async with SessionLocal() as s:
@@ -740,6 +747,24 @@ app.include_router(profile.router, prefix="/api/core", tags=["core-profile"])
 app.include_router(admin.router, prefix="/api/core", tags=["core-admin"])
 app.include_router(refdata.router, prefix="/api/core/refdata", tags=["core-refdata"])
 app.include_router(notify.router, prefix="/api/core", tags=["core-notify"])
+
+
+@app.exception_handler(401)
+async def unauthorized_handler(request: Request, exc):
+    """GET-запросы Jinja-страниц при протухшей сессии (acl_epoch) — редирект на /login.
+    API и POST — обычный JSON 401 (фронт сам перенаправит)."""
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    if isinstance(exc, StarletteHTTPException):
+        accept = request.headers.get("accept", "")
+        is_page = (request.method == "GET"
+                   and not request.url.path.startswith("/api")
+                   and ("text/html" in accept or accept == "*/*"))
+        if is_page:
+            nxt = request.url.path
+            if request.url.query:
+                nxt += "?" + request.url.query
+            return RedirectResponse(f"/login?next={nxt}", status_code=303)
+    return JSONResponse({"detail": exc.detail}, status_code=401)
 
 
 @app.exception_handler(Exception)

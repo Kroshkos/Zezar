@@ -34,6 +34,16 @@ _local_epoch: dict[str, float] = {"value": 0.0, "at": 0.0}
 _TTL = 5.0  # сек; дольше не держим — мультипроцессные воркеры обновятся сами
 
 
+def set_local_epoch(value: float) -> None:
+    """Синхронизировать локальный mirror эпохи. Нужен тестам и коду, который
+    меняет epoch в БД в обход bump_epoch этого процесса (иначе TTL-кэш вернёт
+    устаревшее значение и выдаст ложный 401 сразу после перевхода)."""
+    # NOTE: если value ниже текущего mirror — он не понижается намеренно? Нет:
+    # явная синхронизация означает «доверяй источнику», пишем как есть.
+    _local_epoch["value"] = float(value or 0)
+    _local_epoch["at"] = time.monotonic()
+
+
 async def get_epoch(session: AsyncSession) -> int:
     """Текущая эпоха ACL (monotonic counter). 0 — никогда не инвалидировалось."""
     now = time.monotonic()
@@ -42,9 +52,13 @@ async def get_epoch(session: AsyncSession) -> int:
         val = await session.scalar(
             select(AclState.value).where(AclState.key == EPOCH_KEY))
         try:
-            _local_epoch["value"] = float(val or 0)
+            fresh = float(val or 0)
         except (TypeError, ValueError):
-            _local_epoch["value"] = 0.0
+            fresh = 0.0
+        # monotonic guard: не откатываем mirror назад (незакоммиченный bump
+        # другой транзакции виден нам через flush, но не через SELECT)
+        if fresh >= _local_epoch["value"]:
+            _local_epoch["value"] = fresh
         _local_epoch["at"] = now
     return int(_local_epoch["value"])
 

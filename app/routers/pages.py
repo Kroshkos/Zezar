@@ -26,12 +26,15 @@ ERRORS = {"disabled": "Учётная запись заблокирована",
 
 
 @router.get("/login")
-async def login_page(request: Request, error: str = ""):
+async def login_page(request: Request, error: str = "", next: str = ""):
     from app.core.config import get_settings
     msg = ERRORS.get(error, "Ошибка входа")
+    # сохраняем цель редиректа только если это внутренний путь
+    safe_next = next if (next.startswith("/") and not next.startswith("//")) else ""
     return templates.TemplateResponse(request, "login.html",
                                       {"error": bool(error),
                                        "error_msg": msg,
+                                       "next": safe_next,
                                        "dev": bool(getattr(get_settings(), "dev_login_enabled", False))})
 
 

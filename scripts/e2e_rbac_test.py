@@ -87,6 +87,11 @@ async def main():
         r = await c.post(f"/api/core/departments/{dept_id}/members",
                          json={"user_id": uids["ann"], "role_in_dept": "HEAD"})
         assert r.status_code == 200, r.text
+        # bump_epoch внутри запроса меняет только копию модуля permcache из sys.modules;
+        # test-процесс импортирует его отдельно — синхронизируем mirror вручную
+        from app.core.permcache import set_local_epoch
+        async with SessionLocal() as s:
+            set_local_epoch(await get_epoch(s))
         async with SessionLocal() as s:
             epoch1 = await get_epoch(s)
             assert epoch1 > epoch0, f"epoch не вырос после выдачи HEAD: {epoch0}->{epoch1}"
@@ -115,9 +120,13 @@ async def main():
         r = await c.post(f"/api/core/departments/{dept_id}/members",
                          json={"user_id": uids["bob"], "role_in_dept": "HEAD"})
         assert r.status_code == 200, r.text
+        async with SessionLocal() as s:
+            set_local_epoch(await get_epoch(s))
         r = await c.post(f"/api/core/departments/{dept_id}/members",
                          json={"user_id": uids["ann"], "role_in_dept": "MEMBER"})
         assert r.status_code == 200, r.text
+        async with SessionLocal() as s:
+            set_local_epoch(await get_epoch(s))
         async with SessionLocal() as s:
             ann = await s.get(User, uids["ann"])
             assert ann.role == Role.MEMBER, \

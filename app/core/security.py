@@ -117,6 +117,7 @@ async def get_current_user(request: Request):
     data = read_session_token(request.cookies.get(SESSION_COOKIE))
     if not data or "uid" not in data:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не авторизован")
+    stale = False
     async with SessionLocal() as session:
         user = await session.scalar(
             select(User).options(selectinload(User.memberships)).where(User.id == data["uid"]))
@@ -126,11 +127,15 @@ async def get_current_user(request: Request):
         # Инвалидация кэша прав (acl_epoch): если сервер поднял эпоху ACL
         # (смена ролей/участников), кука со старым epoch протухла — принудительный
         # перевход. Куки без поля acl_epoch (выпущены до патча) принимаются как раньше.
+        # Проверку делаем ПОСЛЕ выхода из сессии: 401 бросается внутри `async with`,
+        # закрытие сессии в этом случае может бросить собственный исключение и
+        # подменить наш осмысленный 401 на пустой.
         if user is not None and "acl_epoch" in data:
             from app.core.permcache import get_epoch, token_needs_refresh
-            if token_needs_refresh(data, await get_epoch(session)):
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED,
-                                    "Сессия устарела (права изменены), войдите снова")
+            stale = token_needs_refresh(data, await get_epoch(session))
+    if stale:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            "Сессия устарела (права изменены), войдите снова")
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись заблокирована")
     return user
