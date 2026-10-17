@@ -67,11 +67,15 @@ function rdBadge(r){
 function rdActions(r, section, arg){
   if(!rdCanWrite()) return '';
   let html = '';
+  // админ/координатор: глобальные шаблоны И (в режиме «Вся система») записи подразделений — доступны правка/удаление
+  const deptRecEditable = rdIsGlobal() && r.department_id!=null;
   if(rdIsGlobal() && r.department_id==null){
     html += `<button class="btn sm ghost" onclick="rdEdit(${r.id},'${section}','${arg}')">✏️ Изменить</button> `
           + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑 Удалить</button>`;
-  } else if(rdIsGlobal()){
-    html += '<span class="muted" style="font-size:12px">запись подразделения</span>';
+  } else if(deptRecEditable){
+    html += `<span class="badge b-amber" title="Запись подразделения ${esc(r.department_name||('№'+r.department_id))}">${esc(r.department_name||('пространство №'+r.department_id))}</span> `
+          + `<button class="btn sm ghost" onclick="rdEdit(${r.id},'${section}','${arg}')">✏️ Изменить</button> `
+          + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑 Удалить</button>`;
   } else {
     if(r.source_global_id){
       html += r.is_active
@@ -108,7 +112,7 @@ function rdAvailBlock(avail, section){
 function rdRenderStatus(box, view, setName){
   if(!view){ box.innerHTML='<span class="muted">Модуль не подключён к подразделению — набор статусов недоступен.</span>'; return; }
   const rows = view.items.map(r=>`<tr>
-    <td>${rdBadge(r)}</td><td class="muted"><code>${esc(r.key)}</code> · порядок ${r.order??0}</td>
+    <td>${rdBadge(r)}</td><td class="muted"><code>${esc(r.key)}</code> · ${esc((r.color||'b-gray').replace('b-',''))} · порядок ${r.order??0}</td>
     <td style="text-align:right;white-space:nowrap">${rdActions(r,'status',setName)}</td></tr>`).join('');
   box.innerHTML =
     `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -128,8 +132,10 @@ function rdRenderGeneric(box, view){
               : (RD_TYPES[arg]?RD_TYPES[arg].title:'Справочник');
   const rows = view.items.map(r=>{
     const params = endpoint==='wf' ? esc((r.steps||[]).join(' → '))+(r.kind_scope?' <span class="sub">['+esc(r.kind_scope)+']</span>':'')
-               : endpoint==='groups' ? rdCritSummary(r.criteria)
-               : endpoint==='prio' ? ('вес '+(r.weight??0)) : '';
+               : endpoint==='groups' ? (esc(r.description||rdCritSummary(r.criteria))+' · <b>соответствует задач: '+(r.matches??0)+'</b>')
+               : endpoint==='prio' ? ('<code>'+esc(r.key)+'</code> · вес '+(r.weight??0)+' · '+esc((r.color||'').replace('b-','')))
+               : endpoint==='type' ? ('<span class="sub">'+esc(r.kind||arg)+'</span>'+(r.usage?` <span class="sub">используется: ${r.usage}</span>`:''))
+               : '';
     return `<tr><td>${rdBadge({...r, color:r.color||(endpoint==='wf'?'b-blue':'b-gray')})}</td>
       <td class="muted">${params}</td>
       <td style="text-align:right;white-space:nowrap">${rdActions(r,endpoint,arg)}</td></tr>`;

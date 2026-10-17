@@ -340,6 +340,23 @@ def _norm_key(label: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", label.lower().replace(" ", "_"))[:40] or uuid.uuid4().hex[:8]
 
 
+async def _unique_status_key(session: AsyncSession, kind, dept_id, base: str) -> str:
+    """Уникальный key статуса внутри (kind, department_id): суффикс при коллизии
+    с уже существующим ключом (например, два разных кириллических названия,
+    дающих одинаковый пустой/совпадающий нормализованный key)."""
+    key = base
+    n = 2
+    while True:
+        exists = await session.scalar(select(StatusSet.id).where(
+            StatusSet.kind == kind, StatusSet.key == key,
+            StatusSet.department_id.is_(None) if dept_id is None
+            else StatusSet.department_id == dept_id))
+        if not exists:
+            return key
+        key = f"{base[:36]}_{n}"
+        n += 1
+
+
 async def get_or_404(session: AsyncSession, model, row_id: int):
     row = await session.get(model, row_id)
     if row is None:
@@ -407,6 +424,8 @@ async def create_status(session: AsyncSession, user: User, *, set_name: str, lab
         else StatusSet.department_id == dept_id))
     if exists:
         raise RefDataError(409, "Статус с таким названием уже есть")
+    # кириллические названия дают пустой/коллизионный key — гарантируем уникальность
+    key = await _unique_status_key(session, kind, dept_id, key)
     row = StatusSet(kind=kind, key=key, label=label.strip(), color=color,
                     order=order, department_id=dept_id, is_active=True)
     session.add(row)
@@ -650,7 +669,9 @@ async def create_group(session: AsyncSession, user: User, *, name: str, criteria
     name = (name or "").strip()
     if not name:
         raise RefDataError(400, "Укажите название группы")
-    row = TaskGroup(name=name, criteria=criteria or {}, department_id=dept_id, is_active=True)
+    from app.core.meet_groups import norm_criteria
+    row = TaskGroup(name=name, criteria=norm_criteria(criteria), department_id=dept_id,
+                    is_active=True)
     session.add(row)
     await log_event(session, "refdata_group_create", category="admin", user=user,
                     object=name, message=f"Создана группа задач «{name}»")
@@ -665,7 +686,8 @@ async def patch_group(session: AsyncSession, user: User, row_id: int, changes: d
     if changes.get("name"):
         row.name = str(changes["name"]).strip()
     if "criteria" in changes and isinstance(changes["criteria"], dict):
-        row.criteria = changes["criteria"]
+        from app.core.meet_groups import norm_criteria
+        row.criteria = norm_criteria(changes["criteria"])
     await log_event(session, "refdata_group_update", category="admin", user=user,
                     object=row.name, message=f"Обновлена группа задач «{row.name}»")
     await session.commit()
@@ -936,23 +958,32 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
                                   "deactivated": bool(c and not c.is_active),
                                   "copy_id": c.id if c else None})
     elif ref == "groups":
+        from app.core.meet_groups import (count_matches_for_groups, group_options,
+                                          norm_criteria, _group_desc as _mg_desc)
         rows = list((await session.scalars(
             select(TaskGroup).order_by(TaskGroup.department_id.is_not(None),
                                        TaskGroup.name))).all())
         # соответствия критериям группы (для столбца «Параметры» и конструктора)
         match_counts: dict[int, int] = {}
         try:
-            from app.core.meet_groups import count_matches_for_groups
             match_counts = await count_matches_for_groups(session, dept_id, rows)
         except Exception:   # pragma: no cover — не блокируем справочник при сбое подсчёта
             match_counts = {}
+        opts: dict = {}
+        try:
+            opts = await group_options(session, dept_id)
+        except Exception:   # pragma: no cover
+            opts = {}
+        proj_names = {p["id"]: p["label"] for p in opts.get("projects", [])}
+        status_labels = {s["key"]: s["label"] for s in opts.get("statuses", [])}
+        prio_labels = {p["key"]: p["label"] for p in opts.get("priorities", [])}
         for r in rows:
             if r.department_id is not None and dept_id is not None and r.department_id != dept_id \
                     and not view_all:
                 continue
-            crit = r.criteria or {}
+            crit = norm_criteria(r.criteria)
             item = {"id": r.id, "name": r.name, "criteria": crit,
-                    "description": _group_desc(crit),
+                    "description": _mg_desc(crit, proj_names, status_labels, prio_labels),
                     "matches": match_counts.get(r.id, 0),
                     "department_id": r.department_id,
                     "source_global_id": r.source_global_id,
@@ -975,6 +1006,7 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
         raise RefDataError(400, "Неизвестный раздел справочника")
     return {"ref": ref, "set": set_name, "department_id": dept_id,
             "items": out_items, "available_templates": avail,
+            "group_options": opts if ref == "groups" else None,
             "modules_enabled": sorted(mods),
             "allowed": _module_allowed(
                 ref if ref != "status" else f"status:{set_name or 'task'}", mods)
