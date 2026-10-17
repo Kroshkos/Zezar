@@ -70,14 +70,17 @@ function taskFormModal(uid){
   let execSel='';
   if(D.people.length){
     const cur=new Set((t&&t.executors||[]).map(e=>String(e.id)));
-    execSel='<div style="grid-column:1/-1"><label>Исполнители (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+    execSel='<div style="grid-column:1/-1"><label>Исполнитель(и) — из участников подразделения (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
       +'<select name="executor_user_ids" id="texec" multiple size="4" style="width:100%">'
+      +(cur.size?'':'<option disabled value="">— никого (будете вы) —</option>')
       +D.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
       +'</select></div>';
   }
+  // Ответственный — один из участников подразделения (как selectPeople в прототипе)
   let respSel='';
-  if(D.people.length){respSel='<div><label>Ответственный (основной)</label><select name="responsible_user_id">'
-    +D.people.map(p=>'<option value="'+p.id+'" '+(t&&t.responsibles.includes(p.name)?'selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></div>';}
+  if(D.people.length){respSel='<div><label>Ответственный — из участников подразделения</label><select name="responsible_user_id">'
+    +'<option value="">— не назначен (будете вы) —</option>'
+    +D.people.map(p=>'<option value="'+p.id+'" '+(t&&t.responsibles.includes(p.name)?'selected':(!t&&p.id===D.me?'selected':''))+'>'+esc(p.name)+'</option>').join('')+'</select></div>';}
   let deptSel='';
   if(D.departments.length&&!t){deptSel='<div><label>Подразделение</label><select name="department_id">'
     +D.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
@@ -94,8 +97,8 @@ function taskFormModal(uid){
     const pl={title:fd.title.trim(),description:fd.description,priority_key:fd.priority_key,
               due_date:fd.due_date||null,status_key:fd.status_key};
     const sel=f.querySelector('#texec');
-    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
-    if(f.responsible_user_id)pl.responsible_user_id=+f.responsible_user_id.value;
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value).filter(v=>v>0);
+    if(f.responsible_user_id&&f.responsible_user_id.value)pl.responsible_user_id=+f.responsible_user_id.value;
     if(f.department_id)pl.department_id=+f.department_id.value;
     if(t){
       await api('/api/tasks/'+t.uid,{method:'PATCH',body:JSON.stringify(pl)});
