@@ -14,6 +14,7 @@ function pfmtDT(s){if(!s)return "—";try{const d=new Date(s);return d.toLocaleD
 
 async function openProfile(uid){
   if(!uid)return;
+  try{history.replaceState(null,"","?entity="+encodeURIComponent(uid));}catch(e){}
   let P;
   try{ P=await api('/api/core/entities/'+uid+'/profile'); }
   catch(e){ return; } // ошибку показал toast
@@ -231,3 +232,12 @@ function editProfileEntity(uid){
   if(key&&fnMap[key]())return;
   toast('Форма этого модуля недоступна на данной странице');
 }
+
+/* Ссылки из Telegram вида /tasks?entity=<uid> — открываем профиль сущности
+   после загрузки данных страницы (DOMContentLoaded уже поставлен скриптом модуля). */
+document.addEventListener('DOMContentLoaded',()=>{
+  try{
+    const uid=new URLSearchParams(location.search).get('entity');
+    if(uid)setTimeout(()=>openProfile(uid),150);
+  }catch(e){}
+});

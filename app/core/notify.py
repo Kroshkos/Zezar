@@ -261,5 +261,26 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
+    #росроченные (overdue): срок < сегодня, статус не «выполнено» — раз в window_days
+    overdue_rows = (await session.scalars(
+        select(Entity).where(Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+                             Entity.due_date.is_not(None),
+                             Entity.due_date < lo,
+                             Entity.status_key != "done"))).all()
+    ohorizon = utcnow_naive() - timedelta(days=window_days)
+    for ent in overdue_rows:
+        dup = await session.scalar(
+            select(OutboxEvent.id).where(
+                OutboxEvent.topic == "telegram.overdue",
+                OutboxEvent.at > ohorizon,
+                OutboxEvent.payload_json["entity_uid"] == ent.uid).limit(1))
+        if dup:
+            continue
+        session.add(OutboxEvent(topic="telegram.overdue", payload_json={
+            "action": "overdue", "event_keys": ["overdue"],
+            "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
+            "module": ent.module_key, "title": ent.title, "actor": "планировщик",
+            "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
+        cnt += 1
     await session.commit()
     return cnt
