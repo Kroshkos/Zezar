@@ -725,12 +725,13 @@ if STATIC_DIR.is_dir():
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
-from app.routers import admin, auth, departments, pages, refdata, sharing  # noqa: E402
+from app.routers import admin, auth, departments, pages, profile, refdata, sharing  # noqa: E402
 
 app.include_router(auth.router)                    # /auth/*
 app.include_router(pages.router)                   # /login, /, /api/profile/*
 app.include_router(departments.router, prefix="/api/core", tags=["core-departments"])
 app.include_router(sharing.router, prefix="/api/core", tags=["core-sharing"])
+app.include_router(profile.router, prefix="/api/core", tags=["core-profile"])
 app.include_router(admin.router, prefix="/api/core", tags=["core-admin"])
 app.include_router(refdata.router, prefix="/api/core/refdata", tags=["core-refdata"])
 
