@@ -28,7 +28,7 @@ async def main(apply: bool) -> None:
     from sqlalchemy import select
 
     from app.core.config import get_settings
-    from app.db.engine import SessionLocal
+    from app.db.engine import engine, SessionLocal
     from app.db.seed import is_env_admin_login
     from app.models.core import Role, User
 
