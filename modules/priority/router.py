@@ -153,6 +153,7 @@ async def priority_page(request: Request, user: User = Depends(get_current_user)
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
         .order_by(Entity.due_date.desc()))).all()
     items = []
+    payloads = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
@@ -167,8 +168,13 @@ async def priority_page(request: Request, user: User = Depends(get_current_user)
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append(_prio_dict(ent, await _load_payload(session, ent.id), perm,
-                                resp_names, cross_dept=cross))
+        pl = await _load_payload(session, ent.id)
+        payloads.append(pl)
+        items.append((ent, pl, perm, resp_names, cross))
+    ptitles = await _project_titles(session, payloads)
+    items = [_prio_dict(e, pl, p, rn, cross_dept=c,
+                        project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+             for e, pl, p, rn, c in items]
     # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
     # администратора + собственные/активированные записи подразделения; набор
     # ограничен подключённым модулем данного workspace.
@@ -181,6 +187,22 @@ async def priority_page(request: Request, user: User = Depends(get_current_user)
         depts = [{"id": d.id, "name": d.name} for d in
                  (await session.scalars(
                      select(Department).where(Department.is_active == True))).all()]  # noqa: E712
+    else:
+        rows = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
+        depts = [{"id": d.id, "name": d.name} for d in rows]
+    # сотрудники для назначения исполнителей (несколько) — как people в прототипе
+    members = (await session.scalars(
+        select(DepartmentMember).where(
+            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+    people: list[dict] = []
+    for m in members:
+        u = await session.get(User, m.user_id)
+        if u and u.is_active and not any(x["id"] == u.id for x in people):
+            people.append({"id": u.id, "name": u.display_name})
+    # проекты для привязки показателя (связанность категорий в рамках модулей)
+    projects = [{"uid": e.uid, "title": e.title}
+                for e in await _visible_projects(session, ctx)]
     return await render_page(
         request, "priority.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Приоритетные показатели",
@@ -188,7 +210,7 @@ async def priority_page(request: Request, user: User = Depends(get_current_user)
         counts={MODULE_KEY: len(items)},
         indicators=items,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        departments=depts,
+        departments=depts, people=people, projects=projects,
     )
 
 
@@ -201,7 +223,7 @@ async def list_priority(user: User = Depends(get_current_user),
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.PRIORITY, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles)))).all()
-    out = []
+    pairs = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
@@ -216,8 +238,12 @@ async def list_priority(user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append(_prio_dict(ent, await _load_payload(session, ent.id), perm,
-                              resp_names, cross_dept=cross))
+        pl = await _load_payload(session, ent.id)
+        pairs.append((ent, pl, perm, resp_names, cross))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in pairs])
+    out = [_prio_dict(e, pl, p, rn, cross_dept=c,
+                      project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+           for e, pl, p, rn, c in pairs]
     return out
 
 
@@ -225,22 +251,30 @@ async def list_priority(user: User = Depends(get_current_user),
 async def create_priority(body: PriorityIn, user: User = Depends(get_current_user),
                           session: AsyncSession = Depends(session_dep)):
     dept_id = await _pick_department(session, user, body)
-    ent = await entity_service.create_entity(
-        session, user, kind=EntityKind.PRIORITY, module_key=MODULE_KEY,
-        owner_department_id=dept_id, title=body.title.strip(),
-        description=body.description or None, status_key=body.status_key,
-        due_date=body.due_date or None,
-        responsible_user_id=body.responsible_user_id or user.id,
-    )
+    ctx = await access.build_context(session, user)
+    try:
+        ent = await entity_service.create_entity(
+            session, user, kind=EntityKind.PRIORITY, module_key=MODULE_KEY,
+            owner_department_id=dept_id, title=body.title.strip(),
+            description=body.description or None, status_key=body.status_key,
+            due_date=body.due_date or None,
+            responsible_user_id=body.responsible_user_id or user.id,
+            executor_user_ids=body.executor_user_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    await _check_project(session, ctx, body.project_entity_uid)
     session.add(PriorityPayload(
         entity_id=ent.id, direction=body.direction or None, metric=body.metric or None,
-        target_value=body.target_value or None, current_value=body.current_value or None))
+        target_value=body.target_value or None, current_value=body.current_value or None,
+        project_entity_uid=body.project_entity_uid or None))
     await session.flush()
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
-_PRIO_FIELDS = {"direction", "metric", "target_value", "current_value"}
+_PRIO_FIELDS = {"direction", "metric", "target_value", "current_value",
+                "project_entity_uid"}
 
 
 @router.patch("/{uid}")
@@ -257,11 +291,21 @@ async def patch_priority(uid: str, body: dict, user: User = Depends(get_current_
     core_changes = {k: v for k, v in body.items()
                     if k in {"title", "description", "status_key", "due_date"}}
     await entity_service.update_entity(session, user, ent, core_changes)
+    if "project_entity_uid" in body:
+        await _check_project(session, ctx, body["project_entity_uid"] or None)
     payload = await _load_payload(session, ent.id)
-    if payload:
-        for f in _PRIO_FIELDS:
-            if f in body:
-                setattr(payload, f, body[f])
+    if payload is None:
+        payload = PriorityPayload(entity_id=ent.id)
+        session.add(payload)
+    for f in _PRIO_FIELDS:
+        if f in body:
+            setattr(payload, f, body[f])
+    if "executor_user_ids" in body:
+        try:
+            await entity_service.set_executors(
+                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
+        except ValueError as e:
+            raise HTTPException(422, str(e))
     await session.commit()
     return {"ok": True}
 

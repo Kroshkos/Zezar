@@ -197,6 +197,9 @@ async def schols_page(request: Request, user: User = Depends(get_current_user),
     # проекты для привязки стипендии (связанность категорий в рамках модулей)
     projects = [{"uid": e.uid, "title": e.title}
                 for e in await _visible_projects(session, ctx)]
+    schol_types = [{"key": t.key, "label": t.label}
+                   for t in await refdata.effective_types(
+                       session, "schol_type", dept_ctx, mods)]
     return await render_page(
         request, "schols.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Стипендии",
@@ -204,7 +207,7 @@ async def schols_page(request: Request, user: User = Depends(get_current_user),
         counts={MODULE_KEY: len(cards)},
         schols=cards,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        departments=depts, people=people, projects=projects,
+        departments=depts, people=people, projects=projects, schol_types=schol_types,
     )
 
 
