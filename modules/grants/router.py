@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service
+from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -109,9 +109,13 @@ async def grants_page(request: Request, user: User = Depends(get_current_user),
                     resp_names.append(u.display_name)
         items.append(_grant_dict(ent, await _load_payload(session, ent.id), perm,
                                  resp_names, cross_dept=cross))
-    statuses = (await session.scalars(
-        select(StatusSet).where(StatusSet.kind == EntityKind.GRANT)
-        .order_by(StatusSet.order))).all()
+    # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
+    # администратора + собственные/активированные записи подразделения; набор
+    # ограничен подключённым модулем данного workspace.
+    dept_ctx = await refdata.context_dept(session, user, None)
+    mods = await refdata.enabled_modules(session, dept_ctx)
+    statuses = await refdata.effective_statuses(
+        session, EntityKind.GRANT, dept_ctx, mods)
     depts: list[dict] = []
     if ctx.is_global:
         depts = [{"id": d.id, "name": d.name} for d in
