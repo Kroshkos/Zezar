@@ -90,17 +90,14 @@ async def _head_dept(session: AsyncSession, user: User, dept_id: Optional[int]) 
         .order_by(DepartmentMember.id))
 
 
-async def resolve_dept(session: AsyncSession, user: User, dept_id: Optional[int]) -> int:
-    """Подразделение, для которого руководитель правит справочники.
+async def resolve_dept(session: AsyncSession, user: User, dept_id: Optional[int]) -> Optional[int]:
+    """Подразделение, для которого пользователь правит справочники.
 
-    Админ/координатор может указать любое; HEAD — только своё (role_in_dept=HEAD).
-    Если подразделение не указано явно — берётся возглавляемое пользователем
-    (детерминированно, по id записи членства).
+    Админ/координатор: dept_id как передан; None = режим «Вся система»
+    (глобальные шаблоны, department_id=NULL). HEAD — только своё подразделение
+    (пустой выбор = возглавляемое).
     """
     if user.role in (Role.ADMIN, Role.COORDINATOR):
-        if dept_id is None:
-            raise RefDataError(400, "Администратору необходимо указать department_id "
-                                    "(справочники подразделения управляются во контексте пространства)")
         return dept_id
     head = await _head_dept(session, user, dept_id)
     if head is None:
@@ -368,10 +365,11 @@ async def check_write_scope(user: User, row, dept_id: Optional[int]):
     """Разграничение: руководитель правит только записи своего подразделения."""
     if user.role in (Role.ADMIN, Role.COORDINATOR):
         return
+    # страховка: запись глобального шаблона редактирует/удаляет только админ
+    if row.department_id is None:
+        raise RefDataError(403, "Глобальный шаблон администратора: можно только "
+                                "активировать/деактивировать его копию в своём подразделении")
     if row.department_id != dept_id:
-        if row.department_id is None:
-            raise RefDataError(403, "Глобальный шаблон администратора: можно только "
-                                    "активировать/деактивировать его копию в своём подразделении")
         raise RefDataError(403, "Нет доступа к справочнику другого подразделения")
 
 

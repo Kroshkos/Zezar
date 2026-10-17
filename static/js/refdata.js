@@ -301,6 +301,13 @@ function sectionLabel(section,arg){
 
 /* ---------- каркас вкладки (вызывается из showTab('refdata')) ---------- */
 async function initRefDataPane(){
+  // Режим «Вся система» доступен только администратору/координатору;
+  // руководитель без выбранного пространства справочники не видит.
+  if(!rdDept() && !rdIsGlobal()){
+    const box=document.getElementById('rdBody');
+    if(box) box.innerHTML='<span class="muted">Выберите подразделение в шапке — справочники доступны руководителю только в его пространстве.</span>';
+    return;
+  }
   const pane=document.getElementById('pane-refdata'); if(!pane) return;
   const card=pane.querySelector('.card'); if(!card) return;
   let data; try{ data=await rdLoad(true); }catch(e){ card.innerHTML='<span class="muted">Справочники недоступны.</span>'; return; }
