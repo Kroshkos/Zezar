@@ -579,12 +579,16 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/refdata.js?v=20261018b"></script>
-<script src="/static/js/notify_admin.js?v=20261018b"></script>
+<script src="/static/js/refdata.js?v=20261018c"></script>
+<script src="/static/js/notify_admin.js?v=20261018c"></script>
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 const IS_ADMIN = !!ADM.is_global_admin;
+// refdata.js/notify_admin.js загружаются ДО этого скрипта — пробрасываем им
+// глобалы страницы в window, чтобы их ленивые проверки (typeof IS_ADMIN)
+// видели корректные значения при вызове из showTab().
+window.DEPT = DEPT; window.IS_ADMIN = IS_ADMIN;
 let USERS_CACHE = null;
 /* Подразделения для формы создания УЗ: берём из ADM.departments (активные
    пространства, сервер передаёт их всегда — даже когда подразделений ещё нет,
@@ -594,13 +598,16 @@ let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
 let evTimer = null;
 
 /* ---------------- вкладки ---------------- */
+// Режим «Вся система»: активное пространство не выбрано, но админ/координатор
+// работает глобально (KPI, справочники всех пространств, журнал всей системы).
+const GLOBAL_MODE = !!ADM.global_mode;
 function switchDept(id){ location.href='/admin_dept/?department_id='+id+((typeof tabState!=='undefined'&&tabState!=='overview')?'#'+tabState:''); }
 function showTab(name){
   // вкладки, недоступные текущей роли -> на безопасную
   const pane = document.getElementById('pane-'+name);
-  if(!pane){ name = DEPT ? 'overview' : 'departments'; }
+  if(!pane){ name = (DEPT||GLOBAL_MODE) ? 'overview' : 'departments'; }
   // руководитель без активного пространства не имеет scoped-вкладок
-  if(!DEPT && !IS_ADMIN && name!=='users'){ name='users'; }
+  if(!DEPT && !GLOBAL_MODE && name!=='users'){ name='users'; }
   tabState = name;
   document.querySelectorAll('.adm-tab').forEach(t=>t.classList.toggle('on', t.dataset.tab===name));
   document.querySelectorAll('.adm-pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+name));
@@ -899,7 +906,7 @@ async function loadEvents(){
     }catch(e){ box.innerHTML='<span class="muted">Журнал недоступен.</span>'; }
     return;
   }
-  if(!IS_ADMIN){ box.innerHTML='<span class="muted">Журнал доступен после выбора подразделения.</span>'; return; }
+  if(!IS_ADMIN){ box.innerHTML='<span class="muted">'+(GLOBAL_MODE?'Глобальный журнал недоступен.':'Журнал доступен после выбора подразделения.')+'</span>'; return; }
   const q=(document.getElementById('evQ')?.value||'').trim();
   let url='/api/core/admin/events?limit=100';
   if(q)url+='&q='+encodeURIComponent(q);

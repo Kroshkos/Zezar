@@ -798,14 +798,16 @@ async def sections_view(session: AsyncSession, user: User,
     out: dict = {"department_id": dept_id, "modules_enabled": sorted(mods),
                  "colors": COLORS, "status_sets": {}, "types": {},
                  "prio": [], "wf": [], "groups": []}
+    # В режиме «Вся система» (dept_id=None у админа/координатора) показываем ВСЕ
+    # разделы независимо от модулей: в агрегате есть записи всех пространств,
+    # где любой подключённый модуль имеет место быть.
     for set_name in KIND_BY_SET:
         if _module_allowed(f"status:{set_name}", mods) or dept_id is None:
             v = await admin_view(session, user, "status", dept_id, set_name)
             out["status_sets"][set_name] = v
     v = await admin_view(session, user, "prio", dept_id)
     out["prio"] = v
-    for rk, mkey in ((RefType.KIND_DOC, "docs"), (RefType.KIND_SOFT, "softs"),
-                     (RefType.KIND_SCHOL, "schols")):
+    for rk in (RefType.KIND_DOC, RefType.KIND_SOFT, RefType.KIND_SCHOL):
         if _module_allowed(f"type:{rk}", mods) or dept_id is None:
             out["types"][rk] = await admin_view(session, user, "type", dept_id, rk)
     if _module_allowed("wf", mods) or dept_id is None:
