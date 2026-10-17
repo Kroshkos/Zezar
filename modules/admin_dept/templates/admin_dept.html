@@ -64,6 +64,10 @@
   <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
   <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
   <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
+  {% if department %}
+  <button class="adm-tab" data-tab="refdata" onclick="showTab('refdata')"
+          title="Справочники: статусы, типы, приоритеты, маршруты, группы задач. Данные хранятся в базе данных.">📚 Справочники</button>
+  {% endif %}
   <button class="adm-tab" data-tab="sharing" onclick="showTab('sharing')">🔗 Шеринг</button>
   <button class="adm-tab" data-tab="events" onclick="showTab('events')">📜 Журнал</button>
 </div>
@@ -289,6 +293,11 @@
   </div>
 </section>
 
+<!-- ===================== Справочники (по образцу раздела администрирования прототипа; данные — в БД) ===================== -->
+<section class="adm-pane" id="pane-refdata">
+  <div class="card pad"><span class="muted">Загрузка справочников…</span></div>
+</section>
+
 <!-- ===================== Шеринг ===================== -->
 <section class="adm-pane" id="pane-sharing">
   <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
@@ -343,6 +352,7 @@
 {% else %}
 {# Нет активного пространства — заглушки, чтобы JS showTab() не падал #}
 <section class="adm-pane" id="pane-modules"></section>
+<section class="adm-pane" id="pane-refdata"></section>
 <section class="adm-pane" id="pane-sharing"></section>
 <section class="adm-pane" id="pane-events">
   <div class="card pad"><p class="muted" style="margin:0">Журнал доступен после выбора подразделения.</p></div>
@@ -355,6 +365,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/refdata.js?v=20261017a"></script>
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
@@ -381,6 +392,7 @@ function showTab(name){
   try{ history.replaceState(null,'','#'+name); }catch(e){}
   if(name==='users') loadUsers();
   if(name==='events') loadEvents();
+  if(name==='refdata' && typeof initRefDataPane==='function') initRefDataPane();
 }
 (function initTab(){
   const hash=(location.hash||'').replace('#','');

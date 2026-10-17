@@ -14,12 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service
+from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
     Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
-    PriorityLevel, Role, StatusSet, User,
+    Role, User,
 )
 from app.models.module_payloads import TaskPayload
 from app.ui import render_page
@@ -109,9 +109,13 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
             continue
         items.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
                                 await _resp_names(session, ent), cross_dept=cross))
-    statuses = (await session.scalars(
-        select(StatusSet).where(StatusSet.kind == EntityKind.TASK).order_by(StatusSet.order))).all()
-    prios = (await session.scalars(select(PriorityLevel).order_by(PriorityLevel.weight))).all()
+    statuses = await refdata.effective_statuses(
+        session, EntityKind.TASK,
+        await refdata.context_dept(session, user, None),
+        await refdata.enabled_modules(session, await refdata.context_dept(session, user, None)))
+    _pdept = await refdata.context_dept(session, user, None)
+    prios = await refdata.effective_priorities(
+        session, _pdept, await refdata.enabled_modules(session, _pdept))
     depts: list[dict] = []
     if ctx.is_global:
         depts = [{"id": d.id, "name": d.name} for d in
