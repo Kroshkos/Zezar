@@ -96,7 +96,9 @@ async def _pick_department(session: AsyncSession, user: User, body: MeetingIn) -
     mine = (await session.scalars(
         select(DepartmentMember.department_id).where(DepartmentMember.user_id == user.id)
         .order_by(DepartmentMember.id))).all()
-    if body.department_id:
+    if body.department_id is not None:
+        if body.department_id <= 0:
+            raise HTTPException(422, f"Некорректный department_id: {body.department_id}")
         if user.role not in (Role.ADMIN, Role.COORDINATOR):
             raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
         if not await session.get(Department, body.department_id):

@@ -55,6 +55,15 @@ async def create_entity(
     исполнитель состоит в подразделении-владельце, он дополнительно получает
     слот ответственного в этом пространстве (доступ + уведомления).
     """
+    # Валидация подразделения-владельца ДО записи: если dept_id отсутствует в
+    # departments (например, фронт передал department_id=0 при «своём» выборе),
+    # SQLite с включёнными FK откатывал всю транзакцию на первом же flush внутри
+    # create_entity — нарушался инвариант «слоты ответственных создаются до
+    # шерингов», и последующий INSERT task_payloads падал с
+    # FOREIGN KEY constraint failed. Даём понятную 422 вместо 500.
+    from app.models.core import Department
+    if await session.get(Department, owner_department_id) is None:
+        raise ValueError(f"Подразделение не найдено: id={owner_department_id}")
     ent = Entity(
         uid=_uid(), kind=kind, module_key=module_key,
         owner_department_id=owner_department_id, title=title,
@@ -75,16 +84,12 @@ async def create_entity(
                           "executors": [{"id": e, "name": umap[e]} for e in exec_ids]}
     session.add(ent)
     await session.flush()
-    for dept_id, perm in (share_with or []):
-        if dept_id != owner_department_id:
-            session.add(EntityShare(
-                entity_id=ent.id, target_department_id=dept_id,
-                permission=perm, granted_by_user_id=user.id))
-    # Ответственный от подразделения-владельца. ВАЖНО (изоляция пространств):
-    # если явный responsible — сотрудник ДРУГОГО подразделения (например, админ/
-    # координатор создаёт задачу в чужом workspace и назначает себя), слот
-    # владельца остаётся незаполненным (назначит head), а пользователь получает
-    # доступ к сущности через свой слот в принимающем подразделении (шэр).
+    # ВАЖНО (FK-инвариант): сначала создаём слоты ответственных для владельца и
+    # всех подразделений из share_with, и только затем пишем EntityShare. Иначе
+    # access.ensure_responsibles может удалить pending-пустые слоты чужих
+    # пространств до commit — на боевой SQLite (включённые FK + откат транзакции)
+    # это приводило к IntegrityError: FOREIGN KEY constraint failed при вставке
+    # task_payloads сразу после create_entity.
     owner_slot_user_id = responsible_user_id
     external_resp_dept: int | None = None
     if responsible_user_id is not None:
@@ -111,6 +116,20 @@ async def create_entity(
     session.add(EntityResponsible(
         entity_id=ent.id, department_id=owner_department_id,
         user_id=owner_slot_user_id, is_primary=True))
+    for dept_id, perm in (share_with or []):
+        if dept_id != owner_department_id:
+            session.add(EntityShare(
+                entity_id=ent.id, target_department_id=dept_id,
+                permission=perm, granted_by_user_id=user.id))
+            # слот принимающей стороны (назначает head; user_id=NULL до назначения)
+            has_slot = await session.scalar(
+                select(EntityResponsible.id).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.department_id == dept_id))
+            if not has_slot:
+                session.add(EntityResponsible(
+                    entity_id=ent.id, department_id=dept_id, user_id=None))
+    await session.flush()
     if external_resp_dept is not None:
         # Внешний ответственный: доступ к сущности даётся ТОЛЬКО через явный
         # механизм шеринга (иначе нарушается изоляция пространств). Если
