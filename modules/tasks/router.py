@@ -263,6 +263,15 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
                 session, user, ent, ent.owner_department_id, body["responsible_user_id"])
         except PermissionError as e:
             raise HTTPException(400, str(e))
+    # Привязка к проекту: проверяем существование и доступность проекта (как в docs/grants/meetings)
+    if body.get("project_entity_uid"):
+        parent = await session.scalar(
+            select(Entity).where(Entity.uid == body["project_entity_uid"],
+                                 Entity.kind == EntityKind.PROJECT))
+        if not parent:
+            raise HTTPException(404, "Проект не найден")
+        if not await access.resolve_permission(session, ctx, parent):
+            raise HTTPException(403, "Нет доступа к выбранному проекту")
     payload = await _load_payload(session, ent.id)
     if payload:
         for f in ("group_key", "project_entity_uid"):

@@ -58,7 +58,7 @@ async def _entity_labels(session: AsyncSession, uids: list[str]) -> dict[str, st
     uids = [u for u in dict.fromkeys(uids) if u]
     if not uids:
         return {}
-    rows = (await session.scalars(
+    rows = (await session.execute(
         select(Entity.uid, Entity.title).where(Entity.uid.in_(uids)))).all()
     return {u: t for u, t in rows}
 
