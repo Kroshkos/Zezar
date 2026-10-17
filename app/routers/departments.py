@@ -194,17 +194,23 @@ async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_curr
     target = await session.get(User, body.user_id)
     if not target:
         raise HTTPException(404, "Пользователь не найден")
+    # ВАЖНО: set_department_role в конце вызывает invalidate_session (expire_all),
+    # после чего любое ленивое чтение атрибутов expired-объектов бросает
+    # MissingGreenlet. Все имена/id актора и цели захватываем ДО сервиса.
+    target_name = target.login or target.display_name
+    dept_row = await session.get(Department, dept_id)
+    dept_name = dept_row.name if dept_row else str(dept_id)
+    actor_user_id, actor_disp = user.id, user.display_name
     action_desc = await set_department_role(
         session, department_id=dept_id, user_id=body.user_id,
         new_role=body.role_in_dept, actor=user,
         allow_head_promotion=ctx.is_global)
-    dept_row = await session.get(Department, dept_id)
-    await log_event(session, "add_member", category="dept", user=user,
-                    object=f"{dept_row.name if dept_row else dept_id}: {target.display_name}",
+    await log_event(session, "add_member", category="dept",
+                    user_id=actor_user_id, actor_name=actor_disp,
+                    object=f"{dept_name}: {target_name}",
                     level="warning",
-                    message=f"Пользователь '{target.login or target.display_name}' — "
-                            f"подразделение '{dept_row.name if dept_row else dept_id}': "
-                            f"{action_desc}")
+                    message=f"Пользователь '{target_name}' — "
+                            f"подразделение '{dept_name}': {action_desc}")
     await session.commit()
     return {"ok": True}
 
@@ -231,6 +237,11 @@ async def remove_member(dept_id: int, member_user_id: int,
                                      "сначала назначьте нового")
         tgt = await session.get(User, member_user_id)
         dept_row = await session.get(Department, dept_id)
+        # Имена/актор читаются ДО delete/bump_epoch(invalidate_session)/commit —
+        # иначе lazy-load expired/detached-объекта бросит MissingGreenlet.
+        tgt_name = (tgt.login or tgt.display_name) if tgt else str(member_user_id)
+        dept_name = dept_row.name if dept_row else str(dept_id)
+        actor_user_id, actor_disp = user.id, user.display_name
         # Синхронизация глобальной роли: если снимаем HEAD и это последнее
         # руководимое пространство — пользователь перестаёт быть head глобально.
         if tgt is not None and tgt.role == Role.HEAD and row.role_in_dept == Role.HEAD:
@@ -241,12 +252,12 @@ async def remove_member(dept_id: int, member_user_id: int,
                     DepartmentMember.department_id != dept_id))
             if not other_heads:
                 tgt.role = Role.MEMBER
-        await log_event(session, "remove_member", category="dept", user=user,
-                        object=f"{dept_row.name if dept_row else dept_id}: "
-                               f"{tgt.display_name if tgt else member_user_id}",
+        await log_event(session, "remove_member", category="dept",
+                        user_id=actor_user_id, actor_name=actor_disp,
+                        object=f"{dept_name}: {tgt_name}",
                         level="warning",
-                        message=f"Пользователь '{tgt.login if tgt else member_user_id}' исключён из "
-                                f"подразделения '{dept_row.name if dept_row else dept_id}'")
+                        message=f"Пользователь '{tgt_name}' исключён из "
+                                f"подразделения '{dept_name}'")
         await session.delete(row)
         from app.core.permcache import bump_epoch
         await bump_epoch(session)  # инвалидация кэша прав (см. permcache)

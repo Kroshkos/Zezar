@@ -198,8 +198,14 @@ async def set_department_role(
 
     from app.core.permcache import bump_epoch, invalidate_session
 
-    if not await session.get(User, user_id):
+    target = await session.get(User, user_id)
+    if not target:
         raise HTTPException(404, "Пользователь не найден")
+    # Скалярные копиИ полей актора/цели: в конце функции вызывается
+    # invalidate_session (expire_all), после чего ленивое чтение атрибутов
+    # expired-объекта вне зелёного потока бросает MissingGreenlet.
+    actor_name = actor.login or actor.display_name
+    target_display = target.display_name
 
     member = await session.scalar(
         select(DepartmentMember).where(
@@ -242,8 +248,8 @@ async def set_department_role(
 
     await bump_epoch(session)          # инвалидация кэша прав (токены/клиенты)
     invalidate_session(session)        # сброс identity map текущей сессии
-    return (f"{action}: {new_role.value} "
-            f"(актор: {actor.login or actor.display_name})")
+    return (f"{action}: {new_role.value} (актор: {actor_name}, "
+            f"цель: {target_display})")
 
 
 def can_write(perm: Permission | None) -> bool:

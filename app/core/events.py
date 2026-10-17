@@ -40,14 +40,21 @@ def client_ip(request: Optional[Request]) -> Optional[str]:
 
 async def log_event(session: AsyncSession, action: str, *, category: str = "system",
                     user: Optional[User] = None, actor_name: Optional[str] = None,
+                    user_id: Optional[int] = None,
                     object: Optional[str] = None, ip: Optional[str] = None,
                     level: str = "info", message: Optional[str] = None,
                     details: Optional[dict] = None) -> EventLog:
-    """Записать событие в журнал (в транзакции вызывающего, commit — на его стороне)."""
+    """Записать событие в журнал (в транзакции вызывающего, commit — на его стороне).
+
+    Поля актора читаются лениво: если объект ``user`` мог быть expired/detached
+    (например, после invalidate_session/commit в другом сервисе), передавайте
+    явно ``user_id=...`` и ``actor_name=...`` скалярными значениями — иначе
+    lazy-load вне сессии бросит MissingGreenlet.
+    """
     ev = EventLog(
         action=action[:60], category=category[:30],
-        user_id=user.id if user else None,
-        user_name=(user.display_name if user else actor_name),
+        user_id=user_id if user_id is not None else (user.id if user else None),
+        user_name=(actor_name or (user.display_name if user else None)),
         object=(object or "")[:200] or None,
         ip=ip, level=level, message=message, details_json=details or {},
     )
