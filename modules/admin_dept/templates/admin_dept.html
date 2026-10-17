@@ -362,7 +362,7 @@
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">🛡 Базовые сценарии уведомлений</h3>
       <span class="muted">Применимы ко всем пользователям; пользователь не может их отключить</span>
-      <button class="btn sm primary" style="margin-left:auto" onclick="nscForm()">➕ Создать</button>
+      <button class="btn sm primary" style="margin-left:auto" onclick="naScenForm()">➕ Создать</button>
     </div>
     <div id="nscList" class="muted">Загрузка…</div>
   </div>
@@ -371,7 +371,7 @@
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">📄 Шаблоны уведомлений</h3>
       <span class="muted">Для ручных рассылок; плейсхолдеры {name} {login}</span>
-      <button class="btn sm primary" style="margin-left:auto" onclick="ntplForm()">➕ Создать</button>
+      <button class="btn sm primary" style="margin-left:auto" onclick="naTplForm()">➕ Создать</button>
     </div>
     <div id="ntplList" class="muted">Загрузка…</div>
   </div>
@@ -381,12 +381,12 @@
     <p class="muted" style="margin:0 0 10px">Наименование, содержание, дата/время отправки и аудитория: все, конкретные пользователи, участники подразделения (± руководитель), все руководители. Отправка — фактическая доставка в Telegram через очередь.</p>
     <form id="bcFrm" style="display:grid;gap:9px;max-width:720px">
       <label class="sub">Шаблон (подставит название и текст)
-        <select name="template_id" class="adm-inp" onchange="bcApplyTpl(this.value)"><option value="">— без шаблона —</option></select></label>
+        <select name="template_id" class="adm-inp" onchange="naApplyTpl(this.value)"><option value="">— без шаблона —</option></select></label>
       <label class="sub">Наименование уведомления<input name="title" class="adm-inp" required maxlength="300"></label>
       <label class="sub">Содержание<textarea name="body" rows="4" class="adm-inp" required></textarea></label>
       <label class="sub">Дата и время отправки<input name="send_at" type="datetime-local" class="adm-inp" required></label>
       <label class="sub">Кому отправить
-        <select name="mode" class="adm-inp" onchange="bcAudChange()">
+        <select name="mode" class="adm-inp" onchange="naAudChange()">
           <option value="all">Всем пользователям</option>
           <option value="users">Конкретным пользователям</option>
           <option value="department">Подразделению (участники + руководитель)</option>
@@ -411,7 +411,7 @@
   <div class="card pad">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">🚚 Очередь доставки (Telegram)</h3>
-      <button class="btn sm ghost" style="margin-left:auto" onclick="loadOutbox()">⟳ Обновить</button>
+      <button class="btn sm ghost" style="margin-left:auto" onclick="naLoadOutbox()">⟳ Обновить</button>
     </div>
     <div id="ntgOutbox" class="muted">Откройте вкладку для загрузки…</div>
   </div>
@@ -435,6 +435,7 @@
 
 {% block scripts %}
 <script src="/static/js/refdata.js?v=20261017a"></script>
+<script src="/static/js/notify_admin.js?v=20261017a"></script>
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
@@ -462,6 +463,7 @@ function showTab(name){
   if(name==='users') loadUsers();
   if(name==='events') loadEvents();
   if(name==='refdata' && typeof initRefDataPane==='function') initRefDataPane();
+  if(name==='notify' && typeof initNotifyPane==='function') initNotifyPane();
 }
 (function initTab(){
   const hash=(location.hash||'').replace('#','');

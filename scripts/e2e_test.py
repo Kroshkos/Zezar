@@ -412,11 +412,6 @@ async def notify_chain_test() -> None:
           "обработка telegram.overdue воркером, фактический вызов sendMessage")
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
-    asyncio.run(notify_chain_test())
-
-
 async def _pending_events():
     from sqlalchemy import select
     async with SessionLocal() as s:

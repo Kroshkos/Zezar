@@ -239,18 +239,40 @@ async def admin_create_base(body: BaseScenarioIn, user: User = Depends(get_curre
     return {"ok": True, "id": scn.id}
 
 
+class BaseScenarioPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    event_key: str | None = None
+    entity_kinds: list[str] | None = None
+    module_keys: list[str] | None = None
+    template: str | None = None
+    visibility: str = "global"
+    department_id: int | None = None
+    is_active: bool | None = None
+
+
 @router.patch("/admin/notify/base-scenarios/{scn_id}")
-async def admin_edit_base(scn_id: int, body: BaseScenarioIn,
+async def admin_edit_base(scn_id: int, body: BaseScenarioPatch,
                           user: User = Depends(get_current_user),
                           session: AsyncSession = Depends(session_dep)):
     await _require_admin(session, user)
     scn = await session.get(NotifyScenario, scn_id)
     if not scn or not scn.is_base:
         raise HTTPException(404, "Базовый сценарий не найден")
-    _validate_scenario_body(body)
-    scn.name, scn.description = body.name, body.description
-    scn.event_key, scn.entity_kinds, scn.module_keys = body.event_key, body.entity_kinds, body.module_keys
-    scn.template, scn.is_active = body.template, body.is_active
+    merged = ScenarioIn(
+        name=body.name if body.name is not None else scn.name,
+        description=body.description if body.description is not None else scn.description,
+        event_key=body.event_key if body.event_key is not None else scn.event_key,
+        entity_kinds=body.entity_kinds if body.entity_kinds is not None else (scn.entity_kinds or []),
+        module_keys=body.module_keys if body.module_keys is not None else (scn.module_keys or []),
+        template=body.template if body.template is not None else (scn.template or ""),
+        visibility="global", department_id=None)
+    _validate_scenario_body(merged)
+    scn.name, scn.description = merged.name, merged.description
+    scn.event_key, scn.entity_kinds, scn.module_keys = merged.event_key, merged.entity_kinds, merged.module_keys
+    scn.template = merged.template
+    if body.is_active is not None:
+        scn.is_active = body.is_active
     await log_event(session, "notify_base_scenario_edit", category="admin", user=user,
                     object=f"scenario:{scn.name}", message=f"Изменён базовый сценарий «{scn.name}»")
     await session.commit()
@@ -370,7 +392,16 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
     send_at = body.send_at
     if send_at.tzinfo is not None:
         send_at = send_at.astimezone(timezone.utc).replace(tzinfo=None)
-    n = Notification(title=body.title, body=body.body, send_at=send_at,
+    title, text_body = body.title, body.body
+    # применение шаблона рассылки (если выбран): подставляем плейсхолдеры {name} {login}
+    tpl: NotifyTemplate | None = None
+    if body.template_id:
+        tpl = await session.get(NotifyTemplate, body.template_id)
+        if tpl is None:
+            raise HTTPException(422, "Шаблон рассылки не найден")
+        title = title or tpl.title
+        text_body = text_body or tpl.body
+    n = Notification(title=title, body=text_body, send_at=send_at,
                      audience_json=body.audience.model_dump(),
                      status="scheduled", created_by=user.id,
                      recipients_count=len(users))
@@ -382,10 +413,12 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
     await log_event(session, "notify_broadcast", category="admin", user=user,
                     object=f"notification:{n.id}",
                     message=f"Рассылка «{n.title}» → {len(users)} получателей, "
-                            f"старт {send_at.isoformat(timespec='minutes')}")
+                            f"старт {send_at.isoformat(timespec='minutes')}"
+                            + (f", шаблон «{tpl.name}»" if tpl else ""))
     await session.commit()
     return {"ok": True, "id": n.id, "recipients": len(users),
-            "immediate": n.status == "sending"}
+            "immediate": n.status == "sending",
+            "send_at": send_at.isoformat(timespec="minutes")}
 
 
 @router.get("/admin/notify/broadcast")
@@ -429,7 +462,8 @@ async def outbox_view(limit: int = 50, user: User = Depends(get_current_user),
                        "error": (r.last_error or "")[:200],
                        "payload": {k: v for k, v in (r.payload_json or {}).items()
                                    if k in ("title", "action", "user_id", "notification_id",
-                                            "chat_id", "kind", "link")}}
+                                            "chat_id", "kind", "link", "entity_uid",
+                                            "entity_kind", "event_key")}}
                       for r in rows]}
 
 
