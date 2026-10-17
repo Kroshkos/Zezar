@@ -19,12 +19,24 @@ from app.core.security import decrypt_secret
 
 log = logging.getLogger("caesar.caldav")
 
-CALDAV_BASE = "https://dav.yandex.ru/calendar"
+# Яндекс закрыл CalDAV-эндпоинт dav.yandex.ru (он возвращает 405 на PROPFIND/MKCOL).
+# Рабочий протокол — WebDAV: https://webdav.yandex.ru (значение из настроек;
+# там же живёт дефолтный календарь в папке /calendar/).
+DEFAULT_CAL_BASE = "https://webdav.yandex.ru"
 NS_DAV = {"d": "DAV:"}
 
 
 class CalDavError(Exception):
     pass
+
+
+def caldav_base() -> str:
+    try:
+        from app.core.config import get_settings
+        base = (get_settings().yandex_cal_base or "").strip().rstrip("/")
+    except Exception:  # noqa: BLE001
+        base = ""
+    return base or DEFAULT_CAL_BASE
 
 
 def _auth(user_email: str, app_password: str) -> tuple[str, str]:
@@ -33,28 +45,36 @@ def _auth(user_email: str, app_password: str) -> tuple[str, str]:
 
 async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
                           cal_name: str = "Цезарь") -> str:
-    """Возвращает путь коллекции (calendars/<name>/), создаёт если нет."""
-    base = f"{CALDAV_BASE}/"
-    r = await client.request("PROPFIND", base, headers={"Depth": "0", "Authorization": _basic(email, apw)},
+    """Возвращает URL WebDAV-папки для .ics-файлов, создаёт её если нет.
+
+    Папка лежит внутри «календарной» области (/calendar/), чтобы события
+    попадали именно в Яндекс.Календарь, а не в обычный диск.
+    """
+    base = caldav_base() + "/"
+    cal_root = base + "calendar/"
+    folder_url = cal_root + _q(cal_name) + "/"
+    # уже существует?
+    r = await client.request("PROPFIND", folder_url,
+                             headers={"Depth": "0", "Authorization": _basic(email, apw)},
                              content=_propfind(["getctag"]))
-    # ищем существующую коллекцию по имени
-    href = None
     if r.status_code in (207, 200):
-        root = ET.fromstring(r.text)
-        for resp in root.findall(".//{DAV:}response"):
-            for st in resp.findall(".//{DAV:}status"):
-                if "200" in (st.text or "") or "OK" in (st.text or ""):
-                    h = resp.find("{DAV:}href")
-                    if h is not None and cal_name.lower() in h.text.lower():
-                        href = h.text
-                        break
-    if href:
-        return href
-    mk = await client.request("MKCOL", base + httpx.QueryParams({"name": ""}).encode().decode() if False else base + _q(cal_name) + "/",
+        return folder_url
+    if r.status_code in (401, 403):
+        raise CalDavError(f"WebDAV отклонил учётные данные: HTTP {r.status_code}")
+    # создаём папку (405 = уже существует — гонка, ок)
+    mk = await client.request("MKCOL", folder_url,
                               headers={"Authorization": _basic(email, apw)})
-    if mk.status_code not in (201, 405):
-        raise CalDavError(f"Не удалось создать календарь '{cal_name}': {mk.status_code}")
-    return f"{base}{_q(cal_name)}/"
+    if mk.status_code not in (201, 204, 405):
+        # фолбэк: пишем прямо в /calendar/ (дефолтный календарь Яндекса)
+        rr = await client.request("PROPFIND", cal_root,
+                                  headers={"Depth": "0", "Authorization": _basic(email, apw)},
+                                  content=_propfind(["getctag"]))
+        if rr.status_code in (207, 200):
+            log.warning("MKCOL %s -> %s, fallback to %s", folder_url, mk.status_code, cal_root)
+            return cal_root
+        raise CalDavError(f"Не удалось создать календарь '{cal_name}': MKCOL HTTP {mk.status_code}, "
+                          f"PROPFIND {cal_root} HTTP {rr.status_code}")
+    return folder_url
 
 
 def _basic(email: str, apw: str) -> str:
@@ -174,10 +194,15 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     """
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.request("PROPFIND", CALDAV_BASE + "/",
+            r = await client.request("PROPFIND", caldav_base() + "/",
                                      headers={"Depth": "0", "Authorization": _basic(login, app_password),
-                                              "Content-Type": 'application/xml'})
+                                              "Content-Type": 'application/xml'},
+                                     content=_propfind(["getctag"]))
     except httpx.HTTPError as e:
         log.warning("verify_credentials network error: %s", e)
         return False, 0
+    if r.status_code == 405:
+        # Признак того, что запрос ушёл на закрытый CalDAV-эндпоинт (dav.yandex.ru):
+        # проверяем корректный WebDAV-базовый адрес.
+        log.error("WebDAV вернул 405 — проверьте YANDEX_CAL_BASE (нужен https://webdav.yandex.ru)")
     return r.status_code in (200, 207), r.status_code
