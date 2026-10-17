@@ -18,7 +18,8 @@
 <div class="empty" id="gempty" hidden>💰<p>Грантов нет. Нажмите «＋ Новый грант».</p></div>
 
 <script id="grantData" type="application/json">
-{{ {'grants': grants, 'statuses': statuses, 'departments': departments} | tojson }}
+{{ {'grants': grants, 'statuses': statuses,
+    'departments': departments, 'people': people, 'projects': projects} | tojson }}
 </script>
 {% endblock %}
 

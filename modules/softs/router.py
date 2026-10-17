@@ -15,7 +15,8 @@ from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, Entity, EntityKind, EntityShare, Permission, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
+    StatusSet, User,
 )
 from app.models.module_payloads import SoftPayload
 from app.ui import render_page
@@ -41,14 +42,23 @@ class SoftIn(BaseModel):
     description: str | None = ""
     department_id: int | None = None
     responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []        # исполнители (может быть несколько, как в прототипе)
+    project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> SoftPayload | None:
     return await session.scalar(select(SoftPayload).where(SoftPayload.entity_id == ent_id))
 
 
+def _executors(ent: Entity) -> list[dict]:
+    """Список исполнителей [{id,name}] из денормализованного extra_json."""
+    return (ent.extra_json or {}).get("executors") or []
+
+
 def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
-               resp_names: list[str], cross_dept: bool = False) -> dict:
+               resp_names: list[str], cross_dept: bool = False,
+               project_title: str | None = None) -> dict:
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -57,7 +67,11 @@ def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
         "soft_type": p.soft_type if p else "", "repo_url": p.repo_url if p else "",
         "env": p.env if p else "",
         "stages": (p.stages if p else []) or [],
+        "project_entity_uid": p.project_entity_uid if p else None,
+        "project_title": project_title or "",
         "responsibles": resp_names,
+        "executors": execs,
+        "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
         "can_share": access.can_manage_sharing(perm),
@@ -80,6 +94,49 @@ async def _pick_department(session: AsyncSession, user: User, body: SoftIn) -> i
     if not mine:
         raise HTTPException(400, "Вы не состоите ни в одном подразделении")
     return mine[0]
+
+
+async def _visible_projects(session: AsyncSession, ctx: access.AccessContext) -> list[Entity]:
+    """Доступные пользователю проекты (для привязки сущностей модуля)."""
+    ents = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             access.entity_filter(ctx))
+        .options(selectinload(Entity.shares)))).all()
+    out = []
+    for ent in ents:
+        if await access.resolve_permission(session, ctx, ent) is None:
+            continue
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
+                and ent.owner_department_id not in ctx.department_ids:
+            continue
+        out.append(ent)
+    return out
+
+
+async def _project_titles(session: AsyncSession, payloads: list[SoftPayload | None]) -> dict[str, str]:
+    """uid проекта -> заголовок (для карточек/форм; uid хранится в payload)."""
+    puids = {p.project_entity_uid for p in payloads if p and p.project_entity_uid}
+    if not puids:
+        return {}
+    rows = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             Entity.uid.in_(puids)))).all()
+    return {e.uid: e.title for e in rows}
+
+
+async def _check_project(session: AsyncSession, ctx: access.AccessContext,
+                         project_uid: str | None) -> None:
+    """Привязка к проекту: сущность проекта должна существовать и быть доступна."""
+    if not project_uid:
+        return
+    parent = await session.scalar(
+        select(Entity).where(Entity.uid == project_uid,
+                             Entity.kind == EntityKind.PROJECT))
+    if not parent:
+        raise HTTPException(404, "Проект не найден")
+    if not await access.resolve_permission(session, ctx, parent):
+        raise HTTPException(403, "Нет доступа к выбранному проекту")
 
 
 # ---------------- HTML ----------------
@@ -108,8 +165,11 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append(_soft_dict(ent, await _load_payload(session, ent.id), perm,
-                                resp_names, cross_dept=cross))
+        items.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in items])
+    cards = [_soft_dict(e, pl, p, rn, cross_dept=c,
+                        project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+             for e, pl, p, rn, c in items]
     # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
     # администратора + собственные/активированные записи подразделения; набор
     # ограничен подключённым модулем данного workspace.
@@ -122,14 +182,33 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
         depts = [{"id": d.id, "name": d.name} for d in
                  (await session.scalars(
                      select(Department).where(Department.is_active == True))).all()]  # noqa: E712
+    else:
+        rows = (await session.scalars(
+            select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
+        depts = [{"id": d.id, "name": d.name} for d in rows]
+    # сотрудники для назначения исполнителей (несколько) — как people в прототипе
+    members = (await session.scalars(
+        select(DepartmentMember).where(
+            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+    people: list[dict] = []
+    for m in members:
+        u = await session.get(User, m.user_id)
+        if u and u.is_active and not any(x["id"] == u.id for x in people):
+            people.append({"id": u.id, "name": u.display_name})
+    # проекты для привязки единицы ПО (связанность категорий в рамках модулей)
+    projects = [{"uid": e.uid, "title": e.title}
+                for e in await _visible_projects(session, ctx)]
+    soft_types = [{"key": t.key, "label": t.label}
+                  for t in await refdata.effective_types(
+                      session, "soft_type", dept_ctx, mods)]
     return await render_page(
         request, "softs.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Программное обеспечение",
         page_sub="Учёт внутренних разработок и систем; сроки синхронизируются с Яндекс.Календарём",
-        counts={MODULE_KEY: len(items)},
-        softs=items,
+        counts={MODULE_KEY: len(cards)},
+        softs=cards,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        departments=depts,
+        departments=depts, people=people, projects=projects, soft_types=soft_types,
     )
 
 
@@ -157,31 +236,40 @@ async def list_softs(user: User = Depends(get_current_user),
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append(_soft_dict(ent, await _load_payload(session, ent.id), perm,
-                              resp_names, cross_dept=cross))
-    return out
+        out.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in out])
+    return [_soft_dict(e, pl, p, rn, cross_dept=c,
+                       project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
+            for e, pl, p, rn, c in out]
 
 
 @router.post("")
 async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
                       session: AsyncSession = Depends(session_dep)):
     dept_id = await _pick_department(session, user, body)
-    ent = await entity_service.create_entity(
-        session, user, kind=EntityKind.SOFT, module_key=MODULE_KEY,
-        owner_department_id=dept_id, title=body.title.strip(),
-        description=body.description or None, status_key=body.status_key,
-        due_date=body.due_date or None,
-        responsible_user_id=body.responsible_user_id or user.id,
-    )
+    ctx = await access.build_context(session, user)
+    await _check_project(session, ctx, body.project_entity_uid)
+    try:
+        ent = await entity_service.create_entity(
+            session, user, kind=EntityKind.SOFT, module_key=MODULE_KEY,
+            owner_department_id=dept_id, title=body.title.strip(),
+            description=body.description or None, status_key=body.status_key,
+            due_date=body.due_date or None,
+            responsible_user_id=body.responsible_user_id or user.id,
+            executor_user_ids=body.executor_user_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     session.add(SoftPayload(
         entity_id=ent.id, soft_type=body.soft_type or None,
-        repo_url=body.repo_url or None, env=body.env or None, stages=[]))
+        repo_url=body.repo_url or None, env=body.env or None, stages=[],
+        project_entity_uid=body.project_entity_uid or None))
     await session.flush()
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
-_SOFT_FIELDS = {"soft_type", "repo_url", "env", "stages"}
+_SOFT_FIELDS = {"soft_type", "repo_url", "env", "stages", "project_entity_uid"}
 
 
 @router.patch("/{uid}")
@@ -198,11 +286,25 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
     core_changes = {k: v for k, v in body.items()
                     if k in {"title", "description", "status_key", "due_date"}}
     await entity_service.update_entity(session, user, ent, core_changes)
+    if "executor_user_ids" in body:
+        try:
+            await entity_service.set_executors(
+                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    if "responsible_user_id" in body:
+        try:
+            await entity_service.assign_responsible(
+                session, user, ent, ent.owner_department_id, body["responsible_user_id"])
+        except PermissionError as e:
+            raise HTTPException(400, str(e))
     payload = await _load_payload(session, ent.id)
     if payload:
+        if "project_entity_uid" in body:
+            await _check_project(session, ctx, body["project_entity_uid"])
         for f in _SOFT_FIELDS:
             if f in body:
-                setattr(payload, f, body[f])
+                setattr(payload, f, body[f] if (f == "stages" or body[f]) else None)
     await session.commit()
     return {"ok": True}
 

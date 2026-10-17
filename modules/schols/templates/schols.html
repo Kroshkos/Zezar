@@ -18,7 +18,8 @@
 <div class="empty" id="xempty" hidden>🎓<p>Назначений нет. Нажмите «＋ Новое назначение».</p></div>
 
 <script id="scholData" type="application/json">
-{{ {'schols': schols, 'statuses': statuses, 'departments': departments} | tojson }}
+{{ {'schols': schols, 'statuses': statuses, 'departments': departments,
+    'people': people, 'projects': projects, 'schol_types': schol_types} | tojson }}
 </script>
 {% endblock %}
 

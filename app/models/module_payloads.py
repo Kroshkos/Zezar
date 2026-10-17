@@ -42,6 +42,7 @@ class MeetingPayload(TimestampMixin, Base):
     agenda: Mapped[list] = mapped_column(JSON, default=list)          # [{q, who, minutes}]
     decisions: Mapped[list] = mapped_column(JSON, default=list)       # [{text, who, due, taskId}]
     linked_task_uids: Mapped[list] = mapped_column(JSON, default=list)
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту (связанность категорий)
     location: Mapped[Optional[str]] = mapped_column(String(200))
     start_at: Mapped[Optional[str]] = mapped_column(String(32))       # ISO datetime для календаря
     end_at: Mapped[Optional[str]] = mapped_column(String(32))
@@ -57,6 +58,10 @@ class ProjectPayload(TimestampMixin, Base):
     customer: Mapped[Optional[str]] = mapped_column(String(200))
     budget: Mapped[Optional[str]] = mapped_column(String(64))
     links: Mapped[list] = mapped_column(JSON, default=list)
+    # Иерархия проектов: проект может быть частью другого проекта (родитель —
+    # uid сущности kind=project; хранится uid, а не FK id — устойчивость при
+    # репликации/синхронизации пространств и отсутствие каскадного удаления).
+    parent_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)
 
 
 class DocPayload(TimestampMixin, Base):
@@ -68,6 +73,7 @@ class DocPayload(TimestampMixin, Base):
     number: Mapped[Optional[str]] = mapped_column(String(64))
     issued_at: Mapped[Optional[str]] = mapped_column(String(32))
     file_ref: Mapped[Optional[str]] = mapped_column(String(500))
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
 
 
 class SoftPayload(TimestampMixin, Base):
@@ -80,6 +86,7 @@ class SoftPayload(TimestampMixin, Base):
     repo_url: Mapped[Optional[str]] = mapped_column(String(500))
     env: Mapped[Optional[str]] = mapped_column(String(120))
     stages: Mapped[list] = mapped_column(JSON, default=list)
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
 
 
 class GrantPayload(TimestampMixin, Base):
@@ -90,6 +97,7 @@ class GrantPayload(TimestampMixin, Base):
     program: Mapped[Optional[str]] = mapped_column(String(200))
     amount: Mapped[Optional[str]] = mapped_column(String(64))
     submitted_at: Mapped[Optional[str]] = mapped_column(String(32))
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
 
 
 class ScholarPayload(TimestampMixin, Base):
@@ -100,6 +108,7 @@ class ScholarPayload(TimestampMixin, Base):
     person_name: Mapped[Optional[str]] = mapped_column(String(200))
     schol_type: Mapped[Optional[str]] = mapped_column(String(120))    # scholTypes из демо
     amount: Mapped[Optional[str]] = mapped_column(String(64))
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
 
 
 class PriorityPayload(TimestampMixin, Base):
@@ -112,3 +121,4 @@ class PriorityPayload(TimestampMixin, Base):
     metric: Mapped[Optional[str]] = mapped_column(String(200))
     target_value: Mapped[Optional[str]] = mapped_column(String(64))
     current_value: Mapped[Optional[str]] = mapped_column(String(64))
+    project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту

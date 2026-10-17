@@ -27,8 +27,10 @@ function renderDocCards(){
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+dfmt(d.due_date)
       +(d.doc_type?' · 📑 '+esc(d.doc_type):'')
       +(d.issued_at?' · выдан '+dfmt(d.issued_at):'')+'</div>'
-      +(d.responsibles.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(d.responsibles.join(', '))+'</div>':'')
+      +(d.executor_names&&d.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(d.executor_names.join(', '))+'</div>':'')
+      +(d.responsibles.length&&!d.executor_names?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(d.responsibles.join(', '))+'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
+      +(d.project_title?'<span class="lchip">🗂 проект: <b>'+esc(d.project_title)+'</b></span>':'')
       +(d.file_ref?'<a class="lchip" href="'+esc(d.file_ref)+'" target="_blank" rel="noopener">📎 файл</a>':'')
       +(d.cross_dept?'<span class="lchip">🔗 межпространственный</span>':'')
       +(d.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')
@@ -54,30 +56,59 @@ function docFormModal(uid){
   let deptSel='';
   if(DD.departments.length&&!d){deptSel='<div><label>Подразделение</label><select name="department_id">'
     +DD.departments.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select></div>';}
+  // Привязка к проекту (связанность категорий); варианты берутся из доступных проектов
+  let projSel='';
+  if(DD.projects&&DD.projects.length){
+    projSel='<div><label>Проект (привязка)</label><select name="project_entity_uid">'
+      +'<option value="">— без привязки —</option>'
+      +DD.projects.map(p=>'<option value="'+p.uid+'" '+(d&&d.project_entity_uid===p.uid?'selected':'')+'>'+esc(p.title)+'</option>').join('')
+      +'</select></div>';}
+  else if(d&&d.project_title){projSel='<input type="hidden" name="project_entity_uid" value="'+esc(d.project_entity_uid||'')+'">';}
+  // Исполнители — может быть несколько (мульти-select, как в задачах/проектах)
+  let execSel='';
+  if(DD.people&&DD.people.length){
+    const cur=new Set(((d&&d.executors)||[]).map(e=>String(e.id)));
+    execSel='<div style="grid-column:1/-1"><label>Исполнители (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+      +'<select name="executor_user_ids" id="dexec" multiple size="4" style="width:100%">'
+      +DD.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';}
+  const dtList=(DD.doc_types||[]).length
+    ? '<div><label>Вид документа</label><select name="doc_type"><option value="">—</option>'
+      +DD.doc_types.map(t=>'<option value="'+esc(t.label)+'" '+((d&&d.doc_type===t.label)?'selected':'')+'>'+esc(t.label)+'</option>').join('')
+      +'</select></div>'
+    : '<div><label>Вид документа</label><input name="doc_type" value="'+esc(d&&d.doc_type||'')+'"></div>';
   const body='<label>Название документа *</label><input name="title" required value="'+esc(d?d.title:'')+'">'
     +'<div class="frow">'
     +'<div><label>Дата (календарь)</label><input type="date" name="due_date" value="'+(d&&d.due_date||'')+'"></div>'
     +'<div><label>Номер</label><input name="number" value="'+esc(d&&d.number||'')+'"></div>'
-    +'<div><label>Вид документа</label><input name="doc_type" value="'+esc(d&&d.doc_type||'')+'"></div>'
+    +dtList
     +'</div><div class="frow">'
     +'<div><label>Выдан/зарегистрирован</label><input type="date" name="issued_at" value="'+esc(d&&d.issued_at||'')+'"></div>'
     +'<div><label>Ссылка на файл</label><input name="file_ref" placeholder="https://…" value="'+esc(d&&d.file_ref||'')+'"></div>'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
-    +'</div>'+deptSel
+    +'</div><div class="frow">'+deptSel+projSel+'</div>'
+    +execSel
     +'<label>Описание / комментарий</label><textarea name="description" rows="2">'+esc(d?d.description:'')+'</textarea>';
   openModal(d?'Редактирование документа':'Новый документ',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите название документа');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
               status_key:fd.status_key,number:fd.number,doc_type:fd.doc_type,
               issued_at:fd.issued_at||null,file_ref:fd.file_ref};
+    if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
+    const sel=f.querySelector('#dexec');
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(f.department_id)pl.department_id=+f.department_id.value;
     if(d){
       await api('/api/docs/'+d.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(d,pl);
+      if(pl.executor_user_ids)d.executor_names=pl.executor_user_ids.map(id=>(DD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+      if(pl.project_entity_uid!==undefined)d.project_title=pl.project_entity_uid?((DD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
       toast('Сохранено · событие обновится в календарях');
     }else{
       const r=await api('/api/docs',{method:'POST',body:JSON.stringify(pl)});
-      DD.docs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[]},pl));
+      DD.docs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
+        executor_names:(pl.executor_user_ids||[]).map(id=>(DD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean),
+        project_title:pl.project_entity_uid?((DD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):''},pl));
       toast('Документ создан');
     }
     closeModal();renderDocCards();

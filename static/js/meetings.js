@@ -28,6 +28,8 @@ function renderMeetCards(){
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+mfmt(m.due_date)+' '+esc(m.time||'')+' · 📍 '+esc(m.location||'—')+'</div>'
       +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Председатель: '+esc(m.chair||'—')
       +(m.responsibles.length?' · 👤 '+esc(m.responsibles.join(', ')):'')+'</div>'
+      +(m.executor_names&&m.executor_names.length?'<div style="margin-top:4px;font-size:12.5px;color:var(--muted)">👥 Исполнители: '+esc(m.executor_names.join(', '))+'</div>':'')
+      +(m.project_title?'<div style="margin-top:4px;font-size:12.5px">📁 Проект: '+esc(m.project_title)+'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
       +'<span class="lchip">📃 повестка: '+m.agenda.length+'</span>'
       +'<span class="lchip">🎯 задач: '+m.linked_task_uids.length+'</span>'
@@ -64,6 +66,22 @@ function meetFormModal(uid){
   let deptSel='';
   if(MD.departments.length&&!m){deptSel='<div><label>Подразделение</label><select name="department_id">'
     +MD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
+  // Привязка к проекту (связанность категорий в рамках подключённых модулей)
+  let projSel='';
+  if(MD.projects&&MD.projects.length){
+    projSel='<div><label>Проект (привязка)</label><select name="project_entity_uid">'
+      +'<option value="">— без привязки —</option>'
+      +MD.projects.map(p=>'<option value="'+p.uid+'" '+(m&&m.project_entity_uid===p.uid?'selected':'')+'>'+esc(p.title)+'</option>').join('')
+      +'</select></div>';}
+  else if(m&&m.project_title){projSel='<input type="hidden" name="project_entity_uid" value="'+esc(m.project_entity_uid||'')+'">';}
+  // Исполнители — может быть несколько (мульти-select, как в задачах/проектах)
+  let execSel='';
+  if(MD.people&&MD.people.length){
+    const cur=new Set(((m&&m.executors)||[]).map(e=>String(e.id)));
+    execSel='<div style="grid-column:1/-1"><label>Исполнители / ответственные за поручения (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+      +'<select name="executor_user_ids" id="mexec" multiple size="4" style="width:100%">'
+      +MD.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';}
   const body='<label>Тема совещания *</label><input name="title" required value="'+esc(m?m.title:'')+'">'
     +'<div class="frow">'
     +'<div><label>Дата</label><input type="date" name="due_date" value="'+(m&&m.due_date||'')+'"></div>'
@@ -75,22 +93,31 @@ function meetFormModal(uid){
     +'<div><label>Секретарь</label><input name="secretary" value="'+esc(m&&m.secretary||'')+'"></div>'
     +'</div>'
     +'<label>Участники</label><textarea name="attendees" rows="2">'+esc(m&&m.attendees||'')+'</textarea>'
-    +'<div class="frow"><div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'+deptSel+'</div>'
+    +'<div class="frow"><div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'+deptSel+projSel+'</div>'
+    +execSel
     +'<label>Описание / комментарий</label><textarea name="description" rows="2">'+esc(m?m.description:'')+'</textarea>';
   openModal(m?'Редактирование совещания':'Новое совещание',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите тему совещания');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
               status_key:fd.status_key,num:fd.num,chair:fd.chair,secretary:fd.secretary,
               attendees:fd.attendees,location:fd.location,time:fd.time||''};
+    if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
+    const sel=f.querySelector('#mexec');
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(f.department_id)pl.department_id=+f.department_id.value;
+    const enames=(pl.executor_user_ids||[]).map(id=>(MD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+    const ptitle=pl.project_entity_uid?((MD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
     if(m){
       await api('/api/meetings/'+m.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(m,pl);if(pl.due_date)m.due_date=pl.due_date;
+      if(pl.executor_user_ids)m.executor_names=enames;
+      if(pl.project_entity_uid!==undefined)m.project_title=ptitle;
       toast('Сохранено · событие обновится в календарях');
     }else{
       const r=await api('/api/meetings',{method:'POST',body:JSON.stringify(pl)});
       MD.meetings.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
-        agenda:[],decisions:[],linked_task_uids:[]},pl));
+        agenda:[],decisions:[],linked_task_uids:[],
+        executor_names:enames,project_title:ptitle},pl));
       toast('Совещание создано');
     }
     closeModal();renderMeetCards();

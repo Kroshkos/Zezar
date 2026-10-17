@@ -18,7 +18,8 @@
 <div class="empty" id="mempty" hidden>🤝<p>Совещаний нет. Нажмите «＋ Новое совещание».</p></div>
 
 <script id="meetData" type="application/json">
-{{ {'meetings': meetings, 'statuses': statuses, 'departments': departments} | tojson }}
+{{ {'meetings': meetings, 'statuses': statuses, 'departments': departments,
+    'people': people, 'projects': projects} | tojson }}
 </script>
 {% endblock %}
 

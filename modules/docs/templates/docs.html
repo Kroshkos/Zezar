@@ -18,7 +18,8 @@
 <div class="empty" id="dempty" hidden>📄<p>Документов нет. Нажмите «＋ Новый документ».</p></div>
 
 <script id="docData" type="application/json">
-{{ {'docs': docs, 'statuses': statuses, 'departments': departments} | tojson }}
+{{ {'docs': docs, 'statuses': statuses, 'doc_types': doc_types,
+    'departments': departments, 'people': people, 'projects': projects} | tojson }}
 </script>
 {% endblock %}
 

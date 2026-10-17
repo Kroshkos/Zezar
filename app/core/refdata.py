@@ -78,21 +78,31 @@ class RefDataError(HTTPException):
 # Полномочия и области видимости
 # ---------------------------------------------------------------------------
 
+async def _head_dept(session: AsyncSession, user: User, dept_id: Optional[int]) -> Optional[int]:
+    """Если пользователь — руководитель dept_id (или руководитель какого-либо
+    подразделения при dept_id=None) — вернуть id того подразделения, иначе None."""
+    conds = [DepartmentMember.user_id == user.id,
+             DepartmentMember.role_in_dept == Role.HEAD]
+    if dept_id is not None:
+        conds.append(DepartmentMember.department_id == dept_id)
+    return await session.scalar(
+        select(DepartmentMember.department_id).where(*conds)
+        .order_by(DepartmentMember.id))
+
+
 async def resolve_dept(session: AsyncSession, user: User, dept_id: Optional[int]) -> int:
     """Подразделение, для которого руководитель правит справочники.
 
     Админ/координатор может указать любое; HEAD — только своё (role_in_dept=HEAD).
+    Если подразделение не указано явно — берётся возглавляемое пользователем
+    (детерминированно, по id записи членства).
     """
     if user.role in (Role.ADMIN, Role.COORDINATOR):
         if dept_id is None:
             raise RefDataError(400, "Администратору необходимо указать department_id "
                                     "(справочники подразделения управляются во контексте пространства)")
         return dept_id
-    head = await session.scalar(
-        select(DepartmentMember.department_id).where(
-            DepartmentMember.user_id == user.id,
-            DepartmentMember.department_id == (dept_id or -1),
-            DepartmentMember.role_in_dept == Role.HEAD))
+    head = await _head_dept(session, user, dept_id)
     if head is None:
         raise RefDataError(403, "Справочники подразделения управляет только его руководитель")
     return head
@@ -355,8 +365,16 @@ async def create_status(session: AsyncSession, user: User, *, set_name: str, lab
     kind = KIND_BY_SET.get(set_name)
     if kind is None:
         raise RefDataError(400, f"Неизвестный набор статусов: {set_name}")
-    if user.role not in (Role.ADMIN, Role.COORDINATOR) and dept_id is None:
-        raise RefDataError(403, "Руководитель создаёт статусы только в своём подразделении")
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        # руководитель без явного department_id — создаёт в возглавляемом им
+        # подразделении; чужое подразделение запрещено (проверка ниже)
+        own = await _head_dept(session, user, None)
+        if dept_id is None:
+            dept_id = own
+        elif dept_id != own:
+            raise RefDataError(403, "Руководитель создаёт записи только в своём подразделении")
+        if dept_id is None:
+            raise RefDataError(403, "Руководитель создаёт статусы только в своём подразделении")
     if color not in COLORS:
         color = "b-gray"
     key = _norm_key(label)
@@ -412,19 +430,33 @@ async def delete_status(session: AsyncSession, user: User, row_id: int,
 
 # ---- Приоритеты -----------------------------------------------------------
 
+async def _head_write_dept(session: AsyncSession, user: User,
+                           dept_id: Optional[int]) -> int:
+    """Подразделение для создания записи руководителем: явно переданный свой
+    (иначе 403) либо возглавляемое по умолчанию."""
+    own = await _head_dept(session, user, None)
+    if dept_id is None:
+        dept_id = own
+    elif own is None or dept_id != own:
+        raise RefDataError(403, "Можно создавать записи только в своём подразделении")
+    if dept_id is None:
+        raise RefDataError(403, "Вы не являетесь руководителем подразделения")
+    return dept_id
+
+
 async def create_priority(session: AsyncSession, user: User, *, label: str, color: str,
                           weight: int, dept_id: Optional[int]) -> PriorityLevel:
-    if user.role not in (Role.ADMIN, Role.COORDINATOR) and dept_id is None:
-        raise RefDataError(403, "Руководитель создаёт приоритеты только в своём подразделении")
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept_id = await _head_write_dept(session, user, dept_id)
     if color not in COLORS:
         color = "b-blue"
     key = _norm_key(label)
-    exists = await session.scalar(select(PriorityLevel).where(
-        PriorityLevel.key == key,
-        PriorityLevel.department_id.is_(None) if dept_id is None
-        else PriorityLevel.department_id == dept_id))
-    if exists:
-        raise RefDataError(409, "Приоритет с таким названием уже есть")
+    # уникальность key — глобальная (Entity.priority_key хранится без привязки к
+    # подразделению); при коллизии добавляем суффикс вместо ошибки 409
+    base_key, n = key, 1
+    while await session.scalar(select(PriorityLevel.id).where(PriorityLevel.key == key)):
+        key = f"{base_key}_{n}"
+        n += 1
     row = PriorityLevel(key=key, label=label.strip(), color=color, weight=weight,
                         department_id=dept_id, is_active=True)
     session.add(row)
@@ -471,8 +503,8 @@ async def create_type(session: AsyncSession, user: User, *, ref_kind: str, label
                       dept_id: Optional[int]) -> RefType:
     if ref_kind not in (RefType.KIND_DOC, RefType.KIND_SOFT, RefType.KIND_SCHOL):
         raise RefDataError(400, "Неизвестный вид типа")
-    if user.role not in (Role.ADMIN, Role.COORDINATOR) and dept_id is None:
-        raise RefDataError(403, "Руководитель создаёт типы только в своём подразделении")
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept_id = await _head_write_dept(session, user, dept_id)
     label = label.strip()
     if not label:
         raise RefDataError(400, "Укажите название типа")
@@ -535,8 +567,8 @@ async def delete_type(session: AsyncSession, user: User, row_id: int,
 
 async def create_template(session: AsyncSession, user: User, *, name: str, steps: list,
                           kind_scope: Optional[str], dept_id: Optional[int]) -> WfTemplate:
-    if user.role not in (Role.ADMIN, Role.COORDINATOR) and dept_id is None:
-        raise RefDataError(403, "Руководитель создаёт маршруты только в своём подразделении")
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept_id = await _head_write_dept(session, user, dept_id)
     name = (name or "").strip()
     steps = [str(s).strip() for s in (steps or []) if str(s).strip()]
     if not name or len(steps) < 2:
@@ -590,8 +622,8 @@ async def delete_template(session: AsyncSession, user: User, row_id: int,
 
 async def create_group(session: AsyncSession, user: User, *, name: str, criteria: dict,
                        dept_id: Optional[int]) -> TaskGroup:
-    if user.role not in (Role.ADMIN, Role.COORDINATOR) and dept_id is None:
-        raise RefDataError(403, "Руководитель создаёт группы только в своём подразделении")
+    if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        dept_id = await _head_write_dept(session, user, dept_id)
     name = (name or "").strip()
     if not name:
         raise RefDataError(400, "Укажите название группы")
