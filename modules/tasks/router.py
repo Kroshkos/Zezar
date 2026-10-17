@@ -44,14 +44,21 @@ class TaskIn(BaseModel):
     priority_key: str | None = "medium"
     due_date: str | None = None
     responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []         # исполнители (может быть несколько)
     department_id: int | None = None          # для админа/координатора: чьё пространство
     project_entity_uid: str | None = None
     group_key: str | None = None
     share_with: list[int] = []               # межпространственный контекст (проект): dept_id[]
 
 
+def _executors(ent: Entity) -> list[dict]:
+    """Список исполнителей [{id,name}] из денормализованного extra_json."""
+    return (ent.extra_json or {}).get("executors") or []
+
+
 def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False) -> dict:
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "priority_key": ent.priority_key,
@@ -63,6 +70,8 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "group_key": payload.group_key if payload else None,
         "checklist": (payload.checklist if payload else []) or [],
         "responsibles": resp_names,
+        "executors": execs,
+        "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
         "can_share": access.can_manage_sharing(perm),
@@ -191,18 +200,22 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
     # подразделений -> расшариваем всем участникам проекта (кроме владельца).
     # Права принимающей стороны: EDIT (могут вести свои подзадачи и назначать своего
     # ответственного — инвариант «несколько ответственных» из ТЗ).
-    ent = await entity_service.create_entity(
-        session, user, kind=EntityKind.TASK, module_key=MODULE_KEY,
-        owner_department_id=dept_id, title=body.title.strip(),
-        description=body.description or None, status_key=body.status_key,
-        priority_key=body.priority_key, due_date=body.due_date or None,
-        tags=[], responsible_user_id=body.responsible_user_id or user.id,
-        # межпространственный контекст: в сервис передаётся ПОЛНЫЙ список
-        # участников; сервис сам исключит «шеринг самому себе» (owner) и
-        # откроет слоты ответственных по одному от каждого подразделения
-        share_with=[(d, Permission.EDIT) for d in dict.fromkeys(body.share_with)]
-        if body.share_with else None,
-    )
+    try:
+        ent = await entity_service.create_entity(
+            session, user, kind=EntityKind.TASK, module_key=MODULE_KEY,
+            owner_department_id=dept_id, title=body.title.strip(),
+            description=body.description or None, status_key=body.status_key,
+            priority_key=body.priority_key, due_date=body.due_date or None,
+            tags=[], responsible_user_id=body.responsible_user_id or user.id,
+            executor_user_ids=body.executor_user_ids,
+            # межпространственный контекст: в сервис передаётся ПОЛНЫЙ список
+            # участников; сервис сам исключит «шеринг самому себе» (owner) и
+            # откроет слоты ответственных по одному от каждого подразделения
+            share_with=[(d, Permission.EDIT) for d in dict.fromkeys(body.share_with)]
+            if body.share_with else None,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     # ЯВНЫЙ SELECT: не читать ORM-коллекцию ent.shares — после add() pending-объектов
     # любое последующее flush-событие (autoflush) может откатить непрочитанную
     # коллекцию; только запрос к БД даёт достоверный факт шеринга.
@@ -233,6 +246,12 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
     changes = {k: v for k, v in body.items()
                if k in {"title", "description", "status_key", "priority_key", "due_date", "tags"}}
     await entity_service.update_entity(session, user, ent, changes)
+    if "executor_user_ids" in body:
+        try:
+            await entity_service.set_executors(
+                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
+        except ValueError as e:
+            raise HTTPException(422, str(e))
     if "responsible_user_id" in body:
         try:
             await entity_service.assign_responsible(

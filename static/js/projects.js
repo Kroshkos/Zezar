@@ -54,8 +54,9 @@ function renderProjCards(){
       +'<div style="color:var(--muted);font-size:12.5px">🎯 Заказчик: '+esc(p.customer||'—')
       +' · 💰 '+esc(p.budget||'—')+' · 📅 до '+pfmt(p.due_date)+'</div>'
       +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Этапы: '+p.stage_done+'/'+p.stage_total
-      +(p.responsibles.length?' · 👤 '+esc(p.responsibles.join(', ')):'')+'</div>'+bar
+      +(p.executor_names&&p.executor_names.length||p.responsibles.length?' · 👤 '+esc((p.executor_names&&p.executor_names.length?p.executor_names:p.responsibles).join(', ')):'')+'</div>'+bar
       +'<div class="link-chips" style="margin-top:11px">'
+      +(p.parent_title?'<span class="lchip">🗂 часть проекта: <b>'+esc(p.parent_title)+'</b></span>':'')
       +(p.cross_dept?'<span class="lchip">🔗 межпространственный</span>':'')
       +(p.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')
       +'</div>'
@@ -81,6 +82,31 @@ function projFormModal(uid){
   let deptSel='';
   if(PRJ.departments.length&&!p){deptSel='<div><label>Подразделение-владелец</label><select name="department_id">'
     +PRJ.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select></div>';}
+  // Иерархия: проект может быть частью другого проекта (родитель выбирается из доступных,
+  // исключая самого себя и своих потомков — сервер дополнительно проверяет ацикличность)
+  let parentSel='';
+  if((PRJ.people!==undefined||true)){
+    const descs=new Set();
+    if(p){ // потомки p — нельзя выбирать их родителями
+      const stack=[p.uid];
+      while(stack.length){const cur=stack.pop();
+        PRJ.projects.forEach(x=>{if(x.parent_uid===cur&&!descs.has(x.uid)){descs.add(x.uid);stack.push(x.uid)}});}
+    }
+    const cand=PRJ.projects.filter(x=>x.uid!==(p?p.uid:'')&&!descs.has(x.uid));
+    parentSel='<div><label>Часть проекта (родитель)</label><select name="parent_uid">'
+      +'<option value="">— не является частью —</option>'
+      +cand.map(x=>'<option value="'+x.uid+'" '+(p&&p.parent_uid===x.uid?'selected':'')+'>'+esc(x.title)+'</option>').join('')
+      +'</select></div>';
+  }
+  // Исполнители — несколько (мульти-select)
+  let execSel='';
+  if(PRJ.people&&PRJ.people.length){
+    const cur=new Set(((p&&p.executors)||[]).map(e=>String(e.id)));
+    execSel='<div style="grid-column:1/-1"><label>Исполнители (можно выбрать несколько, Ctrl/Cmd+клик)</label>'
+      +'<select name="executor_user_ids" id="pexec" multiple size="4" style="width:100%">'
+      +PRJ.people.map(pr=>'<option value="'+pr.id+'" '+(cur.has(String(pr.id))?'selected':'')+'>'+esc(pr.name)+'</option>').join('')
+      +'</select></div>';
+  }
   const body='<label>Название проекта *</label><input name="title" required value="'+esc(p?p.title:'')+'">'
     +'<div class="frow">'
     +'<div><label>Заказчик</label><input name="customer" value="'+esc(p&&p.customer||'')+'"></div>'
@@ -89,13 +115,18 @@ function projFormModal(uid){
     +'</div><div class="frow">'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
     +'<div><label>Приоритет</label><select name="priority_key">'+prioSel+'</select></div>'+deptSel
+    +parentSel
     +'</div>'
+    +execSel
     +(p?'':stageEditor())
     +'<label>Описание</label><textarea name="description" rows="2">'+esc(p?p.description:'')+'</textarea>';
   openModal(p?'Редактирование проекта':'Новый проект',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите название проекта');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
               status_key:fd.status_key,customer:fd.customer,budget:fd.budget};
+    if(f.parent_uid)pl.parent_uid=f.parent_uid.value||null;
+    const sel=f.querySelector('#pexec');
+    if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(!p){pl.priority_key=fd.priority_key;pl.stages_json=JSON.stringify(collectStages(f));
       if(f.department_id)pl.department_id=+f.department_id.value;}
     if(p){
@@ -103,12 +134,16 @@ function projFormModal(uid){
       const stagesEls=f.querySelectorAll('.pstage');
       if(stagesEls.length)pl.stages=collectStages(f);
       await api('/api/projects/'+p.uid,{method:'PATCH',body:JSON.stringify(pl)});
-      Object.assign(p,pl);if(pl.stages){p.stages=pl.stages;p.stage_total=pl.stages.length;
+      Object.assign(p,pl);
+      if(pl.executor_user_ids)p.executor_names=pl.executor_user_ids.map(id=>(PRJ.people.find(x=>x.id===id)||{}).name||'').filter(Boolean);
+      if(pl.parent_uid!==undefined)p.parent_title=pl.parent_uid?((PRJ.projects.find(x=>x.uid===pl.parent_uid)||{}).title||''):'';
+      if(pl.stages){p.stages=pl.stages;p.stage_total=pl.stages.length;
         p.stage_done=pl.stages.filter(s=>s.done).length;p.progress=p.stage_total?Math.round(p.stage_done/p.stage_total*100):0;}
       toast('Сохранено · веха обновится в календарях');
     }else{
       const r=await api('/api/projects',{method:'POST',body:JSON.stringify(pl)});
       PRJ.projects.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
+        executor_names:(pl.executor_user_ids||[]).map(id=>(PRJ.people.find(x=>x.id===id)||{}).name||'').filter(Boolean),
         cross_dept:false,progress:0,stage_done:0,stage_total:0,stages:[],links:[]},pl));
       toast('Проект создан');
     }

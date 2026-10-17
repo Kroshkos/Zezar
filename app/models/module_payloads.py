@@ -57,6 +57,10 @@ class ProjectPayload(TimestampMixin, Base):
     customer: Mapped[Optional[str]] = mapped_column(String(200))
     budget: Mapped[Optional[str]] = mapped_column(String(64))
     links: Mapped[list] = mapped_column(JSON, default=list)
+    # Иерархия проектов: проект может быть частью другого проекта (родитель —
+    # uid сущности kind=project; хранится uid, а не FK id — устойчивость при
+    # репликации/синхронизации пространств и отсутствие каскадного удаления).
+    parent_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)
 
 
 class DocPayload(TimestampMixin, Base):

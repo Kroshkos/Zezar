@@ -18,7 +18,8 @@
 <div class="empty" id="pempty" hidden>📊<p>Проектов нет. Нажмите «＋ Проект».</p></div>
 
 <script id="projData" type="application/json">
-{{ {'projects': projects, 'statuses': statuses, 'priorities': priorities, 'departments': departments} | tojson }}
+{{ {'projects': projects, 'statuses': statuses, 'priorities': priorities,
+    'departments': departments, 'people': people} | tojson }}
 </script>
 {% endblock %}
 
