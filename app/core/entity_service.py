@@ -334,6 +334,13 @@ async def update_entity(
                 "link": link_for(ent.uid, ent.kind.value),
                 "target_user_ids": targets,
             }))
+        # Календарь: любое изменение сущности (в т.ч. патч статуса/сроков из
+        # модулей) требует re-sync события в календарях ответственных — sync_state
+        # уже PENDING. Раньше calendar.sync ставился только при create/delete,
+        # поэтому update зависал в PENDING навсегда (outbox-контракт E2E).
+        session.add(OutboxEvent(topic="calendar.sync", payload_json={
+            "entity_id": ent.id, "entity_uid": ent.uid, "reason": action,
+        }))
     return ent
 
 
