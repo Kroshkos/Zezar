@@ -69,22 +69,25 @@ function rdActions(r, section, arg){
   let html = '';
   // админ/координатор: глобальные шаблоны И (в режиме «Вся система») записи подразделений — доступны правка/удаление
   const deptRecEditable = rdIsGlobal() && r.department_id!=null;
+  // контекст удаления = подразделение САМОЙ ЗАПИСИ (в режиме «Вся система» rdDept()=null,
+  // а сервер требует department_id записи при удалении чужих записей подразделений)
+  const delArg = `rdDel(${r.id},'${section}',${r.usage||0},${r.department_id!=null?r.department_id:'null'})`;
   if(rdIsGlobal() && r.department_id==null){
     html += `<button class="btn sm ghost" onclick="rdEdit(${r.id},'${section}','${arg}')">✏️ Изменить</button> `
-          + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑 Удалить</button>`;
+          + `<button class="btn sm danger" onclick="${delArg}">🗑 Удалить</button>`;
   } else if(deptRecEditable){
     html += `<span class="badge b-amber" title="Запись подразделения ${esc(r.department_name||('№'+r.department_id))}">${esc(r.department_name||('пространство №'+r.department_id))}</span> `
           + `<button class="btn sm ghost" onclick="rdEdit(${r.id},'${section}','${arg}')">✏️ Изменить</button> `
-          + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑 Удалить</button>`;
+          + `<button class="btn sm danger" onclick="${delArg}">🗑 Удалить</button>`;
   } else {
     if(r.source_global_id){
       html += r.is_active
         ? `<button class="btn sm ghost" onclick="rdDeact(${r.id},'${section}')">⏸ Деактивировать шаблон</button>`
         : `<button class="btn sm" onclick="rdAct(${r.source_global_id})">▶ Включить шаблон обратно</button> `
-          + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑</button>`;
+          + `<button class="btn sm danger" onclick="${delArg}">🗑</button>`;
     } else {
       html += `<button class="btn sm ghost" onclick="rdEdit(${r.id},'${section}','${arg}')">✏️ Изменить</button> `
-            + `<button class="btn sm danger" onclick="rdDel(${r.id},'${section}',${r.usage||0})">🗑 Удалить</button>`;
+            + `<button class="btn sm danger" onclick="${delArg}">🗑 Удалить</button>`;
     }
   }
   return html;
