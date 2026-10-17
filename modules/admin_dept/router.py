@@ -212,6 +212,7 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             "share_id": sh.id,
             "uid": ent.uid, "title": ent.title, "kind": ent.kind.value,
             "to_dept": sh.target_department.name if sh.target_department else str(sh.target_department_id),
+            "to_dept_id": sh.target_department_id,
             "permission": sh.permission.value,
         })
     shares_in = []

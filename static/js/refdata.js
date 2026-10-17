@@ -148,13 +148,58 @@ function rdRenderGeneric(box, view){
      + rdAvailBlock(view.available_templates,endpoint);
 }
 
+/* ---------- конструктор групп задач (по образцу sipm_lite_v3.html:
+   мультивыбор чипсами — проекты, статусы, приоритеты, сроки + описание) ---- */
+const RD_DUE_LABELS={week:'Ближайшая неделя',month:'Ближайший месяц',overdue:'Просроченные'};
+let RD_GFORM = null;  // {projectIds:Set,statuses:Set,priorities:Set,dues:Set}
+
+function rdChip(name,val,on,label){
+  return `<label class="rd-chip" style="display:inline-flex;align-items:center;gap:5px;border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px;font-size:12.5px;cursor:pointer;margin:0 6px 6px 0">`
+    +`<input type="checkbox" name="${name}" value="${esc(String(val))}" ${on?'checked':''}> ${esc(label)}</label>`;
+}
+function rdChipsBlock(name,opts,sel){
+  if(!opts||!opts.length) return '<p class="sub muted" style="margin:2px 0 8px">нет доступных значений</p>';
+  return opts.map(o=>{
+    const val=o.id!==undefined?o.id:o.key!==undefined?o.key:o.value;
+    return rdChip(name,val,sel.has(String(val)),o.label||RD_DUE_LABELS[val]||val);
+  }).join('');
+}
+function rdGroupFields(view,existing){
+  const crit=existing?normCrit(existing.criteria):{projectIds:[],statuses:[],priorities:[],dues:[]};
+  RD_GFORM={projectIds:new Set(crit.projectIds.map(String)),
+            statuses:new Set(crit.statuses.map(String)),
+            priorities:new Set(crit.priorities.map(String)),
+            dues:new Set(crit.dues.map(String))};
+  const o=(view&&view.group_options)||{projects:[],statuses:[],priorities:[],dues:[]};
+  return '<label>Название группы</label><input name="gname" required maxlength="120" value="'+esc(existing?existing.name:'')+'">'
+    +'<div style="margin-top:10px"><b class="sub">Проекты</b><div id="rdGProjects">'+rdChipsBlock('g_proj',o.projects,RD_GFORM.projectIds)+'</div></div>'
+    +'<div style="margin-top:6px"><b class="sub">Статусы задач</b><div id="rdGStatuses">'+rdChipsBlock('g_status',o.statuses,RD_GFORM.statuses)+'</div></div>'
+    +'<div style="margin-top:6px"><b class="sub">Приоритеты</b><div id="rdGPrios">'+rdChipsBlock('g_prio',o.priorities,RD_GFORM.priorities)+'</div></div>'
+    +'<div style="margin-top:6px"><b class="sub">Сроки исполнения</b><div id="rdGDues">'+rdChipsBlock('g_due',o.dues,RD_GFORM.dues)+'</div></div>'
+    +'<p class="sub muted" style="margin:8px 0 0">Описание формируется автоматически по выбранным критериям; пустой набор = все задачи.</p>';
+}
+function normCrit(c){
+  c=c||{};
+  const arr=v=>Array.isArray(v)?v:(v==null||v===''?[]:[v]);
+  return {projectIds:arr(c.projectIds||c.projects),statuses:arr(c.statuses),
+          priorities:arr(c.priorities),dues:arr(c.dues)};
+}
+function rdCollectCrit(form){
+  const pick=(name,set)=>{set.clear();form.querySelectorAll(`input[name=${name}]:checked`).forEach(i=>set.add(i.value));return [...set];};
+  return {projectIds:pick('g_proj',RD_GFORM.projectIds),
+          statuses:pick('g_status',RD_GFORM.statuses),
+          priorities:pick('g_prio',RD_GFORM.priorities),
+          dues:pick('g_due',RD_GFORM.dues)};
+}
 function rdCritSummary(c){
   if(!c) return '';
+  c=normCrit(c);
   const parts=[];
-  if((c.projects||[]).length) parts.push('проектов: '+c.projects.length);
+  if((c.projectIds||[]).length) parts.push('проектов: '+c.projectIds.length);
   if((c.statuses||[]).length) parts.push('статусы: '+esc(c.statuses.join(', ')));
   if((c.priorities||[]).length) parts.push('приоритеты: '+esc(c.priorities.join(', ')));
-  return parts.join(' · ');
+  if((c.dues||[]).length) parts.push('срок: '+c.dues.map(d=>RD_DUE_LABELS[d]||d).join(', '));
+  return parts.join(' · ')||'все задачи';
 }
 
 /* ---------- CRUD-модалки (сохранение — только в БД через API) ---------- */
@@ -170,14 +215,24 @@ function rdAdd(section, arg){
   else if(section==='prio')   fields='<label>Наименование приоритета</label><input name="label" required>'+rdColorSel('b-blue')+'<label>Вес (сортировка)</label><input name="weight" type="number" value="10">';
   else if(section==='type')   fields='<label>Наименование типа</label><input name="label" required>';
   else if(section==='wf')     fields='<label>Название маршрута</label><input name="name" required><label>Шаги (через запятую)</label><input name="steps" placeholder="Подготовка, Согласование, Утверждение"><label>Область применения (project/doc/soft/task/meet — пусто для любой)</label><input name="kind_scope">';
-  else if(section==='groups') fields='<label>Название группы</label><input name="name" required><label>Статусы задач через запятую</label><input name="statuses"><label>Приоритеты через запятую</label><input name="priorities">';
+  else if(section==='groups'){
+    const view=rdCurrentView();
+    openModal('Добавить: группа задач', rdGroupFields(view,null), async(fd,form)=>{
+      const body={ department_id: rdIsGlobal() ? (rdDept()||null) : rdDept(),
+                   name: form.elements.gname.value.trim(),
+                   criteria: rdCollectCrit(form) };
+      await api('/api/core/refdata/groups','POST',body);
+      closeModal(); toast('Сохранено в базу данных'); RD_CACHE=null; rdShow(RD_SUB);
+    });
+    return;
+  }
   openModal('Добавить: '+sectionLabel(section,arg), fields, async(fd,form)=>{
     const body={ department_id: rdIsGlobal() ? (rdDept()||null) : rdDept() };
     if(section==='status'){ body.set=arg; body.label=fd.label.trim(); body.color=fd.color; body.order=+fd.order||0; }
     else if(section==='prio'){ body.label=fd.label.trim(); body.color=fd.color; body.weight=+fd.weight||0; }
     else if(section==='type'){ body.kind=arg; body.label=fd.label.trim(); }
     else if(section==='wf'){ body.name=fd.name.trim(); body.steps=(form.elements.steps.value||'').split(',').map(s=>s.trim()).filter(Boolean); body.kind_scope=(form.elements.kind_scope.value||'').trim()||null; }
-    else if(section==='groups'){ body.name=fd.name.trim(); body.criteria={statuses:(form.elements.statuses.value||'').split(',').map(s=>s.trim()).filter(Boolean), priorities:(form.elements.priorities.value||'').split(',').map(s=>s.trim()).filter(Boolean)}; }
+    else if(section==='groups'){ body.name=fd.name.trim(); body.criteria={statuses:(form.elements.statuses.value||'').split(',').map(s=>s.trim()).filter(Boolean), priorities:(form.elements.priorities.value||'').split(',').map(s=>s.trim()).filter(Boolean)}; }  // legacy — не используется (группы открывают ранний return выше)
     await api('/api/core/refdata/'+section,'POST',body);
     closeModal(); toast('Сохранено в базу данных'); RD_CACHE=null; rdShow(RD_SUB);
   });
@@ -211,9 +266,8 @@ function rdEdit(id, section, arg){
   else if(section==='wf') openModal('Изменить маршрут',
       '<label>Название</label><input name="name" value="'+esc(r.name)+'" required><label>Шаги (через запятую)</label><input name="steps" value="'+esc((r.steps||[]).join(', '))+'">',
       async(fd,form)=>{ await api('/api/core/refdata/wf/'+id,'PATCH',{...deptPatch,name:fd.name.trim(),steps:(form.elements.steps.value||'').split(',').map(s=>s.trim()).filter(Boolean)}); done(); });
-  else if(section==='groups') openModal('Изменить группу',
-      '<label>Название</label><input name="name" value="'+esc(r.name)+'" required><label>Статусы</label><input name="statuses" value="'+esc(((r.criteria||{}).statuses||[]).join(', '))+'"><label>Приоритеты</label><input name="priorities" value="'+esc(((r.criteria||{}).priorities||[]).join(', '))+'">',
-      async(fd,form)=>{ await api('/api/core/refdata/groups/'+id,'PATCH',{...deptPatch,name:fd.name.trim(),criteria:{statuses:(form.elements.statuses.value||'').split(',').map(s=>s.trim()).filter(Boolean),priorities:(form.elements.priorities.value||'').split(',').map(s=>s.trim()).filter(Boolean)}}); done(); });
+  else if(section==='groups') openModal('Изменить группу', rdGroupFields(view,r),
+      async(fd,form)=>{ await api('/api/core/refdata/groups/'+id,'PATCH',{...deptPatch,name:form.elements.gname.value.trim(),criteria:rdCollectCrit(form)}); done(); });
 }
 
 function rdDel(id, section, usage){
