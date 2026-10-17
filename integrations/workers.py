@@ -95,6 +95,15 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     получателя проверяется: хотя бы один включённый сценарий с event_key из
     p['event_keys'] подходит под kind/module сущности. Базовые сценарии всегда
     включены — отключить их пользователь не может.
+
+    p['target_user_ids'] — адресная доставка (назначение ответственного/
+    исполнителя, смена статуса): уведомление получают ТОЛЬКО эти пользователи,
+    остальные участники не задействуются.
+
+    Если ни один адресат реально не получил сообщение (нет chat_id / все
+    отписались / нет подходящего включённого сценария) — бросается RuntimeError:
+    событие остаётся в очереди со статусом error и видно во вкладке «Очередь
+    доставки» админ-панели (иначе уведомления терялись молча).
     """
     if not _gs().telegram_notify_enabled:
         return
@@ -103,16 +112,29 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     if ent is None:
         return
     recipients = await _recipients_map(session, ent_id)
+    targets = p.get("target_user_ids")
+    if targets:
+        # адресное событие: цели НЕ обязаны уже быть в карте получателей
+        # (слот исполнителя мог ещё не создаться к моменту enqueue)
+        recipients = {int(t): ["resp", "exec"] for t in targets if t}
     if not recipients:
-        return
+        raise RuntimeError(
+            f"нет получателей уведомления ({p.get('action')}) у сущности "
+            f"{p.get('entity_uid')} — никто не назначен")
     ctx = notify_core.build_ctx(p)
     event_keys = set(p.get("event_keys") or [p.get("action", "")])
     kinds = p.get("kind", "")
     module = p.get("module", "")
     scn_cache: dict[int, tuple[set, dict]] = {}
+    delivered = 0
+    skipped_no_chat: list[str] = []
+    skipped_filter = 0
     for uid, roles in recipients.items():
         u = await session.get(User, uid)
-        if not (u and u.is_active and u.telegram_chat_id and u.telegram_optout != "all"):
+        if not (u and u.is_active):
+            continue
+        if not u.telegram_chat_id or u.telegram_optout == "all":
+            skipped_no_chat.append(u.login or str(uid))
             continue
         if uid not in scn_cache:
             enabled = await notify_core.enabled_event_keys(session, u, kinds, module)
@@ -122,6 +144,7 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         enabled, vis = scn_cache[uid]
         keys_hit = event_keys & enabled
         if not keys_hit:
+            skipped_filter += 1
             continue
         scn = None
         for k in sorted(keys_hit):
@@ -130,11 +153,27 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
                 scn = cand
                 break
         text_ = notify_core.render_scenario_text(scn, ctx)
-        await tg.send_message(int(u.telegram_chat_id), text_)
+        ok = await tg.send_message(int(u.telegram_chat_id), text_)
+        if ok:
+            delivered += 1
+    if delivered == 0:
+        reason = ("адресаты не привязаны к Telegram (chat_id отсутствует; "
+                  "нужно написать боту /start)" if skipped_no_chat and
+                  skipped_no_chat == [str(x) for x in recipients.keys()] else
+                  f"получателей: {len(recipients)}, без chat_id: {len(skipped_no_chat)}, "
+                  f"отфильтровано по сценариям: {skipped_filter}")
+        raise RuntimeError(f"уведомление не доставлено ни одному адресату: {reason}")
 
 
 async def _handle_tg_notify(session, p: dict) -> None:
-    await _deliver_by_scenarios(session, p, ["resp", "exec"])
+    payload = dict(p or {})
+    if "event_keys" not in payload:
+        # обратная совместимость: события, поставленные до introduction
+        # event_keys (например, legacy OutboxEvent из entity_service)
+        from app.core.notify import ACTION_EVENT_KEYS
+        action = payload.get("action", "")
+        payload["event_keys"] = sorted(ACTION_EVENT_KEYS.get(action, {action}))
+    await _deliver_by_scenarios(session, payload, ["resp", "exec"])
 
 
 async def _handle_tg_due(session, p: dict) -> None:
