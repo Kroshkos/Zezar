@@ -124,26 +124,46 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
         default_tab = tab or ("departments" if ctx.can_admin_system else "users")
         ov_members: list = []
         ov_events: dict = {"items": [], "total": 0}
+        kpis: dict = {}
         if global_mode:
             # админ выбрал «Вся система»: открываем глобальные вкладки
             # (обзор/справочники/учётные записи/журнал), а не пустое состояние.
             default_tab = tab or "overview"
             # Серверная агрегация для обзора и журнала всей системы — вкладки
             # грузятся сразу, без требования выбрать подразделение.
-            heads = (await session.scalars(
-                select(DepartmentMember.user_id, DepartmentMember.department_id)
+            head_rows = (await session.scalars(
+                select(DepartmentMember.user_id)
                 .where(DepartmentMember.role_in_dept == Role.HEAD))).all()
-            head_ids = {uid for uid, _ in heads}
-            ent_rows = (await session.execute(
-                select(Entity.owner_department_id, func.count(Entity.id))
-                .group_by(Entity.owner_department_id))).all()
-            ent_total = sum(c for _, c in ent_rows)
+            head_ids = set(head_rows)
+            ent_total = await session.scalar(
+                select(func.count(Entity.id))) or 0
             out_shares = await session.scalar(
                 select(func.count(EntityShare.id))) or 0
+            # включённость модулей по всей системе
+            ws_all = (await session.scalars(select(Workspace))).all()
+            ws_ids = [w.id for w in ws_all]
+            mods_on = mods_tot = 0
+            if ws_ids:
+                wm_all = (await session.scalars(
+                    select(WorkspaceModule).where(
+                        WorkspaceModule.workspace_id.in_(ws_ids)))).all()
+                mods_tot = len(wm_all)
+                mods_on = sum(1 for x in wm_all if x.is_enabled)
+            # участники — последние учётные записи с ролями в пространствах
+            dept_of_user: dict[int, str] = {}
+            dm_rows = (await session.execute(
+                select(DepartmentMember.user_id, Department.name)
+                .join(Department, Department.id == DepartmentMember.department_id)
+                .order_by(DepartmentMember.id.desc()))).all()
+            for uid_, dname in dm_rows:
+                dept_of_user.setdefault(uid_, dname)
             ov_members = [{
+                "user_id": u.id,
                 "name": u.display_name, "login": u.login,
                 "email": u.email or "",
+                "global_role": u.role.value,
                 "dept_role": "HEAD" if u.id in head_ids else "MEMBER",
+                "department": dept_of_user.get(u.id, ""),
             } for u in sorted(all_users, key=lambda x: x.display_name)[:8]]
             ev_items, ev_total = await read_events(session, limit=8, offset=0)
             ov_events = {"items": ev_items, "total": ev_total}
@@ -153,6 +173,7 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
                 "heads": len(head_ids),
                 "entities": ent_total,
                 "shares": out_shares,
+                "modules": f"{mods_on}/{mods_tot}" if mods_tot else "—",
             }
         elif default_tab in ("overview", "members", "modules", "sharing"):
             default_tab = "refdata" if ctx.can_admin_system else "users"
@@ -169,10 +190,12 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             can_manage=ctx.can_admin_system,
             active_tab=default_tab,
             department=None,
+            global_mode=bool(global_mode),
             departments=active_simple,
             dept_list=depts_all,
             dept_list_simple=active_simple,
             members=[], modules=[], shares_out=[], shares_in=[],
+            ov_members=ov_members, ov_events=ov_events, kpis=kpis,
             users=[{"id": u.id, "name": u.display_name} for u in all_users],
             adm_payload={"department": None, "can_manage": bool(ctx.can_admin_system),
                          "is_global_admin": bool(ctx.can_admin_system),

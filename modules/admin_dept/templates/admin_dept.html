@@ -63,7 +63,7 @@
   {% if is_admin_global %}
   <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
   {% endif %}
-  {% if department %}
+  {% if department or global_mode %}
   <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
   {% endif %}
   {% if department %}
@@ -176,6 +176,50 @@
         <div style="font-size:13px;padding:4px 0;border-bottom:1px solid #eef2f8">{{ s.title }} <span class="muted">→ {{ s.to_dept or s.from_dept }}</span></div>
         {% endfor %}
       {% else %}<p class="muted">Шерингов нет.</p>{% endif %}
+    </div>
+  </div>
+</section>
+{% elif global_mode %}
+{# Режим «Вся система»: серверный обзор всей системы — KPI, последние
+   участники и события загружаются сразу, без выбора подразделения. #}
+<section class="adm-pane" id="pane-overview">
+  <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
+    Активен режим <b>🌐 Вся система</b>
+    <span class="muted"> — данные агрегируются по всем пространствам. Для управления одним пространством выберите его в шапке.</span>
+  </div>
+  <div class="adm-kpi">
+    <div class="k"><b>{{ kpis.users }}</b><span>учётных записей</span></div>
+    <div class="k"><b>{{ kpis.depts }}</b><span>подразделений</span></div>
+    <div class="k"><b>{{ kpis.heads }}</b><span>руководителей</span></div>
+    <div class="k"><b>{{ kpis.entities }}</b><span>сущностей в системе</span></div>
+    <div class="k"><b>{{ kpis.shares }}</b><span>шерингов</span></div>
+    <div class="k"><b>{{ kpis.modules }}</b><span>модулей включено</span></div>
+  </div>
+  <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">🪪 Последние учётные записи</h3>
+      {% for m in ov_members %}
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
+        <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}
+          {% if m.department %}<div class="muted" style="font-size:11px">{{ m.department }}</div>{% endif %}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+      </div>
+      {% endfor %}
+      {% if not ov_members %}<p class="muted">Учётных записей нет.</p>{% endif %}
+      <button class="btn sm" style="margin-top:10px" onclick="showTab('users')">Все учётные записи →</button>
+    </div>
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">📜 Последние события системы</h3>
+      {% for e in ov_events.items %}
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef2f8;font-size:12px">
+        <span><span class="badge {{ 'b-red' if e.level=='error' else ('b-amber' if e.level=='warning' else 'b-blue') }}">{{ e.action }}</span>
+          {{ e.object or '' }} <span class="muted">{{ e.message or '' }}</span></span>
+        <span class="muted" style="white-space:nowrap">{{ (e.at or '').replace('T',' ').replace('Z','') }}</span>
+      </div>
+      {% endfor %}
+      {% if not ov_events.items %}<p class="muted">Событий нет.</p>{% endif %}
+      <p class="muted" style="font-size:12px;margin-top:8px">Всего в журнале: {{ ov_events.total }} · вкладка «Журнал» — полный список с поиском.</p>
+      <button class="btn sm" style="margin-top:6px" onclick="showTab('events')">Открыть журнал →</button>
     </div>
   </div>
 </section>
