@@ -419,12 +419,12 @@ async def create_priority(session: AsyncSession, user: User, *, label: str, colo
     if color not in COLORS:
         color = "b-blue"
     key = _norm_key(label)
-    exists = await session.scalar(select(PriorityLevel).where(
-        PriorityLevel.key == key,
-        PriorityLevel.department_id.is_(None) if dept_id is None
-        else PriorityLevel.department_id == dept_id))
-    if exists:
-        raise RefDataError(409, "Приоритет с таким названием уже есть")
+    # уникальность key — глобальная (Entity.priority_key хранится без привязки к
+    # подразделению); при коллизии добавляем суффикс вместо ошибки 409
+    base_key, n = key, 1
+    while await session.scalar(select(PriorityLevel.id).where(PriorityLevel.key == key)):
+        key = f"{base_key}_{n}"
+        n += 1
     row = PriorityLevel(key=key, label=label.strip(), color=color, weight=weight,
                         department_id=dept_id, is_active=True)
     session.add(row)
