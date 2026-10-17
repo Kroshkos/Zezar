@@ -20,12 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import access
+from app.core.events import read_events
 from app.core.module_registry import registry
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, Entity, EntityShare, Permission, Role, User,
-    Workspace, WorkspaceModule,
+    Department, DepartmentMember, Entity, EntityShare, EventLog, Permission,
+    Role, User, Workspace, WorkspaceModule,
 )
 from app.ui import render_page
 
@@ -121,12 +122,40 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
         depts_all = await _dept_list(include_inactive=True) if ctx.is_global else []
         active_simple = [{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]]
         default_tab = tab or ("departments" if ctx.can_admin_system else "users")
+        ov_members: list = []
+        ov_events: dict = {"items": [], "total": 0}
         if global_mode:
             # админ выбрал «Вся система»: открываем глобальные вкладки
-            # (справочники/учётные записи/журнал), а не пустое состояние.
-            default_tab = tab or "refdata"
-            if default_tab in ("overview",):
-                default_tab = "refdata"
+            # (обзор/справочники/учётные записи/журнал), а не пустое состояние.
+            default_tab = tab or "overview"
+            # Серверная агрегация для обзора и журнала всей системы — вкладки
+            # грузятся сразу, без требования выбрать подразделение.
+            heads = (await session.scalars(
+                select(DepartmentMember.user_id, DepartmentMember.department_id)
+                .where(DepartmentMember.role_in_dept == Role.HEAD))).all()
+            head_ids = {uid for uid, _ in heads}
+            ent_rows = (await session.execute(
+                select(Entity.owner_department_id, func.count(Entity.id))
+                .group_by(Entity.owner_department_id))).all()
+            ent_total = sum(c for _, c in ent_rows)
+            out_shares = await session.scalar(
+                select(func.count(EntityShare.id))) or 0
+            ov_members = [{
+                "name": u.display_name, "login": u.login,
+                "email": u.email or "",
+                "dept_role": "HEAD" if u.id in head_ids else "MEMBER",
+            } for u in sorted(all_users, key=lambda x: x.display_name)[:8]]
+            ev_items, ev_total = await read_events(session, limit=8, offset=0)
+            ov_events = {"items": ev_items, "total": ev_total}
+            kpis = {
+                "users": len(all_users),
+                "depts": sum(1 for d in depts_all if d["is_active"]),
+                "heads": len(head_ids),
+                "entities": ent_total,
+                "shares": out_shares,
+            }
+        elif default_tab in ("overview", "members", "modules", "sharing"):
+            default_tab = "refdata" if ctx.can_admin_system else "users"
         return await render_page(
             request, "admin_dept.html", module_key=MODULE_KEY, user=user,
             session=session,
