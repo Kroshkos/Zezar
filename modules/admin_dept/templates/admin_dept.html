@@ -326,7 +326,7 @@
               <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}" id="shOutPerm-{{ s.share_id }}">{{ s.permission }}</span></td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn sm ghost" title="Изменить уровень прав"
-                        onclick="shareChangePerm({{ s.share_id }},'{{ s.uid }}',this,'{{ s.permission }}')">✏️ Права</button>
+                        onclick="shareChangePerm({{ s.share_id }},'{{ s.uid }}',{{ s.to_dept_id }},this,'{{ s.permission }}')">✏️ Права</button>
                 <button class="btn sm ghost" title="Отозвать шеринг"
                         onclick="shareRevoke('{{ s.uid }}',{{ s.to_dept_id }},this)">🗑 Отозвать</button>
               </td></tr>
@@ -347,7 +347,7 @@
               <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn sm ghost" title="Отказаться от полученного шеринга (доступ будет закрыт, владельца известим в журнале)"
-                        onclick="shareReject('{{ s.uid }}',{{ s.owner_dept_id }},this)">❌ Отказаться</button>
+                        onclick="shareReject('{{ s.uid }}',this)">❌ Отказаться</button>
               </td></tr>
         {% endfor %}
         </tbody>
@@ -566,7 +566,8 @@ document.querySelectorAll('.roleSel').forEach(sel=>{
 
 /* ---------------- шеринг: отзыв / отказ / изменение прав ---------------- */
 const SHARE_PERMS=[['view','Просмотр'],['edit','Редактирование']];
-function shareChangePerm(shareId,uid,btn,current){
+function shareChangePerm(shareId,uid,toDeptId,btn,current){
+  // dept_id в URL — ПОДРАЗДЕЛЕНИЕ-ПОЛУЧАТЕЛЬ (target), а не текущий контекст DEPT
   const cur=current||'view';
   openModal('Изменить права шеринга',
     '<p class="muted" style="margin:0 0 8px">Выберите уровень доступа для принимающего подразделения:</p>'+
@@ -576,7 +577,7 @@ function shareChangePerm(shareId,uid,btn,current){
     async(fd,form)=>{
       const perm=form.elements.permission.value;
       if(perm===cur){ closeModal(); return toast('Права не изменились','warn'); }
-      await api('/api/core/entities/'+uid+'/shares/'+DEPT,'PATCH',{permission:perm});
+      await api('/api/core/entities/'+uid+'/shares/'+toDeptId,'PATCH',{permission:perm});
       closeModal(); toast('Права шеринга обновлены');
       const b=document.getElementById('shOutPerm-'+shareId);
       if(b){ b.textContent=perm; b.className='badge '+(perm==='edit'?'b-amber':'b-blue'); }
@@ -588,9 +589,11 @@ async function shareRevoke(uid,toDeptId,btn){
     toast('Шеринг отозван'); btn.closest('tr').remove();
   });
 }
-async function shareReject(uid,fromDeptId,btn){
+async function shareReject(uid,btn){
+  // отказываемся от имени ПОДРАЗДЕЛЕНИЯ-ПРЕДНАЗНАЧЕНИЯ (текущий контекст DEPT),
+  // а не подразделения-владельца (fromDeptId) — сервер сверит target_department_id
   askConfirm('Отказаться от полученного шеринга? Доступ будет закрыт, владелец получит запись в журнале.',async()=>{
-    await api('/api/core/entities/'+uid+'/shares/reject','POST',{department_id:fromDeptId?DEPT:null});
+    await api('/api/core/entities/'+uid+'/shares/reject','POST',{});
     toast('Вы отказались от шеринга'); btn.closest('tr').remove();
   });
 }
