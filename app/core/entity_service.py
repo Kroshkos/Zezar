@@ -82,6 +82,10 @@ async def create_entity(
             raise ValueError(f"Исполнители не найдены: {missing}")
         ent.extra_json = {**ent.extra_json,
                           "executors": [{"id": e, "name": umap[e]} for e in exec_ids]}
+    # срок проставляем до flush, чтобы он попал и в INSERT, и в payload события
+    # (иначе воркер читал due_date='не указан' из pending-объекта)
+    if due_date:
+        ent.due_date = due_date
     session.add(ent)
     await session.flush()
     # ВАЖНО (FK-инвариант): сначала создаём слоты ответственных для владельца и
@@ -185,15 +189,33 @@ async def create_entity(
                         DepartmentMember.user_id == e))))
         if slot is not None:
             slot.user_id = e
-    await _log_and_emit(session, user, "create", ent,
-                        {"title": title, "responsible_user_id": responsible_user_id,
-                         "executors": exec_ids,
-                         "shared_with": [d for d, _ in (share_with or [])]})
-    # Отдельное событие 'reassign' для назначенного ответственного: базовый
-    # сценарий 'assigned' срабатывает именно на него; автор события не
-    # уведомляется о собственном назначении.
-    if responsible_user_id is not None and responsible_user_id != user.id:
-        await _emit_assigned(session, user, ent, [responsible_user_id])
+    await _log_only(session, user, "create", ent,
+                    {"title": title, "responsible_user_id": responsible_user_id,
+                     "executors": exec_ids,
+                     "shared_with": [d for d, _ in (share_with or [])]})
+    # Адресные уведомления вместо широкого 'create'-события: ранее событие
+    # create доставлялось ВСЕМ участникам (включая автора — спам), а адресат
+    # мог его не получить (фильтр по enabled_event_keys). Теперь:
+    #  - назначенный ответственный получает 'assigned';
+    #  - каждый исполнитель получает 'executor_added';
+    #  - остальные участники (слоты подразделений из share_with) — 'created'.
+    targets_resp = [r for r in {responsible_user_id} | set(exec_ids)
+                    if r and r != user.id]
+    if targets_resp:
+        await _emit_assigned(session, user, ent, targets_resp)
+    others = [uid for uid in (await _recipients_ids(session, ent))
+              if uid and uid != user.id and uid not in targets_resp]
+    if others:
+        from app.core.notify import link_for
+        session.add(OutboxEvent(topic="telegram.notify", payload_json={
+            "action": "create", "event_keys": ["created"],
+            "entity_id": ent.id, "entity_uid": ent.uid,
+            "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
+            "actor": user.display_name,
+            "details": {"note": f"Создана новая сущность ({ent.module_key})"},
+            "link": link_for(ent.uid, ent.kind.value),
+            "target_user_ids": others,
+        }))
     return ent
 
 
@@ -221,6 +243,7 @@ async def set_executors(
         raise ValueError(f"Исполнители не найдены: {missing}")
     ent.extra_json = {**(ent.extra_json or {}),
                       "executors": [{"id": e, "name": umap[e]} for e in ids]}
+    await session.flush()  # executors видны воркеру из extra_json (слот может не создаться)
     # освобождаем неиспользуемые слоты, занимаемые бывшими исполнителями
     slots = (await session.scalars(
         select(EntityResponsible).where(
@@ -264,6 +287,18 @@ async def set_executors(
                             {"changed": {"executors": ids}})
 
 
+async def _recipients_ids(session: AsyncSession, ent: Entity) -> list[int]:
+    """Все пользователи-участники сущности (слоты ответственных + исполнители)."""
+    ids = set(await session.scalars(
+        select(EntityResponsible.user_id).where(
+            EntityResponsible.entity_id == ent.id,
+            EntityResponsible.user_id.is_not(None))))
+    for e in ((ent.extra_json or {}).get("executors") or []):
+        if isinstance(e, dict) and e.get("id"):
+            ids.add(int(e["id"]))
+    return sorted(i for i in ids if i)
+
+
 async def update_entity(
     session: AsyncSession, user: User, ent: Entity, changes: dict[str, Any],
 ) -> Entity:
@@ -279,8 +314,26 @@ async def update_entity(
     if changed:
         ent.sync_state = SyncState.PENDING
         action = "status" if "status_key" in changed else "update"
-        await _log_and_emit(session, user, action, ent,
-                            {"changed": changed, "old_status": old_status})
+        # ВАЖНО: extra_json в changes перезаписывает поле целиком — синхронизируем
+        # flush'ем до постановки события, иначе воркер прочитает устаревших
+        # исполнителей из extra_json['executors'] и адресаты не получат уведомление.
+        await session.flush()
+        await _log_only(session, user, action, ent,
+                        {"changed": changed, "old_status": old_status})
+        from app.core.notify import ACTION_EVENT_KEYS, link_for
+        targets = [i for i in await _recipients_ids(session, ent) if i != user.id]
+        if targets:
+            session.add(OutboxEvent(topic="telegram.notify", payload_json={
+                "action": action,
+                "event_keys": sorted(ACTION_EVENT_KEYS.get(action, {action})),
+                "entity_id": ent.id, "entity_uid": ent.uid,
+                "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
+                "actor": user.display_name,
+                "details": {"changed": changed, "old_status": old_status,
+                            "due_date": ent.due_date},
+                "link": link_for(ent.uid, ent.kind.value),
+                "target_user_ids": targets,
+            }))
     return ent
 
 
@@ -342,23 +395,11 @@ async def assign_responsible(
         row.user_id = user_id
     # событие 'reassign' (event_key assigned): уведомление — назначенному
     # пользователю, а не всем участникам сущности; автор не уведомляется.
-    await _log_and_emit(session, user, "reassign", ent,
-                        {"department_id": department_id, "user_id": user_id})
+    await session.flush()  # слот с новым user_id виден воркеру из БД
+    await _log_only(session, user, "reassign", ent,
+                    {"department_id": department_id, "user_id": user_id})
     if user_id is not None and user_id != user.id:
-        from app.core.notify import ACTION_EVENT_KEYS, link_for
-        await session.flush()
-        last = (await session.scalars(
-            select(OutboxEvent).where(
-                OutboxEvent.topic == "telegram.notify",
-                OutboxEvent.payload_json["entity_uid"] == ent.uid,
-                OutboxEvent.payload_json["action"] == "reassign")
-            .order_by(OutboxEvent.id.desc()).limit(1))).first()
-        if last is not None:
-            pl = dict(last.payload_json or {})
-            pl["target_user_ids"] = [user_id]
-            pl["event_keys"] = sorted(ACTION_EVENT_KEYS.get("reassign", {"assigned"}))
-            pl.setdefault("link", link_for(ent.uid, ent.kind.value))
-            last.payload_json = pl
+        await _emit_assigned(session, user, ent, [user_id])
 
 
 async def share_entity(
@@ -421,7 +462,8 @@ async def _emit_assigned(session: AsyncSession, actor: User, ent: Entity,
         "event_keys": sorted(ACTION_EVENT_KEYS.get("reassign", {"assigned"})),
         "entity_id": ent.id, "entity_uid": ent.uid,
         "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-        "actor": actor.display_name, "details": {},
+        "actor": actor.display_name,
+        "details": {"due_date": ent.due_date},
         "link": link_for(ent.uid, ent.kind.value),
         "target_user_ids": targets,
     }))
