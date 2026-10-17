@@ -223,8 +223,10 @@ async def main() -> None:
             # RBAC состава: member НЕ может читать/менять чужое пространство;
             # head — только СВОЁ пространство и только роль MEMBER (HEAD-назначение — admin);
             # admin — может назначать роль HEAD
-            hr_users = [u for u in users_by_email if u.startswith("head-hr@")]
-            new_head_id = users_by_email[hr_users[0]]
+            # Кандидат в HEAD: участник ЧУЖОГО для morozova пространства (member-it),
+            # а не сама head-hr — иначе «назначение HEAD» превращалось в no-op
+            # (morozova уже была HEAD в dep-hr) и право head не проверялось.
+            new_head_id = users_by_email["member-it@caesar.local"]
             r = await c.get("/api/core/departments/%d/members" % depts["dep-it"],
                             headers=o_cookie)
             assert r.status_code == 403, "member прочитал состав чужого пространства!"

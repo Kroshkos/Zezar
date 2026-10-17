@@ -40,8 +40,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.events import log_event
 from app.models.core import (
-    DepartmentMember, Entity, EntityKind, PriorityLevel, RefType, Role, StatusSet,
-    TaskGroup, User, WfTemplate, Workspace, WorkspaceModule,
+    Department, DepartmentMember, Entity, EntityKind, PriorityLevel, RefType, Role,
+    StatusSet, TaskGroup, User, WfTemplate, Workspace, WorkspaceModule,
 )
 from app.models.module_payloads import DocPayload, ScholarPayload, SoftPayload
 
@@ -340,6 +340,23 @@ def _norm_key(label: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", label.lower().replace(" ", "_"))[:40] or uuid.uuid4().hex[:8]
 
 
+async def _unique_status_key(session: AsyncSession, kind, dept_id, base: str) -> str:
+    """Уникальный key статуса внутри (kind, department_id): суффикс при коллизии
+    с уже существующим ключом (например, два разных кириллических названия,
+    дающих одинаковый пустой/совпадающий нормализованный key)."""
+    key = base
+    n = 2
+    while True:
+        exists = await session.scalar(select(StatusSet.id).where(
+            StatusSet.kind == kind, StatusSet.key == key,
+            StatusSet.department_id.is_(None) if dept_id is None
+            else StatusSet.department_id == dept_id))
+        if not exists:
+            return key
+        key = f"{base[:36]}_{n}"
+        n += 1
+
+
 async def get_or_404(session: AsyncSession, model, row_id: int):
     row = await session.get(model, row_id)
     if row is None:
@@ -359,6 +376,29 @@ async def check_write_scope(user: User, row, dept_id: Optional[int]):
 
 
 # ---- Статусы --------------------------------------------------------------
+
+async def resolve_write_dept(session: AsyncSession, user: User, ref: str,
+                             dept_id: Optional[int],
+                             set_name: Optional[str] = None) -> Optional[int]:
+    """Единая точка определения области записи справочника (унификация логики).
+
+    - Администратор/координатор: dept_id как передан (None = общесистемный шаблон,
+      конкретный id = запись в выбранном пространстве);
+    - Руководитель: только своё подразделение (пустой выбор = возглавляемое).
+    Возвращает итоговый department_id для create-функций.
+    """
+    if user.role in (Role.ADMIN, Role.COORDINATOR):
+        return dept_id
+    own = await _head_dept(session, user, None)
+    if dept_id is None:
+        dept_id = own
+    elif own is None or dept_id != own:
+        raise RefDataError(403, "Можно создавать записи только в своём подразделении")
+    if dept_id is None:
+        raise RefDataError(403, "Выберите подразделение: руководитель создаёт записи "
+                                "только в возглавляемом пространстве")
+    return dept_id
+
 
 async def create_status(session: AsyncSession, user: User, *, set_name: str, label: str,
                         color: str, order: int, dept_id: Optional[int]) -> StatusSet:
@@ -384,6 +424,8 @@ async def create_status(session: AsyncSession, user: User, *, set_name: str, lab
         else StatusSet.department_id == dept_id))
     if exists:
         raise RefDataError(409, "Статус с таким названием уже есть")
+    # кириллические названия дают пустой/коллизионный key — гарантируем уникальность
+    key = await _unique_status_key(session, kind, dept_id, key)
     row = StatusSet(kind=kind, key=key, label=label.strip(), color=color,
                     order=order, department_id=dept_id, is_active=True)
     session.add(row)
@@ -627,7 +669,9 @@ async def create_group(session: AsyncSession, user: User, *, name: str, criteria
     name = (name or "").strip()
     if not name:
         raise RefDataError(400, "Укажите название группы")
-    row = TaskGroup(name=name, criteria=criteria or {}, department_id=dept_id, is_active=True)
+    from app.core.meet_groups import norm_criteria
+    row = TaskGroup(name=name, criteria=norm_criteria(criteria), department_id=dept_id,
+                    is_active=True)
     session.add(row)
     await log_event(session, "refdata_group_create", category="admin", user=user,
                     object=name, message=f"Создана группа задач «{name}»")
@@ -642,7 +686,8 @@ async def patch_group(session: AsyncSession, user: User, row_id: int, changes: d
     if changes.get("name"):
         row.name = str(changes["name"]).strip()
     if "criteria" in changes and isinstance(changes["criteria"], dict):
-        row.criteria = changes["criteria"]
+        from app.core.meet_groups import norm_criteria
+        row.criteria = norm_criteria(changes["criteria"])
     await log_event(session, "refdata_group_update", category="admin", user=user,
                     object=row.name, message=f"Обновлена группа задач «{row.name}»")
     await session.commit()
@@ -787,6 +832,10 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
     """
     mods = await enabled_modules(session, dept_id)
     out_items, avail = [], []
+    # «Вся система» для администратора/координатора: в items попадают и
+    # глобальные шаблоны, и записи всех подразделений (полное администрирование).
+    view_all = dept_id is None and user.role in (Role.ADMIN, Role.COORDINATOR)
+
     if ref == "status":
         kind = KIND_BY_SET.get(set_name or "task")
         if kind is None:
@@ -796,14 +845,18 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
             .order_by(StatusSet.department_id.is_not(None), StatusSet.order))).all())
         visible = [r for r in rows
                    if r.department_id is None or (dept_id is not None and r.department_id == dept_id)
-                   or user.role in (Role.ADMIN, Role.COORDINATOR)]
+                   or view_all]
         for r in visible:
             used = await entity_usage(session, kind=r.kind, status_key=r.key,
                                       dept_ids=[r.department_id] if r.department_id else None)
-            out_items.append({"id": r.id, "key": r.key, "label": r.label, "color": r.color,
-                              "order": r.order, "department_id": r.department_id,
-                              "source_global_id": r.source_global_id, "is_active": r.is_active,
-                              "usage": used})
+            item = {"id": r.id, "key": r.key, "label": r.label, "color": r.color,
+                    "order": r.order, "department_id": r.department_id,
+                    "source_global_id": r.source_global_id, "is_active": r.is_active,
+                    "usage": used}
+            if view_all and r.department_id is not None:
+                d = await session.get(Department, r.department_id)
+                item["department_name"] = d.name if d else f"№{r.department_id}"
+            out_items.append(item)
         if dept_id is not None:
             activated = {r.source_global_id for r in rows
                          if r.department_id == dept_id and r.source_global_id}
@@ -824,14 +877,18 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
                                            PriorityLevel.weight.desc()))).all())
         for r in rows:
             if r.department_id is not None and dept_id is not None and r.department_id != dept_id \
-                    and user.role not in (Role.ADMIN, Role.COORDINATOR):
+                    and not view_all:
                 continue
             used = await entity_usage(session, kind=None, priority_key=r.key,
                                       dept_ids=[r.department_id] if r.department_id else None)
-            out_items.append({"id": r.id, "key": r.key, "label": r.label, "color": r.color,
-                              "weight": r.weight, "department_id": r.department_id,
-                              "source_global_id": r.source_global_id,
-                              "is_active": r.is_active, "usage": used})
+            item = {"id": r.id, "key": r.key, "label": r.label, "color": r.color,
+                    "weight": r.weight, "department_id": r.department_id,
+                    "source_global_id": r.source_global_id,
+                    "is_active": r.is_active, "usage": used}
+            if view_all and r.department_id is not None:
+                d = await session.get(Department, r.department_id)
+                item["department_name"] = d.name if d else f"№{r.department_id}"
+            out_items.append(item)
         if dept_id is not None:
             copies = {r.source_global_id: r for r in rows
                       if r.department_id == dept_id and r.source_global_id}
@@ -850,14 +907,18 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
             .order_by(RefType.department_id.is_not(None), RefType.label))).all())
         for r in rows:
             if r.department_id is not None and dept_id is not None and r.department_id != dept_id \
-                    and user.role not in (Role.ADMIN, Role.COORDINATOR):
+                    and not view_all:
                 continue
             used = await type_usage(session, rk, r.label,
                                     [r.department_id] if r.department_id else None)
-            out_items.append({"id": r.id, "label": r.label, "kind": rk,
-                              "department_id": r.department_id,
-                              "source_global_id": r.source_global_id,
-                              "is_active": r.is_active, "usage": used})
+            item = {"id": r.id, "label": r.label, "kind": rk,
+                    "department_id": r.department_id,
+                    "source_global_id": r.source_global_id,
+                    "is_active": r.is_active, "usage": used}
+            if view_all and r.department_id is not None:
+                d = await session.get(Department, r.department_id)
+                item["department_name"] = d.name if d else f"№{r.department_id}"
+            out_items.append(item)
         if dept_id is not None:
             copies = {r.source_global_id: r for r in rows
                       if r.department_id == dept_id and r.source_global_id}
@@ -874,14 +935,18 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
                                         WfTemplate.id))).all())
         for r in rows:
             if r.department_id is not None and dept_id is not None and r.department_id != dept_id \
-                    and user.role not in (Role.ADMIN, Role.COORDINATOR):
+                    and not view_all:
                 continue
             used = await template_usage(session, r.name,
                                          [r.department_id] if r.department_id else None)
-            out_items.append({"id": r.id, "name": r.name, "steps": r.steps or [],
-                              "kind_scope": r.kind_scope, "department_id": r.department_id,
-                              "source_global_id": r.source_global_id,
-                              "is_active": r.is_active, "usage": used})
+            item = {"id": r.id, "name": r.name, "steps": r.steps or [],
+                    "kind_scope": r.kind_scope, "department_id": r.department_id,
+                    "source_global_id": r.source_global_id,
+                    "is_active": r.is_active, "usage": used}
+            if view_all and r.department_id is not None:
+                d = await session.get(Department, r.department_id)
+                item["department_name"] = d.name if d else f"№{r.department_id}"
+            out_items.append(item)
         if dept_id is not None:
             copies = {r.source_global_id: r for r in rows
                       if r.department_id == dept_id and r.source_global_id}
@@ -893,17 +958,40 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
                                   "deactivated": bool(c and not c.is_active),
                                   "copy_id": c.id if c else None})
     elif ref == "groups":
+        from app.core.meet_groups import (count_matches_for_groups, group_options,
+                                          norm_criteria, _group_desc as _mg_desc)
         rows = list((await session.scalars(
             select(TaskGroup).order_by(TaskGroup.department_id.is_not(None),
                                        TaskGroup.name))).all())
+        # соответствия критериям группы (для столбца «Параметры» и конструктора)
+        match_counts: dict[int, int] = {}
+        try:
+            match_counts = await count_matches_for_groups(session, dept_id, rows)
+        except Exception:   # pragma: no cover — не блокируем справочник при сбое подсчёта
+            match_counts = {}
+        opts: dict = {}
+        try:
+            opts = await group_options(session, dept_id)
+        except Exception:   # pragma: no cover
+            opts = {}
+        proj_names = {p["id"]: p["label"] for p in opts.get("projects", [])}
+        status_labels = {s["key"]: s["label"] for s in opts.get("statuses", [])}
+        prio_labels = {p["key"]: p["label"] for p in opts.get("priorities", [])}
         for r in rows:
             if r.department_id is not None and dept_id is not None and r.department_id != dept_id \
-                    and user.role not in (Role.ADMIN, Role.COORDINATOR):
+                    and not view_all:
                 continue
-            out_items.append({"id": r.id, "name": r.name, "criteria": r.criteria or {},
-                              "department_id": r.department_id,
-                              "source_global_id": r.source_global_id,
-                              "is_active": r.is_active, "usage": 0})
+            crit = norm_criteria(r.criteria)
+            item = {"id": r.id, "name": r.name, "criteria": crit,
+                    "description": _mg_desc(crit, proj_names, status_labels, prio_labels),
+                    "matches": match_counts.get(r.id, 0),
+                    "department_id": r.department_id,
+                    "source_global_id": r.source_global_id,
+                    "is_active": r.is_active, "usage": 0}
+            if view_all and r.department_id is not None:
+                d = await session.get(Department, r.department_id)
+                item["department_name"] = d.name if d else f"№{r.department_id}"
+            out_items.append(item)
         if dept_id is not None:
             copies = {r.source_global_id: r for r in rows
                       if r.department_id == dept_id and r.source_global_id}
@@ -918,6 +1006,7 @@ async def admin_view(session: AsyncSession, user: User, ref: str,
         raise RefDataError(400, "Неизвестный раздел справочника")
     return {"ref": ref, "set": set_name, "department_id": dept_id,
             "items": out_items, "available_templates": avail,
+            "group_options": opts if ref == "groups" else None,
             "modules_enabled": sorted(mods),
             "allowed": _module_allowed(
                 ref if ref != "status" else f"status:{set_name or 'task'}", mods)

@@ -23,7 +23,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import build_context
@@ -211,8 +211,30 @@ async def patch_user(user_id: int, body: UserPatch, request: Request,
         u.email = body.email.strip() or None
         changes.append("email изменён")
     if body.role is not None and body.role != u.role:
-        u.role = body.role
+        # Синхронизация с ролями в пространствах (иначе users.role и
+        # department_members.role_in_dept расходятся — см. admin_dept UI):
+        #   повышение до head -> HEAD во всех его подразделениях;
+        #   понижение с head -> снимаем HEAD везде (member остаётся);
+        #   admin/coordinator -> глобальная роль, role_in_dept не трогаем.
+        from app.core.permcache import bump_epoch
+
+        if body.role == Role.HEAD:
+            await session.execute(
+                update(DepartmentMember)
+                .where(DepartmentMember.user_id == user_id)
+                .values(role_in_dept=Role.HEAD))
+        elif u.role == Role.HEAD:
+            await session.execute(
+                update(DepartmentMember)
+                .where(DepartmentMember.user_id == user_id,
+                       DepartmentMember.role_in_dept == Role.HEAD)
+                .values(role_in_dept=Role.MEMBER))
+        await bump_epoch(session)
         changes.append(f"роль -> {body.role.value}")
+    # ВАЖНО: присваиваем новую роль ПОСЛЕ синхронизации role_in_dept — ветка
+    # понижения опирается на старое значение u.role == Role.HEAD.
+    if body.role is not None and body.role != u.role:
+        u.role = body.role
     if body.is_active is not None and body.is_active != u.is_active:
         u.is_active = body.is_active
         changes.append("аккаунт активирован" if body.is_active else "аккаунт заблокирован")

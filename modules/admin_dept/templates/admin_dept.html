@@ -32,6 +32,9 @@
 {% if departments %}
 <select id="deptSel" onchange="switchDept(this.value)"
         style="min-width:220px" title="Сменить управляемое пространство">
+  {% if is_admin_global %}
+  <option value="0" {% if not department %}selected{% endif %}>🌐 Вся система</option>
+  {% endif %}
   {% for d in departments %}
   <option value="{{ d.id }}" {% if department and d.id == department.id %}selected{% endif %}>{{ d.name }}</option>
   {% endfor %}
@@ -61,14 +64,20 @@
   <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
   {% endif %}
   <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
-  <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
-  <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
-  <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
   {% if department %}
+  <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
+  {% endif %}
+  <button class="adm-tab" data-tab="users" onclick="showTab('users')">🪪 Учётные записи</button>
+  {% if department %}
+  <button class="adm-tab" data-tab="modules" onclick="showTab('modules')">🧩 Модули</button>
+  {% endif %}
+  {% if department or is_admin_global %}
   <button class="adm-tab" data-tab="refdata" onclick="showTab('refdata')"
           title="Справочники: статусы, типы, приоритеты, маршруты, группы задач. Данные хранятся в базе данных.">📚 Справочники</button>
   {% endif %}
+  {% if department %}
   <button class="adm-tab" data-tab="sharing" onclick="showTab('sharing')">🔗 Шеринг</button>
+  {% endif %}
   {% if is_admin_global %}
   <button class="adm-tab" data-tab="notify" onclick="showTab('notify')"
           title="Базовые сценарии уведомлений, шаблоны и рассылки. Данные хранятся в базе.">🔔 Уведомления</button>
@@ -309,12 +318,18 @@
       <h3 style="margin:0 0 10px">📤 Расшарено нами (исходящее)</h3>
       {% if shares_out %}
       <table class="tbl">
-        <thead><tr><th>Сущность</th><th>Куда</th><th>Права</th></tr></thead>
+        <thead><tr><th>Сущность</th><th>Куда</th><th>Права</th><th style="text-align:right">Действия</th></tr></thead>
         <tbody>
         {% for s in shares_out %}
           <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
               <td>{{ s.to_dept }}</td>
-              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td></tr>
+              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}" id="shOutPerm-{{ s.share_id }}">{{ s.permission }}</span></td>
+              <td style="text-align:right;white-space:nowrap">
+                <button class="btn sm ghost" title="Изменить уровень прав"
+                        onclick="shareChangePerm({{ s.share_id }},'{{ s.uid }}',{{ s.to_dept_id }},this,'{{ s.permission }}')">✏️ Права</button>
+                <button class="btn sm ghost" title="Отозвать шеринг"
+                        onclick="shareRevoke('{{ s.uid }}',{{ s.to_dept_id }},this)">🗑 Отозвать</button>
+              </td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -324,12 +339,16 @@
       <h3 style="margin:0 0 10px">📥 Получено от других подразделений</h3>
       {% if shares_in %}
       <table class="tbl">
-        <thead><tr><th>Сущность</th><th>Откуда</th><th>Права</th></tr></thead>
+        <thead><tr><th>Сущность</th><th>Откуда</th><th>Права</th><th style="text-align:right">Действия</th></tr></thead>
         <tbody>
         {% for s in shares_in %}
           <tr><td>{{ s.title }} <span class="muted">({{ s.kind }})</span></td>
               <td>{{ s.from_dept }}</td>
-              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td></tr>
+              <td><span class="badge {{ 'b-amber' if s.permission=='edit' else 'b-blue' }}">{{ s.permission }}</span></td>
+              <td style="text-align:right;white-space:nowrap">
+                <button class="btn sm ghost" title="Отказаться от полученного шеринга (доступ будет закрыт, владельца известим в журнале)"
+                        onclick="shareReject('{{ s.uid }}',this)">❌ Отказаться</button>
+              </td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -434,8 +453,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/refdata.js?v=20261017a"></script>
-<script src="/static/js/notify_admin.js?v=20261017a"></script>
+<script src="/static/js/refdata.js?v=20261018b"></script>
+<script src="/static/js/notify_admin.js?v=20261018b"></script>
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
@@ -530,15 +549,54 @@ async function addSelectedMember(){
 async function removeMember(userId,btn){
   if(!confirm('Удалить участника из подразделения?')) return;
   try{ await api(`/api/core/departments/${DEPT}/members/${userId}`,'DELETE');
-    toast('Удалено'); btn.closest('tr').remove(); }catch(e){}
+    toast('Удалено'); btn.closest('tr').remove(); }
+  catch(e){ /* 409 «последний руководитель» и проч. — серверный текст уже показан via toast */ }
 }
 document.querySelectorAll('.roleSel').forEach(sel=>{
   sel.addEventListener('change',async()=>{
     const uid=+sel.closest('tr').dataset.uid;
-    try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value}); toast('Роль обновлена'); }
-    catch(e){ location.reload(); }
+    try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value});
+      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch — перечитываем
+      // страницу, чтобы badge/скрытые панели/кнопки соответствовали НОВЫМ правам
+      // (в т.ч. самого пользователя, если меняет роль себе).
+      toast('Роль обновлена'); setTimeout(()=>location.reload(),500); }
+    catch(e){ location.reload(); }  // откат UI к фактическому состоянию (напр. 409)
   });
 });
+
+/* ---------------- шеринг: отзыв / отказ / изменение прав ---------------- */
+const SHARE_PERMS=[['view','Просмотр'],['edit','Редактирование']];
+function shareChangePerm(shareId,uid,toDeptId,btn,current){
+  // dept_id в URL — ПОДРАЗДЕЛЕНИЕ-ПОЛУЧАТЕЛЬ (target), а не текущий контекст DEPT
+  const cur=current||'view';
+  openModal('Изменить права шеринга',
+    '<p class="muted" style="margin:0 0 8px">Выберите уровень доступа для принимающего подразделения:</p>'+
+    '<label>Права<select name="permission">'+
+      SHARE_PERMS.map(p=>`<option value="${p[0]}" ${p[0]===cur?'selected':''}>${p[1]}</option>`).join('')+
+    '</select></label>',
+    async(fd,form)=>{
+      const perm=form.elements.permission.value;
+      if(perm===cur){ closeModal(); return toast('Права не изменились','warn'); }
+      await api('/api/core/entities/'+uid+'/shares/'+toDeptId,'PATCH',{permission:perm});
+      closeModal(); toast('Права шеринга обновлены');
+      const b=document.getElementById('shOutPerm-'+shareId);
+      if(b){ b.textContent=perm; b.className='badge '+(perm==='edit'?'b-amber':'b-blue'); }
+    });
+}
+async function shareRevoke(uid,toDeptId,btn){
+  askConfirm('Отозвать шеринг? Подразделение-получатель потеряет доступ к сущности.',async()=>{
+    await api('/api/core/entities/'+uid+'/shares/'+toDeptId,'DELETE');
+    toast('Шеринг отозван'); btn.closest('tr').remove();
+  });
+}
+async function shareReject(uid,btn){
+  // отказываемся от имени ПОДРАЗДЕЛЕНИЯ-ПРЕДНАЗНАЧЕНИЯ (текущий контекст DEPT),
+  // а не подразделения-владельца (fromDeptId) — сервер сверит target_department_id
+  askConfirm('Отказаться от полученного шеринга? Доступ будет закрыт, владелец получит запись в журнале.',async()=>{
+    await api('/api/core/entities/'+uid+'/shares/reject','POST',{});
+    toast('Вы отказались от шеринга'); btn.closest('tr').remove();
+  });
+}
 
 /* ---------------- модули ---------------- */
 async function toggleModule(key,enable){

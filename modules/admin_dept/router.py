@@ -84,7 +84,11 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
     своё подразделение (участники, модули, шеринг, состав своего отдела,
     журнал своего подразделения)."""
     ctx = await access.build_context(session, user)
-    dept = await _pick_department(session, ctx, department_id)
+    # department_id=0 — специальный режим «Вся система» (администратор/
+    # координатор): панель открывается без конкретного пространства; вкладки
+    # справочников работают в глобальном режиме (dept=None → view_all).
+    global_mode = department_id == 0 and ctx.is_global
+    dept = None if global_mode else await _pick_department(session, ctx, department_id)
 
     async def _dept_list(include_inactive=False):
         """Агрегаты по всем подразделениям для вкладки «Подразделения»."""
@@ -109,22 +113,32 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
                         "member_count": mc, "modules_enabled": en, "modules_total": total_mods})
         return out
 
-    # --- пустое состояние ----------------------------------------------------
+    # --- пустое состояние / режим «Вся система» ------------------------------
     if dept is None:
         all_users = (await session.scalars(
             select(User).where(User.is_active == True)  # noqa: E712
             .order_by(User.display_name))).all()
         depts_all = await _dept_list(include_inactive=True) if ctx.is_global else []
         active_simple = [{"id": d["id"], "name": d["name"]} for d in depts_all if d["is_active"]]
+        default_tab = tab or ("departments" if ctx.can_admin_system else "users")
+        if global_mode:
+            # админ выбрал «Вся система»: открываем глобальные вкладки
+            # (справочники/учётные записи/журнал), а не пустое состояние.
+            default_tab = tab or "refdata"
+            if default_tab in ("overview",):
+                default_tab = "refdata"
         return await render_page(
             request, "admin_dept.html", module_key=MODULE_KEY, user=user,
             session=session,
             page_title="Администрирование",
-            page_sub="Единая панель управления системой и рабочими пространствами",
+            page_sub=("Управление всей системой: общесистемные справочники, "
+                      "записи всех подразделений, учётные записи, журнал"
+                      if global_mode else
+                      "Единая панель управления системой и рабочими пространствами"),
             counts={MODULE_KEY: 0},
             is_global_admin=ctx.can_admin_system,
             can_manage=ctx.can_admin_system,
-            active_tab=tab or ("departments" if ctx.can_admin_system else "overview"),
+            active_tab=default_tab,
             department=None,
             departments=active_simple,
             dept_list=depts_all,
@@ -133,7 +147,8 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
             users=[{"id": u.id, "name": u.display_name} for u in all_users],
             adm_payload={"department": None, "can_manage": bool(ctx.can_admin_system),
                          "is_global_admin": bool(ctx.can_admin_system),
-                         "default_tab": tab or ("departments" if ctx.can_admin_system else "users"),
+                         "global_mode": bool(global_mode),
+                         "default_tab": default_tab,
                          "departments": active_simple},
         )
 
@@ -194,8 +209,10 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
     for sh in (await session.scalars(out_q)).all():
         ent = await session.get(Entity, sh.entity_id)
         shares_out.append({
+            "share_id": sh.id,
             "uid": ent.uid, "title": ent.title, "kind": ent.kind.value,
             "to_dept": sh.target_department.name if sh.target_department else str(sh.target_department_id),
+            "to_dept_id": sh.target_department_id,
             "permission": sh.permission.value,
         })
     shares_in = []
@@ -203,7 +220,9 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
         ent = await session.get(Entity, sh.entity_id)
         owner = await session.get(Department, ent.owner_department_id)
         shares_in.append({
+            "share_id": sh.id,
             "uid": ent.uid, "title": ent.title, "kind": ent.kind.value,
+            "owner_dept_id": ent.owner_department_id,
             "from_dept": owner.name if owner else "",
             "permission": sh.permission.value,
         })

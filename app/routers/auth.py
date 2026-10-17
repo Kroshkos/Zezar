@@ -39,9 +39,22 @@ logger = logging.getLogger("caesar.auth")
 router = APIRouter()
 
 
-def _login_redirect(user: User) -> RedirectResponse:
-    resp = RedirectResponse("/", status_code=302)
-    resp.set_cookie(SESSION_COOKIE, create_session_token({"uid": user.id}),
+def _safe_next(request: Request) -> str:
+    """Цель редиректа после входа: параметр ?next= только внутреннему пути (/...),
+    иначе '/' (защита от open redirect)."""
+    nxt = request.query_params.get("next") or ""
+    if nxt.startswith("/") and not nxt.startswith("//"):
+        return nxt
+    return "/"
+
+
+async def _login_redirect(user: User, dest: str = "/") -> RedirectResponse:
+    from app.core.permcache import get_epoch
+    from app.db.engine import SessionLocal
+    async with SessionLocal() as s:
+        epoch = await get_epoch(s)
+    resp = RedirectResponse(dest, status_code=302)
+    resp.set_cookie(SESSION_COOKIE, create_session_token({"uid": user.id, "acl_epoch": epoch}),
                     httponly=True, samesite="lax", max_age=86400 * 14,
                     secure=get_settings().session_cookie_secure)
     return resp
@@ -111,11 +124,15 @@ async def login(request: Request, login: str = Form(""), password: str = Form(""
     # Первый вход с начальным паролем — принудительно на страницу смены пароля.
     if first_login:
         resp = RedirectResponse("/change-password?forced=1", status_code=302)
-        resp.set_cookie(SESSION_COOKIE, create_session_token({"uid": user.id}),
+        from app.db.engine import SessionLocal
+        from app.core.permcache import get_epoch
+        async with SessionLocal() as _s:
+            _epoch = await get_epoch(_s)
+        resp.set_cookie(SESSION_COOKIE, create_session_token({"uid": user.id, "acl_epoch": _epoch}),
                         httponly=True, samesite="lax", max_age=86400 * 14,
                         secure=get_settings().session_cookie_secure)
         return resp
-    return _login_redirect(user)
+    return await _login_redirect(user, _safe_next(request))
 
 
 @router.post("/auth/change-password")
@@ -160,11 +177,11 @@ async def change_password(request: Request,
     await session.commit()
     logger.info("change-password: пользователь '%s' сменил пароль (forced=%s)",
                 user.login, was_forced)
-    return _login_redirect(user)
+    return await _login_redirect(user, _safe_next(request))
 
 
 @router.get("/auth/dev-login")
-async def dev_login(login: str, session: AsyncSession = Depends(session_dep)):
+async def dev_login(request: Request, login: str, session: AsyncSession = Depends(session_dep)):
     """Вход по логину без пароля — ТОЛЬКО локальная разработка (DEV_LOGIN_ENABLED=true).
 
     В продакшене отключён (404 + fail-fast require_production_settings). Нужен для
@@ -177,7 +194,7 @@ async def dev_login(login: str, session: AsyncSession = Depends(session_dep)):
         select(User).where(func.lower(User.login) == login.strip().lower()))
     if user is None or not user.is_active:
         raise HTTPException(404, "Пользователь с таким логином не найден (dev-режим)")
-    return _login_redirect(user)
+    return await _login_redirect(user, _safe_next(request))
 
 
 @router.post("/auth/logout")

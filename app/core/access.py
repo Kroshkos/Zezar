@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select, or_, and_
+from sqlalchemy import func, select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
@@ -159,6 +159,97 @@ async def resolve_permission(session: AsyncSession, ctx: AccessContext, entity: 
 
 def _perm_lt(a: Permission, b: Permission) -> bool:
     return _PERM_ORDER[a] < _PERM_ORDER[b]
+
+
+# ---------------------------------------------------------------------------
+# Единая точка назначения/изменения роли в пространстве (RBAC-сервис)
+# ---------------------------------------------------------------------------
+
+async def count_heads(session: AsyncSession, department_id: int) -> int:
+    """Число руководителей (HEAD) в подразделении."""
+    return await session.scalar(
+        select(func.count(DepartmentMember.id))
+        .where(DepartmentMember.department_id == department_id,
+               DepartmentMember.role_in_dept == Role.HEAD)) or 0
+
+
+async def set_department_role(
+    session: AsyncSession, *, department_id: int, user_id: int,
+    new_role: Role, actor: User, allow_head_promotion: bool = True,
+) -> str:
+    """УНИФИЦИРОВАННОЕ назначение роли в рабочем пространстве.
+
+    Единственная точка входа для ЛЮБЫХ изменений role_in_dept (роутеры
+    подразделений, админ-панель, фронтенд-селекты). Гарантирует:
+      - инвариант «в подразделении всегда есть хотя бы один HEAD»:
+        понижение последнего руководителя запрещено (HTTP 409);
+      - синхронизацию глобальной роли: повышение до HEAD ставит User.role=HEAD
+        (если пользователь не admin/coordinator — их глобальная роль выше),
+        понижение снимает HEAD, если это его последняя руководимая область;
+      - инвалидацию кэша прав: bump_epoch + expire_all — открытые страницы и
+        токены получают актуальные права без перезагрузки/перелогина.
+
+    Права вызывающего проверяет РОУТЕР (он знает контекст: admin vs head);
+    здесь — только целостность данных. Возвращает человекочитаемое описание
+    изменения для журнала событий. Commit НЕ выполняет — транзакцию фиксирует
+    вызывающий код (epoch меняется атомарно с правами).
+    """
+    from fastapi import HTTPException
+
+    from app.core.permcache import bump_epoch, invalidate_session
+
+    target = await session.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Пользователь не найден")
+    # Скалярные копиИ полей актора/цели: в конце функции вызывается
+    # invalidate_session (expire_all), после чего ленивое чтение атрибутов
+    # expired-объекта вне зелёного потока бросает MissingGreenlet.
+    actor_name = actor.login or actor.display_name
+    target_display = target.display_name
+
+    member = await session.scalar(
+        select(DepartmentMember).where(
+            DepartmentMember.user_id == user_id,
+            DepartmentMember.department_id == department_id))
+
+    if member is None:
+        # новое членство: повышение до HEAD разрешено только тем, кому разрешено
+        # (админ/координатор); head-вызывающий добавляет лишь MEMBER — это
+        # проверяется в роутере до вызова сервиса.
+        if new_role == Role.HEAD and not allow_head_promotion:
+            raise HTTPException(403, "Руководитель может добавлять только участников")
+        session.add(DepartmentMember(user_id=user_id, department_id=department_id,
+                                     role_in_dept=new_role))
+        action = "включён"
+    else:
+        if member.role_in_dept == new_role:
+            return "без изменений"
+        if (new_role != Role.HEAD and member.role_in_dept == Role.HEAD
+                and await count_heads(session, department_id) <= 1):
+            raise HTTPException(
+                409, "В подразделении должен остаться хотя бы один руководитель — "
+                     "сначала назначьте нового")
+        member.role_in_dept = new_role
+        action = "роль изменена"
+
+    # Синхронизация ГЛОБЛЬНОЙ роли (устраняет расхождение users.role vs role_in_dept):
+    target = await session.get(User, user_id)
+    if new_role == Role.HEAD and target.role not in (Role.ADMIN, Role.COORDINATOR):
+        target.role = Role.HEAD
+    elif new_role != Role.HEAD and target.role == Role.HEAD:
+        # снимаем HEAD глобально, только если больше нигде не руководитель
+        other_heads = await session.scalar(
+            select(func.count(DepartmentMember.id))
+            .where(DepartmentMember.user_id == user_id,
+                   DepartmentMember.role_in_dept == Role.HEAD,
+                   DepartmentMember.department_id != department_id))
+        if not other_heads:
+            target.role = Role.MEMBER
+
+    await bump_epoch(session)          # инвалидация кэша прав (токены/клиенты)
+    invalidate_session(session)        # сброс identity map текущей сессии
+    return (f"{action}: {new_role.value} (актор: {actor_name}, "
+            f"цель: {target_display})")
 
 
 def can_write(perm: Permission | None) -> bool:

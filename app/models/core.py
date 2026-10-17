@@ -426,6 +426,19 @@ class AuditLog(Base):
     details_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class AclState(Base):
+    """Ключ-значение для состояния ядра RBAC (см. app/core/permcache.py).
+
+    Единственный используемый ключ пока — ``acl_epoch``: монотонный счётчик,
+    инкрементируемый при ЛЮБОМ изменении ролей/членств/шэров. Нужен, чтобы
+    клиентские токены и DOM-рендер принудительно перечитывались после смены
+    прав — без перезагрузки страницы пользователем."""
+    __tablename__ = "acl_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+
+
 class OutboxEvent(Base):
     """Транзакционная запись событий: фоновые воркеры (Telegram/Календарь)
     читают очередь и помечают статус — гарантии доставки без внешних брокеров."""

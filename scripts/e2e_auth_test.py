@@ -36,6 +36,10 @@ async def main():
         async with SessionLocal() as s:
             await _reg.sync_table(s)
             await bootstrap(s)
+        # синхронизировать TTL-кэш эпохи ACL с БД после сидинга (как в lifespan)
+        from app.core.permcache import get_epoch as _ge
+        async with SessionLocal() as s:
+            await _ge(s)
 
         # 1. верный логин/пароль -> 302 на / + cookie
         r = await c.post("/auth/login", data={"login": "chief", "password": "S3cret-Pass!"})

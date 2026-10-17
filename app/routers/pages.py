@@ -26,12 +26,15 @@ ERRORS = {"disabled": "Учётная запись заблокирована",
 
 
 @router.get("/login")
-async def login_page(request: Request, error: str = ""):
+async def login_page(request: Request, error: str = "", next: str = ""):
     from app.core.config import get_settings
     msg = ERRORS.get(error, "Ошибка входа")
+    # сохраняем цель редиректа только если это внутренний путь
+    safe_next = next if (next.startswith("/") and not next.startswith("//")) else ""
     return templates.TemplateResponse(request, "login.html",
                                       {"error": bool(error),
                                        "error_msg": msg,
+                                       "next": safe_next,
                                        "dev": bool(getattr(get_settings(), "dev_login_enabled", False))})
 
 
@@ -156,9 +159,10 @@ async def save_calendar(body: CalIn, request: Request,
     ok, code = await yc.verify_credentials(login, body.app_password)
     if not ok:
         detail = {
-            401: "Яндекс отклонил app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток",
+            401: "Яндекс отклонил логин или app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток; логин CalDAV — это логин аккаунта Яндекса (без домена)",
             403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
-            404: "CalDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
+            404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
+            405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
         }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
         return JSONResponse({"detail": detail}, 400)
     user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)

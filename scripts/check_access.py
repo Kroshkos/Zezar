@@ -28,7 +28,7 @@ async def main(apply: bool) -> None:
     from sqlalchemy import select
 
     from app.core.config import get_settings
-    from app.db.engine import SessionLocal
+    from app.db.engine import engine, SessionLocal
     from app.db.seed import is_env_admin_login
     from app.models.core import Role, User
 
@@ -44,6 +44,16 @@ async def main(apply: bool) -> None:
     if not entries:
         print("\n!! Список пуст: задайте ADMIN_USERNAME + ADMIN_PASSWORD в панели")
         print("   хостинга и убедитесь, что переменные попали в окружение рантайма.")
+
+    # На чистой/первой БД таблицы ещё не созданы (это делает lifespan приложения:
+    # create_all + bootstrap). Чиним схему прямо здесь — иначе диагностика падала
+    # с «no such table: users» до того, как успеет что-либо показать.
+    from app.db.base import Base
+    from app.main import _import_all_models
+
+    _import_all_models()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     async with SessionLocal() as session:
         users = (await session.execute(select(User).order_by(User.id))).scalars().all()

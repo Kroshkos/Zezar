@@ -108,6 +108,14 @@ async def get_current_user(request: Request):
 
     Сессия закрывается с expire_on_commit=False, а отношения (memberships и др.)
     подгружаются eagerly — иначе роутеры получают DetachedInstanceError на lazy-load.
+
+    Инвалидация кэша прав (acl_epoch): если сервер поднял эпоху ACL (смена
+    ролей/участников), кука со старым epoch протухла. Вместо жёсткого 401
+    применяется мягкая инвалидация: пользователь получает актуальные права на
+    этом же запросе, а на следующий ответ вешается свежая cookie с текущим
+    epoch (см. ``attach_fresh_session_cookie``). Принудительный перевход
+    остаётся только для токенов, подписанных другим secret_key. Куки без поля
+    acl_epoch (выпущены до внедрения epoch) принимаются как раньше.
     """
     from sqlalchemy.orm import selectinload
 
@@ -117,15 +125,54 @@ async def get_current_user(request: Request):
     data = read_session_token(request.cookies.get(SESSION_COOKIE))
     if not data or "uid" not in data:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не авторизован")
+    stale = False
     async with SessionLocal() as session:
         user = await session.scalar(
             select(User).options(selectinload(User.memberships)).where(User.id == data["uid"]))
         if user is not None:
             for m in user.memberships:
                 _ = m.department_id  # скаляр уже загружен; связь department не трогаем
+        if user is not None and "acl_epoch" in data:
+            from app.core.permcache import get_epoch, token_needs_refresh
+            stale = token_needs_refresh(data, await get_epoch(session))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись заблокирована")
+    # Помечаем пользователя «протухшей» кукой: middleware-обработчик ниже
+    # перезапишет cookie свежим epoch в этом же ответе. Права при этом всегда
+    # читаются из БД (user выше загружен заново), поэтому ложных прав нет.
+    request.state.acl_stale = bool(stale)
     return user
+
+
+async def attach_fresh_session_cookie(request: Request, response) -> None:
+    """Перевыпустить session-cookie с текущим acl_epoch, если get_current_user
+    пометил куку протухшей (``request.state.acl_stale``).
+
+    Это закрывает UX-дефект: эндпоинты, которые сами поднимают epoch
+    (patch_user, смена пароля, смена состава), больше не выбрасывают
+    легитимного пользователя на /login — его собственная сессия обновляется
+    в том же ответе. Вызывается из хука @app.after_request в main.py."""
+    try:
+        if not getattr(request.state, "acl_stale", False):
+            return
+        uid = getattr(request.state, "current_uid", None)
+        if uid is None:
+            from app.core.security import read_session_token
+            data = read_session_token(request.cookies.get(SESSION_COOKIE))
+            uid = (data or {}).get("uid")
+        if uid is None:
+            return
+        from app.core.permcache import get_epoch
+        from app.db.engine import SessionLocal
+        async with SessionLocal() as s:
+            epoch = await get_epoch(s)
+        response.set_cookie(
+            SESSION_COOKIE, create_session_token({"uid": uid, "acl_epoch": epoch}),
+            httponly=True, samesite="lax", max_age=86400 * 14,
+            secure=get_settings().session_cookie_secure)
+        request.state.acl_stale = False
+    except Exception:  # никогда не ломаем ответ из-за косметической куки
+        pass
 
 
 require_login = get_current_user  # семантический алиас
