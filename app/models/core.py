@@ -309,7 +309,13 @@ class PriorityLevel(TimestampMixin, Base):
     # См. StatusSet.is_active: деактивация копии шаблона = снять флаг, не удалить.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    __table_args__ = (UniqueConstraint("key", "department_id"),)
+    # Скоуп-уникальность (key, department_id): в SQLite табличный UNIQUE с
+    # NULL не защищает от дублей глобальных шаблонов (NULL != NULL) — дубли
+    # global-шаблонов контролирует сервис app/core/refdata.py; для записей
+    # подразделений работает частичный уникальный индекс
+    # uq_priority_levels_scope_dept (WHERE department_id IS NOT NULL),
+    # создаваемый ревизией a1b7c3d94e51.
+    __table_args__ = ()
 
 
 class RefType(TimestampMixin, Base):

@@ -108,9 +108,15 @@ def _target_constraints(table: str) -> list:
                                            name=c.name))
         elif isinstance(c, sa.ForeignKeyConstraint):
             cols = [col.name for col in c.columns]
-            rt = list(c.elements)[0]._table_name
-            rc = [fk.column.name for fk in c.elements]
-            out.append(sa.ForeignKeyConstraint(cols, [f"{rt}.{n}" for n in rc],
+            # SQLAlchemy 2.x: у ещё не привязанного (unbound) ForeignKey
+            # атрибута _table_name нет — целевая таблица берётся из
+            # элемент-спецификации ссылки ("departments.id" / "status_sets.id").
+            targets = []
+            for el in c.elements:
+                spec = el._target_fullname if hasattr(el, "_target_fullname") \
+                    else str(el._colspec)
+                targets.append(spec)
+            out.append(sa.ForeignKeyConstraint(cols, targets,
                                                name=c.name,
                                                ondelete=c.ondelete,
                                                onupdate=c.onupdate))
@@ -219,7 +225,11 @@ def _ensure_columns(table: str) -> None:
                       and "uq_priority_levels_key" in _uq_names(table))
 
     if not fk_ok or need_uniq_drop:
-        _rebuild(table, drop_unique_key=need_uniq_drop)
+        # NB: сигнатура _rebuild(table) — legacy UNIQUE(key) у priority_levels
+        # не переносится в целевую схему автоматически (см. docstring _rebuild),
+        # отдельный аргумент drop_unique_key не требуется и ранее вызывал
+        # TypeError при миграции легаси-БД.
+        _rebuild(table)
     else:
         cols = _cols(table)
         add_cols = []
@@ -308,10 +318,15 @@ def upgrade() -> None:
         # Скоуп-уникальность для записей подразделений (key, department_id):
         # в SQLite табличный UNIQUE с NULL не защищает от дублей глобальных
         # шаблонов — для них контроль дублей выполняет сервис app/core/refdata.py.
-        if "uq_priority_levels_key_department_id" in idx:
-            op.drop_index("uq_priority_levels_key_department_id",
-                          table_name="priority_levels")
-            idx.discard("uq_priority_levels_key_department_id")
+        # Удалённые имена: legacy-табличный UNIQUE(uq_priority_levels_key) и
+        # ошибочный полный UNIQUE uq_priority_levels_key_department_id из
+        # предыдущих редакций (он блокировал легитимную пару "глобальный key +
+        # копия подразделения", т.к. индекс без WHERE покрывал и NULL-строки).
+        for legacy_idx in ("uq_priority_levels_key_department_id",
+                           "uq_priority_levels_scope_dept"):
+            if legacy_idx in idx:
+                op.drop_index(legacy_idx, table_name="priority_levels")
+                idx.discard(legacy_idx)
         if "uq_priority_levels_scope_dept" not in idx:
             bind = op.get_bind()
             # защита от уже существующих дублей в legacy-данных
@@ -356,17 +371,40 @@ def downgrade() -> None:
     if "priority_levels" in _tables():
         for idx_name in ("uq_priority_levels_scope_dept",
                          "uq_priority_levels_key_department_id"):
-            try:
+            if idx_name in _indexes("priority_levels"):
                 op.drop_index(idx_name, table_name="priority_levels")
-            except Exception:
-                pass
-        existing = sa.Table("priority_levels", sa.MetaData(),
-                            autoload_with=op.get_bind())
+        bind = op.get_bind()
+        # legacy UNIQUE(key) может быть восстановлен только при отсутствии
+        # дублей по key (например, глобальный шаблон + активированная копия);
+        # чистим дубли, оставляя запись с минимальным id.
+        dups = bind.exec_driver_sql(
+            "SELECT key FROM priority_levels GROUP BY key HAVING COUNT(*) > 1"
+        ).fetchall()
+        for (key,) in dups:
+            bind.exec_driver_sql(
+                "DELETE FROM priority_levels WHERE key = ? AND id NOT IN ("
+                "SELECT MIN(id) FROM priority_levels WHERE key = ?)",
+                (key, key))
+        # Возврат legacy-структуры: без колонок иерархии + табличный UNIQUE(key).
+        # BatchOperations.add_constraint в Alembic 1.20 не существует —
+        # пересоздаём таблицу ЯВНО по целевой схеме (как в _rebuild), колонки
+        # copy_from собираем вручную (dept-колонки из неё исключаем).
+        cur_cols = {c.name: c for c in sa.Table(
+            "priority_levels", sa.MetaData(),
+            autoload_with=bind).columns}
+        keep = [sa.Column(name, c.type.copy(), nullable=c.nullable,
+                          primary_key=(name == "id"),
+                          server_default=c.server_default.arg
+                          if c.server_default else None)
+                for name, c in cur_cols.items()
+                if name not in ("department_id", "source_global_id", "is_active")]
+        keep[0] = sa.Column("id", sa.Integer(), nullable=False, primary_key=True)
+        legacy = sa.Table("priority_levels", sa.MetaData(), *keep,
+                          sa.UniqueConstraint("key", name="uq_priority_levels_key"))
         with op.batch_alter_table("priority_levels", recreate="always",
-                                  copy_from=existing) as batch:
-            batch.add_constraint(sa.UniqueConstraint("key",
-                                                     name="uq_priority_levels_key"))
-    for table in ("status_sets", "priority_levels", "wf_templates"):
+                                  copy_from=legacy):
+            pass
+    for table in ("status_sets", "wf_templates"):
         if table in _tables():
             cols = _cols(table)
             with op.batch_alter_table(table) as batch:
