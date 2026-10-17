@@ -530,13 +530,18 @@ async function addSelectedMember(){
 async function removeMember(userId,btn){
   if(!confirm('Удалить участника из подразделения?')) return;
   try{ await api(`/api/core/departments/${DEPT}/members/${userId}`,'DELETE');
-    toast('Удалено'); btn.closest('tr').remove(); }catch(e){}
+    toast('Удалено'); btn.closest('tr').remove(); }
+  catch(e){ /* 409 «последний руководитель» и проч. — серверный текст уже показан via toast */ }
 }
 document.querySelectorAll('.roleSel').forEach(sel=>{
   sel.addEventListener('change',async()=>{
     const uid=+sel.closest('tr').dataset.uid;
-    try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value}); toast('Роль обновлена'); }
-    catch(e){ location.reload(); }
+    try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value});
+      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch — перечитываем
+      // страницу, чтобы badge/скрытые панели/кнопки соответствовали НОВЫМ правам
+      // (в т.ч. самого пользователя, если меняет роль себе).
+      toast('Роль обновлена'); setTimeout(()=>location.reload(),500); }
+    catch(e){ location.reload(); }  // откат UI к фактическому состоянию (напр. 409)
   });
 });
 

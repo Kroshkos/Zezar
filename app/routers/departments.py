@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access import build_context
+from app.core.access import build_context, count_heads, set_department_role
 from app.core.module_registry import registry
 from app.core.events import log_event
 from app.core.security import get_current_user
@@ -178,35 +178,33 @@ class MemberIn(BaseModel):
 @router.post("/departments/{dept_id}/members")
 async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
-    """Админ назначает; Head — только роль MEMBER внутри своего пространства."""
+    """Админ/координатор назначает любую роль; Head — только роль MEMBER внутри
+    своего пространства. Вся целостность (инвариант HEAD, синхронизация
+    глобальной роли, инвалидация кэша прав) — в app.core.access.set_department_role."""
     ctx = await build_context(session, user)
-    is_head_here = (not ctx.is_global and dept_id in ctx.department_ids and
-                    any(m.role_in_dept == Role.HEAD for m in await session.scalars(
-                        select(DepartmentMember).where(
-                            DepartmentMember.department_id == dept_id,
-                            DepartmentMember.user_id == user.id))))
+    is_head_here = False
+    if not ctx.is_global:
+        my = await session.scalar(
+            select(DepartmentMember).where(
+                DepartmentMember.department_id == dept_id,
+                DepartmentMember.user_id == user.id))
+        is_head_here = bool(my and my.role_in_dept == Role.HEAD)
     if not ctx.is_global and not is_head_here:
         raise HTTPException(403)
-    if not ctx.is_global and body.role_in_dept != Role.MEMBER:
-        raise HTTPException(403, "Head может добавлять только участников")
     target = await session.get(User, body.user_id)
     if not target:
         raise HTTPException(404, "Пользователь не найден")
-    existing = await session.scalar(
-        select(DepartmentMember).where(DepartmentMember.user_id == body.user_id,
-                                       DepartmentMember.department_id == dept_id))
-    if existing:
-        existing.role_in_dept = body.role_in_dept
-    else:
-        session.add(DepartmentMember(user_id=body.user_id, department_id=dept_id,
-                                     role_in_dept=body.role_in_dept))
+    action_desc = await set_department_role(
+        session, department_id=dept_id, user_id=body.user_id,
+        new_role=body.role_in_dept, actor=user,
+        allow_head_promotion=ctx.is_global)
     dept_row = await session.get(Department, dept_id)
     await log_event(session, "add_member", category="dept", user=user,
                     object=f"{dept_row.name if dept_row else dept_id}: {target.display_name}",
                     level="warning",
-                    message=f"Пользователь '{target.login or target.display_name}' включён в "
-                            f"подразделение '{dept_row.name if dept_row else dept_id}' "
-                            f"(роль {body.role_in_dept.value})")
+                    message=f"Пользователь '{target.login or target.display_name}' — "
+                            f"подразделение '{dept_row.name if dept_row else dept_id}': "
+                            f"{action_desc}")
     await session.commit()
     return {"ok": True}
 
@@ -227,8 +225,22 @@ async def remove_member(dept_id: int, member_user_id: int,
         select(DepartmentMember).where(DepartmentMember.user_id == member_user_id,
                                        DepartmentMember.department_id == dept_id))
     if row:
+        # Инвариант: подразделение не должно остаться без руководителя.
+        if row.role_in_dept == Role.HEAD and await count_heads(session, dept_id) <= 1:
+            raise HTTPException(409, "Нельзя удалить последнего руководителя — "
+                                     "сначала назначьте нового")
         tgt = await session.get(User, member_user_id)
         dept_row = await session.get(Department, dept_id)
+        # Синхронизация глобальной роли: если снимаем HEAD и это последнее
+        # руководимое пространство — пользователь перестаёт быть head глобально.
+        if tgt is not None and tgt.role == Role.HEAD and row.role_in_dept == Role.HEAD:
+            other_heads = await session.scalar(
+                select(func.count(DepartmentMember.id)).where(
+                    DepartmentMember.user_id == member_user_id,
+                    DepartmentMember.role_in_dept == Role.HEAD,
+                    DepartmentMember.department_id != dept_id))
+            if not other_heads:
+                tgt.role = Role.MEMBER
         await log_event(session, "remove_member", category="dept", user=user,
                         object=f"{dept_row.name if dept_row else dept_id}: "
                                f"{tgt.display_name if tgt else member_user_id}",
@@ -236,6 +248,8 @@ async def remove_member(dept_id: int, member_user_id: int,
                         message=f"Пользователь '{tgt.login if tgt else member_user_id}' исключён из "
                                 f"подразделения '{dept_row.name if dept_row else dept_id}'")
         await session.delete(row)
+        from app.core.permcache import bump_epoch
+        await bump_epoch(session)  # инвалидация кэша прав (см. permcache)
         await session.commit()
     return {"ok": True}
 
