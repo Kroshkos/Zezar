@@ -252,7 +252,10 @@ function rdCurrentView(){
 function rdEdit(id, section, arg){
   const view = rdCurrentView(); if(!view) return;
   const r = (view.items||[]).find(x=>x.id===id); if(!r) return;
-  const deptPatch = {department_id: rdDept()};
+  // контекст правки = подразделение САМОЙ ЗАПИСИ (в режиме «Вся система»
+  // rdDept() равно null для глобальных шаблонов и не совпадает с чужими
+  // записями подразделений — сервер иначе отклонил бы патч как 403/смену scope)
+  const deptPatch = {department_id: (r.department_id!=null ? r.department_id : rdDept())};
   const done = ()=>{ closeModal(); toast('Сохранено'); RD_CACHE=null; rdShow(RD_SUB); };
   if(section==='status') openModal('Изменить статус',
       '<label>Наименование</label><input name="label" value="'+esc(r.label)+'" required>'+rdColorSel(r.color)+'<label>Порядок</label><input name="order" type="number" value="'+(r.order||0)+'">',
@@ -270,10 +273,12 @@ function rdEdit(id, section, arg){
       async(fd,form)=>{ await api('/api/core/refdata/groups/'+id,'PATCH',{...deptPatch,name:form.elements.gname.value.trim(),criteria:rdCollectCrit(form)}); done(); });
 }
 
-function rdDel(id, section, usage){
+function rdDel(id, section, usage, recDeptId){
   if(usage>0) return toast('Нельзя удалить: значение используется сущностями ('+usage+'). Сначала переведите их на другой элемент справочника.','warn');
   askConfirm('Удалить запись справочника из базы данных?', async()=>{
-    await api('/api/core/refdata/'+section+'/'+id+(rdDept()?('?department_id='+rdDept()):''),'DELETE');
+    // удаляем в контексте подразделения ЗАПИСИ (режим «Вся система»: rdDept()=null)
+    const d = (recDeptId!=null ? recDeptId : rdDept());
+    await api('/api/core/refdata/'+section+'/'+id+(d?('?department_id='+d):''),'DELETE');
     toast('Удалено'); RD_CACHE=null; rdShow(RD_SUB);
   });
 }
