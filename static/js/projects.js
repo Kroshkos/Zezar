@@ -108,7 +108,7 @@ function renderProjCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center">'
       +'<span class="badge '+st.color+'">'+st.label+'</span>'
       +'<span class="badge '+pr.color+'">'+pr.label+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+(p.code?'<span class="badge b-gray">'+esc(p.code)+'</span> ':'')+esc(p.title)+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+(p.code?'<span class="badge b-gray">'+esc(p.code)+'</span> ':'')+'<a href="#" class="entlink" title="Открыть профиль проекта" onclick="openProfile(\''+p.uid+'\');return false">'+esc(p.title)+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">🎯 Заказчик: '+esc(p.customer||'—')
       +(p.leader_name?' · 👤 рук.: '+esc(p.leader_name):'')+dates+'</div>'
       +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Этапы: '+p.stage_done+'/'+p.stage_total

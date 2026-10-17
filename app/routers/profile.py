@@ -23,7 +23,7 @@ from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
     AuditLog, Department, DepartmentMember, Entity, EntityKind, EntityResponsible,
-    EntityShare, Permission, PriorityLevel, StatusSet, User,
+    EntityShare, Permission, PriorityLevel, Role, StatusSet, User,
 )
 from app.models.module_payloads import (
     DocPayload, GrantPayload, MeetingPayload, PriorityPayload,
@@ -195,12 +195,12 @@ async def entity_profile(uid: str, user: User = Depends(get_current_user),
     # --- участники подразделения-владельца (для назначения в окне профиля) ---
     people = []
     mrows = (await session.execute(
-        select(User.id, User.display_name, DepartmentMember.is_head)
+        select(User.id, User.display_name, DepartmentMember.role_in_dept)
         .join(DepartmentMember, DepartmentMember.user_id == User.id)
         .where(DepartmentMember.department_id == dept)
         .order_by(User.display_name))).all()
-    for uid_, name_, is_head in mrows:
-        people.append({"id": uid_, "name": name_, "is_head": bool(is_head)})
+    for uid_, name_, role_ in mrows:
+        people.append({"id": uid_, "name": name_, "is_head": role_ == Role.HEAD})
 
     # --- история изменений (AuditLog в транзакции ядра) ---
     history = []

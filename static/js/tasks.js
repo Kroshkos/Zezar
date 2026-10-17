@@ -35,7 +35,7 @@ function renderTaskTable(){
     const od=t.due_date&&t.due_date<todayISO()&&t.status_key!=='done';
     const acc=t.perm==='read'?'<span class="badge b-amber">только чтение</span>':
               (t.perm!=='full'&&t.shared_to!==false?'':'');
-    return '<tr><td style="min-width:230px"><div class="nm">'+esc(t.title)+'</div>'
+    return '<tr><td style="min-width:230px"><div class="nm"><a href="#" class="entlink" title="Открыть профиль задачи" onclick="openProfile(\''+t.uid+'\');return false">'+esc(t.title)+'</a></div>'
       +'<div class="sub">'+esc(t.description||'')+'</div></td>'
       +'<td style="font-size:12.5px">'+esc((t.executor_names&&t.executor_names.length?t.executor_names:t.responsibles).join(', ')||'—')+'</td>'
       +'<td><span class="badge '+pr.color+'">'+pr.label+'</span></td>'

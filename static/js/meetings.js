@@ -24,7 +24,7 @@ function renderMeetCards(){
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
       +'<span style="color:var(--muted);font-size:12px">'+(m.num?'№ '+esc(m.num):'без номера')+'</span></div>'
-      +'<h3 style="margin:11px 0 5px">'+esc(m.title||'Совещание (без темы)')+'</h3>'
+      +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+m.uid+'\');return false">'+esc(m.title||'Совещание (без темы)')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📅 '+mfmt(m.due_date)+' '+esc(m.time||'')+' · 📍 '+esc(m.location||'—')+'</div>'
       +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Председатель: '+esc(m.chair||'—')
       +(m.responsibles.length?' · 👤 '+esc(m.responsibles.join(', ')):'')+'</div>'
