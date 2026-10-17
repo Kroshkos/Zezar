@@ -15,7 +15,8 @@ from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, Entity, EntityKind, EntityShare, Permission, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
+    StatusSet, User,
 )
 from app.models.module_payloads import GrantPayload
 from app.ui import render_page
@@ -41,14 +42,23 @@ class GrantIn(BaseModel):
     description: str | None = ""
     department_id: int | None = None
     responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []        # исполнители (может быть несколько, как в прототипе)
+    project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> GrantPayload | None:
     return await session.scalar(select(GrantPayload).where(GrantPayload.entity_id == ent_id))
 
 
+def _executors(ent: Entity) -> list[dict]:
+    """Список исполнителей [{id,name}] из денормализованного extra_json."""
+    return (ent.extra_json or {}).get("executors") or []
+
+
 def _grant_dict(ent: Entity, p: GrantPayload | None, perm: Permission | None,
-                resp_names: list[str], cross_dept: bool = False) -> dict:
+                resp_names: list[str], cross_dept: bool = False,
+                project_title: str | None = None) -> dict:
+    execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -56,7 +66,11 @@ def _grant_dict(ent: Entity, p: GrantPayload | None, perm: Permission | None,
         "cross_dept": cross_dept,
         "program": p.program if p else "", "amount": p.amount if p else "",
         "submitted_at": p.submitted_at if p else "",
+        "project_entity_uid": p.project_entity_uid if p else None,
+        "project_title": project_title or "",
         "responsibles": resp_names,
+        "executors": execs,
+        "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
         "can_share": access.can_manage_sharing(perm),

@@ -15,7 +15,8 @@ from app.core import access, entity_service, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, Entity, EntityKind, EntityShare, Permission, StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
+    StatusSet, User,
 )
 from app.models.module_payloads import ScholarPayload
 from app.ui import render_page
@@ -41,14 +42,23 @@ class ScholIn(BaseModel):
     description: str | None = ""
     department_id: int | None = None
     responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []        # исполнители (может быть несколько, как в прототипе)
+    project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> ScholarPayload | None:
     return await session.scalar(select(ScholarPayload).where(ScholarPayload.entity_id == ent_id))
 
 
+def _executors(ent: Entity) -> list[dict]:
+    """Список исполнителей [{id,name}] из денормализованного extra_json."""
+    return (ent.extra_json or {}).get("executors") or []
+
+
 def _schol_dict(ent: Entity, p: ScholarPayload | None, perm: Permission | None,
-                resp_names: list[str], cross_dept: bool = False) -> dict:
+                resp_names: list[str], cross_dept: bool = False,
+                project_title: str | None = None) -> dict:
+              execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -56,7 +66,11 @@ def _schol_dict(ent: Entity, p: ScholarPayload | None, perm: Permission | None,
         "cross_dept": cross_dept,
         "person_name": p.person_name if p else "", "schol_type": p.schol_type if p else "",
         "amount": p.amount if p else "",
+        "project_entity_uid": p.project_entity_uid if p else None,
+        "project_title": project_title or "",
         "responsibles": resp_names,
+        "executors": execs,
+        "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
         "can_share": access.can_manage_sharing(perm),
@@ -79,6 +93,49 @@ async def _pick_department(session: AsyncSession, user: User, body: ScholIn) -> 
     if not mine:
         raise HTTPException(400, "Вы не состоите ни в одном подразделении")
     return mine[0]
+
+
+async def _visible_projects(session: AsyncSession, ctx: access.AccessContext) -> list[Entity]:
+    """Доступные пользователю проекты (для привязки сущностей модуля)."""
+    ents = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             access.entity_filter(ctx))
+        .options(selectinload(Entity.shares)))).all()
+    out = []
+    for ent in ents:
+        if await access.resolve_permission(session, ctx, ent) is None:
+            continue
+        cross = await _has_shares(session, ent)
+        if not ctx.is_global and not cross \
+                and ent.owner_department_id not in ctx.department_ids:
+            continue
+        out.append(ent)
+    return out
+
+
+async def _project_titles(session: AsyncSession, payloads: list[ScholarPayload | None]) -> dict[str, str]:
+    """uid проекта -> заголовок (для карточек/форм; uid хранится в payload)."""
+    puids = {p.project_entity_uid for p in payloads if p and p.project_entity_uid}
+    if not puids:
+        return {}
+    rows = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.PROJECT,
+                             Entity.uid.in_(puids)))).all()
+    return {e.uid: e.title for e in rows}
+
+
+async def _check_project(session: AsyncSession, ctx: access.AccessContext,
+                         project_uid: str | None) -> None:
+    """Привязка к проекту: сущность проекта должна существовать и быть доступна."""
+    if not project_uid:
+        return
+    parent = await session.scalar(
+        select(Entity).where(Entity.uid == project_uid,
+                             Entity.kind == EntityKind.PROJECT))
+    if not parent:
+        raise HTTPException(404, "Проект не найден")
+    if not await access.resolve_permission(session, ctx, parent):
+        raise HTTPException(403, "Нет доступа к выбранному проекту")
 
 
 # ---------------- HTML ----------------
