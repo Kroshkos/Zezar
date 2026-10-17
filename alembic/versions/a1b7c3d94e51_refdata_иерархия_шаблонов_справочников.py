@@ -92,7 +92,32 @@ def _target_defs(table: str) -> list:
     return [c.copy() for c in Base.metadata.tables[table].columns]
 
 
-def _rebuild(table: str, *, drop_unique_key: bool = False) -> None:
+def _target_constraints(table: str) -> list:
+    """Табличные ограничения целевой схемы модели (PK/UNIQUE/FK) с именами из
+    naming convention — ровно те, что создаёт create_all, поэтому следующие
+    `--autogenerate` ревизии не будут пересоздавать таблицу."""
+    import app.models.core  # noqa: F401
+    from app.db.base import Base
+    out = []
+    for c in Base.metadata.tables[table].constraints:
+        if isinstance(c, sa.PrimaryKeyConstraint):
+            out.append(sa.PrimaryKeyConstraint(*[col.name for col in c.columns],
+                                               name=c.name))
+        elif isinstance(c, sa.UniqueConstraint):
+            out.append(sa.UniqueConstraint(*[col.name for col in c.columns],
+                                           name=c.name))
+        elif isinstance(c, sa.ForeignKeyConstraint):
+            cols = [col.name for col in c.columns]
+            rt = list(c.elements)[0]._table_name
+            rc = [fk.column.name for fk in c.elements]
+            out.append(sa.ForeignKeyConstraint(cols, [f"{rt}.{n}" for n in rc],
+                                               name=c.name,
+                                               ondelete=c.ondelete,
+                                               onupdate=c.onupdate))
+    return out
+
+
+def _rebuild(table: str) -> None:
     """Полное приведение таблицы к целевой схеме модели (move-and-copy).
 
     Механика Alembic batch с copy_from=<целевая таблица>: временная таблица
@@ -103,8 +128,9 @@ def _rebuild(table: str, *, drop_unique_key: bool = False) -> None:
     колонки иерархии добавляем отдельным простым ALTER ADD COLUMN ДО
     пересоздания; после recreate целевые FK/UNIQUE уже на месте.
 
-    drop_unique_key: legacy UNIQUE(key) у priority_levels не переносится в
-    целевую схему (скоуп-уникальность — уникальный индекс на шаге 3 upgrade).
+    legacy UNIQUE(key) у priority_levels в целевую схему НЕ переносится:
+    скоуп-уникальность (key, department_id) объявлена в модели ядра и входит
+    в copy_from вместе с FK.
     """
     cur_cols = _cols(table)
     add_cols = []
@@ -115,6 +141,13 @@ def _rebuild(table: str, *, drop_unique_key: bool = False) -> None:
     if "is_active" not in cur_cols:
         add_cols.append(sa.Column("is_active", sa.Boolean(), nullable=False,
                                   server_default=sa.true()))
+    # legacy create_all-БД могут не иметь и других колонок целевой модели
+    # (например wf_templates.kind_scope) — пересоздание с copy_from делает
+    # INSERT..SELECT по ВСЕМ колонкам целевой схемы, поэтому досоздаём всё
+    # недостающее из модели до recreate.
+    target_colnames = {c.name for c in _target_defs(table)}
+    for name in sorted(target_colnames - cur_cols - {c.name for c in add_cols}):
+        add_cols.append(sa.Column(name, sa.String(length=50), nullable=True))
     if add_cols:
         # plain ALTER (batch без recreate='always' выполняет их напрямую)
         with op.batch_alter_table(table) as batch:
@@ -123,22 +156,65 @@ def _rebuild(table: str, *, drop_unique_key: bool = False) -> None:
         cur_cols |= {c.name for c in add_cols}
 
     cols = _target_defs(table)
-    constraints: list = []
-    if table == "status_sets":
-        constraints.append(sa.UniqueConstraint("kind", "key", "department_id",
-                                               name="uq_status_sets_kind"))
+    # Целевая схема = ровно метаданные моделей ядра. В режиме copy_from Alembic
+    # переносит в tmp-таблицу только ограничения, которые нашёл у переданной
+    # copy_from-таблицы; отдельно собранный sa.Table без них терял FK (дефект
+    # третьей редакции: status_sets осталась вообще без department_id FK).
+    # Поэтому собираем target С ОГРАНИЧЕНИЯМИ модели (PK/UNIQUE/FK с именами из
+    # naming convention — те же, что создаёт create_all, чтобы следующие
+    # `--autogenerate` ревизии не «пересоздавали» таблицы из-за имён).
+    constraints = _target_constraints(table)
+    if table == "priority_levels":
+        # legacy UNIQUE(key) несовместим с иерархией (один key глобально + в
+        # подразделениях); целевой скоуп-UNIQUE (key, department_id) объявлен в
+        # модели. Перед снятием старого ограничения чистим коллизии по целевому
+        # ключу, иначе CREATE нового UNIQUE упадёт на существующих данных.
+        bind = op.get_bind()
+        dups = bind.exec_driver_sql(
+            "SELECT key, COALESCE(department_id, -1) AS dep, COUNT(*) "
+            "FROM priority_levels GROUP BY key, dep HAVING COUNT(*) > 1"
+        ).fetchall()
+        for key, _dep, _n in dups:
+            bind.exec_driver_sql(
+                "DELETE FROM priority_levels WHERE key = ? AND id NOT IN ("
+                "SELECT MIN(id) FROM priority_levels WHERE key = ?)",
+                (key, key))
     target = sa.Table(table, sa.MetaData(), *cols, *constraints)
     with op.batch_alter_table(table, recreate="always", copy_from=target):
         pass
+    # Пересобранная таблица обязана иметь честные FK (защита от тихой потери
+    # ограничений в batch-режиме и от self-FK дефекта прошлых редакций).
+    fkmap = _fk_map(table)
+    if fkmap.get(("department_id",)) != ("departments", ("id",)):
+        raise RuntimeError(
+            f"MIGRATION BUG: {table}.department_id FK отсутствует/битый: {fkmap}")
+    if fkmap.get(("source_global_id",)) != (table, ("id",)):
+        raise RuntimeError(
+            f"MIGRATION BUG: {table}.source_global_id self-FK отсутствует: {fkmap}")
 
 
 def _ensure_columns(table: str) -> None:
     """Приводит таблицу справочника к целевой схеме модели: недостающие
-    колонки иерархии + корректные FK (+ снятие legacy UNIQUE(key))."""
+    колонки иерархии + корректные FK (+ снятие legacy UNIQUE(key)).
+
+    ИСПРАВЛЕНИЕ ДЕФЕКТА ВТОРОЙ РЕДАКЦИИ: в legacy-БД (create_all до ревизии)
+    таблица priority_levels уже содержала колонку key с табличным
+    UNIQUE(uq_priority_levels_key), но колонки department_id/source_global_id
+    отсутствовали. Прежняя логика считала fk_ok=True (FK на department_id
+    просто не существовал — сравнение fks.get(...) == (...) не выполнялось для
+    отсутствующей колонки «как будто всё ок»), попадала в ветку add-column без
+    пересоздания — и UNIQUE(key) оставался в DDL таблицы, мешая хранить
+    одинаковый key глобально и в подразделении. Теперь наличие колонок
+    иерархии обязательно для fk_ok: если их нет — таблица пересобирается
+    полностью, что заодно снимает legacy UNIQUE (в целевую схему он не входит).
+    """
+    cols = _cols(table)
+    has_hierarchy_cols = {"department_id", "source_global_id",
+                          "is_active"} <= cols
     fks = _fk_map(table)
-    fk_ok = (fks.get(("department_id",)) == ("departments", ("id",))
-             and (("source_global_id",) not in _cols(table)
-                  or fks.get(("source_global_id",)) == (table, ("id",))))
+    fk_ok = (has_hierarchy_cols
+             and fks.get(("department_id",)) == ("departments", ("id",))
+             and fks.get(("source_global_id",)) == (table, ("id",)))
     need_uniq_drop = (table == "priority_levels"
                       and "uq_priority_levels_key" in _uq_names(table))
 
@@ -229,10 +305,32 @@ def upgrade() -> None:
         if "ix_priority_levels_key" in idx:
             with op.batch_alter_table("priority_levels") as batch:
                 batch.drop_index("ix_priority_levels_key")
-        if "uq_priority_levels_key_department_id" not in idx:
+        # Скоуп-уникальность для записей подразделений (key, department_id):
+        # в SQLite табличный UNIQUE с NULL не защищает от дублей глобальных
+        # шаблонов — для них контроль дублей выполняет сервис app/core/refdata.py.
+        if "uq_priority_levels_key_department_id" in idx:
+            op.drop_index("uq_priority_levels_key_department_id",
+                          table_name="priority_levels")
+            idx.discard("uq_priority_levels_key_department_id")
+        if "uq_priority_levels_scope_dept" not in idx:
+            bind = op.get_bind()
+            # защита от уже существующих дублей в legacy-данных
+            dups = bind.exec_driver_sql(
+                "SELECT key, department_id, COUNT(*) FROM priority_levels "
+                "WHERE department_id IS NOT NULL "
+                "GROUP BY key, department_id HAVING COUNT(*) > 1").fetchall()
+            for key, dep_id, _n in dups:
+                bind.exec_driver_sql(
+                    "DELETE FROM priority_levels WHERE department_id IS NOT ? "
+                    "AND key = ? AND id NOT IN ("
+                    "SELECT MIN(id) FROM priority_levels "
+                    "WHERE department_id IS NOT ? AND key = ?)",
+                    (dep_id, key, dep_id, key))
             op.create_index(
-                "uq_priority_levels_key_department_id", "priority_levels",
-                ["key", "department_id"], unique=True)
+                "uq_priority_levels_scope_dept", "priority_levels",
+                ["key", "department_id"], unique=True,
+                postgresql_where=sa.text("department_id IS NOT NULL"),
+                sqlite_where=sa.text("department_id IS NOT NULL"))
 
     # ---------- 4. Индексы для выборок по подразделениям --------------------
     for table in ("status_sets", "priority_levels", "ref_types",
@@ -256,11 +354,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Данные справочников не восстанавливаются: возвращаем только структуру.
     if "priority_levels" in _tables():
-        try:
-            op.drop_index("uq_priority_levels_key_department_id",
-                          table_name="priority_levels")
-        except Exception:
-            pass
+        for idx_name in ("uq_priority_levels_scope_dept",
+                         "uq_priority_levels_key_department_id"):
+            try:
+                op.drop_index(idx_name, table_name="priority_levels")
+            except Exception:
+                pass
         existing = sa.Table("priority_levels", sa.MetaData(),
                             autoload_with=op.get_bind())
         with op.batch_alter_table("priority_levels", recreate="always",
