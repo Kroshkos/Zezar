@@ -284,7 +284,7 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
         wf_templates=[{"id": t.id, "name": t.name, "steps": t.steps or []} for t in wf_templates],
-        departments=depts, people=people, grants=grants, indicators=indicators,
+        departments=depts, people=people, me=user.id, grants=grants, indicators=indicators,
     )
 
 

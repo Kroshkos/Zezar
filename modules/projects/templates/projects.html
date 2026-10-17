@@ -19,7 +19,8 @@
 
 <script id="projData" type="application/json">
 {{ {'projects': projects, 'statuses': statuses, 'priorities': priorities,
-    'departments': departments, 'people': people} | tojson }}
+    'departments': departments, 'people': people, 'me': me,
+    'wf_templates': wf_templates, 'grants': grants, 'indicators': indicators} | tojson }}
 </script>
 {% endblock %}
 

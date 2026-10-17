@@ -46,14 +46,26 @@ def upgrade() -> None:
     for name, typ in _ADD_COLUMNS:
         if name not in cols:
             op.add_column("project_payloads", sa.Column(name, typ, nullable=True))
-    # leader_user_id: INTEGER + FK users.id (ON DELETE SET NULL)
+    # leader_user_id: INTEGER + FK users.id (ON DELETE SET NULL).
+    # ВАЖНО: в SQLite ALTER TABLE ADD CONSTRAINT не поддерживается, поэтому FK
+    # добавляется через batch-режим (copy-and-move) — ровно как исправленная
+    # ревизия a1b7c3d94e51. Plain op.create_foreign_key падает с
+    # NotImplementedError либо тихо игнорируется и теряет данные таблицы.
+    has_fk = lambda: any(
+        (fk["name"] or "") == "fk_project_payloads_leader_user_id"
+        or (fk["referred_table"] == "users" and "leader_user_id" in fk["constrained_columns"])
+        for fk in _insp().get_foreign_keys("project_payloads")
+    )
     if "leader_user_id" not in cols:
         op.add_column("project_payloads", sa.Column(
             "leader_user_id", sa.Integer(), nullable=True))
-        fk_names = {fk["name"] or "" for fk in _insp().get_foreign_keys("project_payloads")}
-        if "fk_project_payloads_leader_user_id" not in fk_names:
-            op.create_foreign_key(
-                "fk_project_payloads_leader_user_id", "project_payloads", "users",
+    if not has_fk():
+        with op.batch_alter_table(
+            "project_payloads",
+            naming_convention={"fk": "fk_project_payloads_leader_user_id"},
+        ) as batch:
+            batch.create_foreign_key(
+                "fk_project_payloads_leader_user_id", "users",
                 ["leader_user_id"], ["id"], ondelete="SET NULL")
     for name in _UID_COLUMNS:
         if name not in cols:
