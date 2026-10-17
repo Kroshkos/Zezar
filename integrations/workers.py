@@ -51,7 +51,7 @@ async def _outbox_once() -> None:
             try:
                 if ev.topic == "telegram.notify":
                     await _handle_tg_notify(session, ev.payload_json or {})
-                elif ev.topic == "telegram.due":
+                elif ev.topic in ("telegram.due", "telegram.overdue"):
                     await _handle_tg_due(session, ev.payload_json or {})
                 elif ev.topic == "telegram.manual":
                     await _handle_tg_manual(session, ev.payload_json or {})

@@ -22,8 +22,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
     Entity, EntityKind, NotifyScenario, Notification, OutboxEvent,
-    User, UserNotifyPref,
+    StatusSet, User, UserNotifyPref,
 )
+
+# Ключи «завершающих» статусов по видам сущностей (см. seed: TASK_STATUSES /
+# PROJECT_STATUSES и т.д.). Использовать == "done" для всех kinds нельзя:
+# у совещаний финальный статус — "held", у документов — "signed"/"archived".
+TERMINAL_STATUS_KEYS: dict[str, set[str]] = {
+    "task": {"done", "canceled"},
+    "project": {"done", "canceled"},
+    "meeting": {"held", "canceled"},
+    "doc": {"signed", "archived", "canceled"},
+}
+
+
+def terminal_keys_for(kind: str) -> set[str]:
+    """Ключи завершающих статусов вида: детерминированный набор + любые
+    status_sets этого kind с цветом b-green (пользовательские справочники)."""
+    keys = set(TERMINAL_STATUS_KEYS.get(kind, set()))
+    keys.add("done")  # историческая совместимость
+    return keys
+
+
+async def terminal_status_keys(session, kind: str) -> set[str]:
+    """Эффективные завершающие статусы вида с учётом пользовательских
+    справочников подразделений (color=b-green ⇒ финальный успешный статус)."""
+    keys = terminal_keys_for(kind)
+    rows = (await session.execute(
+        select(StatusSet.key).where(StatusSet.kind == kind,
+                                    StatusSet.color == "b-green"))).all()
+    return keys | {r[0] for r in rows}
 
 log = logging.getLogger("caesar.notify")
 
@@ -261,12 +289,19 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
-    #росроченные (overdue): срок < сегодня, статус не «выполнено» — раз в window_days
+    # просроченные (overdue): срок < сегодня, статус не «завершающий» — раз в window_days.
+    # ВАЖНО: сравнение только с "done" ошибочно помечало бы просроченными снятые
+    # задачи/остановленные проекты и не учитывало пользовательские статусы.
+    terminal_task = await terminal_status_keys(session, "task")
+    terminal_project = await terminal_status_keys(session, "project")
     overdue_rows = (await session.scalars(
         select(Entity).where(Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
                              Entity.due_date.is_not(None),
-                             Entity.due_date < lo,
-                             Entity.status_key != "done"))).all()
+                             Entity.due_date < lo))).all()
+    overdue_rows = [e for e in overdue_rows
+                    if (e.status_key or "") not in
+                    (terminal_task if str(getattr(e.kind, "value", e.kind)) == "task"
+                     else terminal_project)]
     ohorizon = utcnow_naive() - timedelta(days=window_days)
     for ent in overdue_rows:
         dup = await session.scalar(
