@@ -186,9 +186,16 @@ async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> t
     dept_ids = (await session.scalars(
         select(DepartmentMember.department_id).where(DepartmentMember.user_id == user.id)
         .order_by(DepartmentMember.id))).all()
-    if body.department_id:
+    if body.department_id is not None:
+        if body.department_id <= 0:
+            raise HTTPException(422, f"Некорректный department_id: {body.department_id}")
         if user.role not in (Role.ADMIN, Role.COORDINATOR):
             raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
+        # проверка существования ДО записи: несуществующий dept_id иначе давал
+        # sqlite3.IntegrityError: FOREIGN KEY constraint failed на flush()
+        from app.models.core import Department
+        if not await session.get(Department, body.department_id):
+            raise HTTPException(422, f"Подразделение не найдено: id={body.department_id}")
         return body.department_id, list(dept_ids)
     # НЕ используем ленивую связь user.memberships (lazy-load в async недопустим) —
     # только явный SELECT; иначе MissingGreenlet / неопределённое первое подразделение
