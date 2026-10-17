@@ -3,15 +3,23 @@
    код проекта, руководитель (из участников подразделения), даты начала/окончания,
    связанный грант, показатель Приоритет-2030, маршрут (workflow) — шаблон или индивидуальный;
    для каждого этапа маршрута создаётся автозадача (ответвления и условия — на холсте маршрута).
-   Поле «бюджет/источник» удалено по ТЗ. */
-"use strict";
-const PRJ = JSON.parse(document.getElementById('projData').textContent);
-const PS = new Set();
-const pstOf = k => PRJ.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
-const prioOf = k => PRJ.priorities.find(p=>p.key===k)||{label:k||'—',color:'b-gray'};
-const pfmt = d => d ? d.split('-').reverse().join('.') : '—';
+   Поле «бюджет/источник» удалено по ТЗ.
 
-function tglP(el){const k=el.dataset.k;
+   ВАЖНО (фикс кнопки «＋ Проект»): имена верхнего уровня объявляются через window.*,
+   а не const/function. На странице проектов вместе с projects.js загружается profile.js,
+   в котором есть const pfmt; дубликат let/const-объявления в одном глобальном лексическом
+   окружении вызывает SyntaxError ("Identifier 'pfmt' has already been declared") — весь
+   projects.js не исполняется, projFormModal остаётся неопределённой и кнопка «＋ Проект»
+   молча не работает (onclick выбрасывает ReferenceError). window-свойства таких конфликтов
+   не боятся. */
+"use strict";
+window.PRJ = JSON.parse(document.getElementById('projData').textContent);
+window.PS = new Set();
+window.pstOf = k => PRJ.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
+window.prioOf = k => PRJ.priorities.find(p=>p.key===k)||{label:k||'—',color:'b-gray'};
+window.pfmt = d => d ? String(d).split('-').reverse().join('.') : '—';
+
+window.tglP = function(el){const k=el.dataset.k;
   if(PS.has(k)){PS.delete(k);el.style.outline=''}else{PS.add(k);el.style.outline='2px solid #818cf8'}
   renderProjCards();}
 
@@ -71,8 +79,10 @@ function stageRow(s){
 }
 function addStage(){document.getElementById('pstagebox').insertAdjacentHTML('beforeend',stageRow({}));}
 
-/* ---------- Холст маршрута (упрощённая версия wfCanvasHTML из прототипа) ---------- */
-function wfCanvasHTML(p){
+/* ---------- Холст маршрута (упрощённая версия wfCanvasHTML из прототипа) ----------
+   !important: в profile.js уже есть функция wfCanvasHTML — объявление через window.*,
+   чтобы не перекрывать её и не зависеть от порядка загрузки скриптов. */
+window.wfCanvasHTML = function(p){
   const st=p.stages||[];
   if(!st.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте этапы при редактировании.</div>';
   const STEP={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Готово','b-green'],rejected:['Отклонён','b-red']};
