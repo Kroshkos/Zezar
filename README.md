@@ -104,7 +104,17 @@ PYTHONPATH=. python scripts/e2e_test.py
 | **Amvera** (облачный PaaS) | `amvera.yaml` (окружение `python`/toolchain `pip`) | сборка через venv+pip по `requirements.txt`; ASGI-запуск uvicorn на порту 8080 (`containerPort`); стандартный путь БД `/data/caesar.db` — постоянное хранилище монтируется в `/data` параметром `run.persistenceMount` (по доке [Хранилище и пути](https://docs.amvera.ru/applications/storage.html)). `Dockerfile` — для self-hosted. Инструкция — DEPLOY.md, п. 10 |
 | **Self-hosted VPS** | `docker-compose.yml` + `Dockerfile` | свой nginx/TLS, volume `caesar-data:/data` |
 
-Инструкция для конечных пользователей: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
+## Инструкции по ролям
+
+| Аудитория | Документ |
+|---|---|
+| Пользователь (участник) | [docs/INSTRUCTION_USER.md](docs/INSTRUCTION_USER.md) |
+| Руководитель подразделения (Head) | [docs/INSTRUCTION_HEAD.md](docs/INSTRUCTION_HEAD.md) |
+| Координатор | [docs/INSTRUCTION_COORDINATOR.md](docs/INSTRUCTION_COORDINATOR.md) |
+| Администратор | [docs/INSTRUCTION_ADMIN.md](docs/INSTRUCTION_ADMIN.md) |
+| Технические специалисты (dev/devops/support) | [docs/INSTRUCTION_TECH.md](docs/INSTRUCTION_TECH.md) |
+
+Полное руководство пользователя: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
 ## Безопасность
 

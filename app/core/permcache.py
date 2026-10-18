@@ -44,10 +44,18 @@ def set_local_epoch(value: float) -> None:
     _local_epoch["at"] = time.monotonic()
 
 
-async def get_epoch(session: AsyncSession) -> int:
-    """Текущая эпоха ACL (monotonic counter). 0 — никогда не инвалидировалось."""
+async def get_epoch(session: AsyncSession, *, force: bool = False) -> int:
+    """Текущая эпоха ACL (monotonic counter). 0 — никогда не инвалидировалось.
+
+    ``force=True`` — всегда читать из БД, минуя локальный TTL-mirror. Нужно для
+    мест, где устаревшее значение порождает видимый дефект UI: перевыпуск
+    session-cookie после мутации прав (attach_fresh_session_cookie) и ответ
+    самой мутации. Без этого открытый в другом воркере cookie с «протухшим»
+    epoch мог молча переживать перезагрузку страницы (роль в пространстве
+    отображалась старая, хотя права уже обновились).
+    """
     now = time.monotonic()
-    if now - _local_epoch["at"] > _TTL:
+    if force or now - _local_epoch["at"] > _TTL:
         from app.models.core import AclState  # лениво: cycle-safe
         val = await session.scalar(
             select(AclState.value).where(AclState.key == EPOCH_KEY))
