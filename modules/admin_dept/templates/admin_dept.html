@@ -156,7 +156,7 @@
       {% for m in members[:8] %}
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
         <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}</span>
-        <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
       </div>
       {% endfor %}
       {% if not members %}<p class="muted">Участников нет — добавьте на вкладке «Участники».</p>{% endif %}
@@ -202,7 +202,7 @@
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
         <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}
           {% if m.department %}<div class="muted" style="font-size:11px">{{ m.department }}</div>{% endif %}</span>
-        <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
       </div>
       {% endfor %}
       {% if not ov_members %}<p class="muted">Учётных записей нет.</p>{% endif %}
@@ -244,18 +244,18 @@
         <tr data-uid="{{ m.user_id }}">
           <td><b>{{ m.name }}</b></td>
           <td class="muted">{{ m.email }}</td>
-          <td class="muted">{{ {'ADMIN':'Администратор','COORDINATOR':'Координатор','HEAD':'Руководитель','MEMBER':'Участник'}.get(m.global_role, m.global_role) }}</td>
+          <td class="muted">{{ {'admin':'Администратор','coordinator':'Координатор','head':'Руководитель','member':'Участник'}.get(m.global_role, m.global_role) }}</td>
           <td>
-            {% if can_manage and m.global_role != 'ADMIN' %}
+            {% if can_manage and m.global_role != 'admin' %}
             <select class="roleSel" style="padding:4px 8px">
-              <option value="member" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
-              <option value="head"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
+              <option value="member" {% if m.dept_role=='member' %}selected{% endif %}>Участник</option>
+              <option value="head"   {% if m.dept_role=='head' %}selected{% endif %}>Руководитель</option>
             </select>
-            {% elif can_manage and m.dept_role=='HEAD' %}
+            {% elif can_manage and m.dept_role=='head' %}
             <span class="badge b-purple">Руководитель</span>
             {% else %}
-            <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">
-              {{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+            <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">
+              {{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
             {% endif %}
           </td>
           <td>{{ '✅' if m.tg_bound else '—' }}</td>
@@ -688,13 +688,21 @@ async function removeMember(userId,btn){
 document.querySelectorAll('.roleSel').forEach(sel=>{
   sel.addEventListener('change',async()=>{
     const uid=+sel.closest('tr').dataset.uid;
+    const prev=sel.dataset.prev||sel.value;
     try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value});
-      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch — перечитываем
-      // страницу, чтобы badge/скрытые панели/кнопки соответствовали НОВЫМ правам
-      // (в т.ч. самого пользователя, если меняет роль себе).
+      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch (и перевыпустил
+      // cookie в этом же ответе) — перечитываем страницу, чтобы badge/скрытые
+      // панели/кнопки соответствовали НОВЫМ правам (в т.ч. самого пользователя,
+      // если меняет роль себе).
       toast('Роль обновлена'); setTimeout(()=>location.reload(),500); }
-    catch(e){ location.reload(); }  // откат UI к фактическому состоянию (напр. 409)
+    catch(e){
+      // Мутацию отклонили (напр. 409 «в подразделении должен остаться хотя бы
+      // один руководитель») — возвращаем селект к фактическому состоянию и
+      // перезагружаем страницу; текст ошибки уже показан toast'ом из api().
+      sel.value=prev; toast('Роль не изменена: '+((e&&e.message)||'запрещено'),true);
+      setTimeout(()=>location.reload(),600); }
   });
+  sel.dataset.prev=sel.value;
 });
 
 /* ---------------- шеринг: отзыв / отказ / изменение прав ---------------- */

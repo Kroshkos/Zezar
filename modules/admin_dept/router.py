@@ -162,7 +162,7 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
                 "name": u.display_name, "login": u.login,
                 "email": u.email or "",
                 "global_role": u.role.value,
-                "dept_role": "HEAD" if u.id in head_ids else "MEMBER",
+                "dept_role": Role.HEAD.value if u.id in head_ids else Role.MEMBER.value,
                 "department": dept_of_user.get(u.id, ""),
             } for u in sorted(all_users, key=lambda x: x.display_name)[:8]]
             ev_items, ev_total = await read_events(session, limit=8, offset=0)

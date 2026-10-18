@@ -165,7 +165,10 @@ async def attach_fresh_session_cookie(request: Request, response) -> None:
         from app.core.permcache import get_epoch
         from app.db.engine import SessionLocal
         async with SessionLocal() as s:
-            epoch = await get_epoch(s)
+            # force=True: перевыпуск куки не должен опираться на TTL-mirror —
+            # иначе после смены роли в другом воркере cookie переживает
+            # перезагрузку со старым epoch и страница рендерит устаревшие права.
+            epoch = await get_epoch(s, force=True)
         response.set_cookie(
             SESSION_COOKIE, create_session_token({"uid": uid, "acl_epoch": epoch}),
             httponly=True, samesite="lax", max_age=86400 * 14,
