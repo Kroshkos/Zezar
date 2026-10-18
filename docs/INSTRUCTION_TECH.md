@@ -101,7 +101,7 @@ PYTHONPATH=. python scripts/e2e_test.py
 
 Бэкап = копия `/data/caesar.db` (sqlite3 `.backup` или hot-copy при low-write).
 
-## 8. Диагностика частих проблем
+## 8. Диагностика частых проблем
 
 | Симптом | Где смотреть |
 |---|---|
