@@ -106,13 +106,19 @@ PYTHONPATH=. python scripts/e2e_test.py
 
 ## Инструкции по ролям
 
-| Аудитория | Документ |
-|---|---|
-| Пользователь (участник) | [docs/INSTRUCTION_USER.md](docs/INSTRUCTION_USER.md) |
-| Руководитель подразделения (Head) | [docs/INSTRUCTION_HEAD.md](docs/INSTRUCTION_HEAD.md) |
-| Координатор | [docs/INSTRUCTION_COORDINATOR.md](docs/INSTRUCTION_COORDINATOR.md) |
-| Администратор | [docs/INSTRUCTION_ADMIN.md](docs/INSTRUCTION_ADMIN.md) |
-| Технические специалисты (dev/devops/support) | [docs/INSTRUCTION_TECH.md](docs/INSTRUCTION_TECH.md) |
+| Аудитория | Документ | Ключевые темы |
+|---|---|---|
+| Пользователь (участник, MEMBER) | [docs/INSTRUCTION_USER.md](docs/INSTRUCTION_USER.md) | вход через Яндекс ID, свои карточки и статусы, ответственные, Telegram/Календарь, частые ситуации |
+| Руководитель подразделения (HEAD) | [docs/INSTRUCTION_HEAD.md](docs/INSTRUCTION_HEAD.md) | создание задач/проектов в своих пространствах, администрирование подразделения, роли участников (повышение/понижение), шеринг, контроль потока |
+| Координатор (COORDINATOR) | [docs/INSTRUCTION_COORDINATOR.md](docs/INSTRUCTION_COORDINATOR.md) | агрегированный дашборд, работа в любом пространстве, помощь руководителям, инварианты системы |
+| Администратор (ADMIN) | [docs/INSTRUCTION_ADMIN.md](docs/INSTRUCTION_ADMIN.md) | общая админка `/admin`: пользователи и глобальные роли, подразделения, приглашения, аудит, безопасность |
+| Технические специалисты (dev/devops/support) | [docs/INSTRUCTION_TECH.md](docs/INSTRUCTION_TECH.md) | сборка и запуск, миграции Alembic, тесты, RBAC-модель и кэш прав (`permcache`), диагностика типовых проблем |
+
+Все инструкции учитывают актуальное поведение системы:
+руководитель может создавать сущности в любом пространстве, где он состоит
+(явный выбор своего пространства разрешён); роль в пространстве применяется
+немедленно (перевыпуск cookie с новым `acl_epoch`); понижение последнего
+руководителя запрещено и сопровождается понятным сообщением в интерфейсе.
 
 Полное руководство пользователя: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
