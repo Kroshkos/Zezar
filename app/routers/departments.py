@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -176,7 +176,8 @@ class MemberIn(BaseModel):
 
 
 @router.post("/departments/{dept_id}/members")
-async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_current_user),
+async def add_member(dept_id: int, body: MemberIn, response: Response,
+                     user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     """Админ/координатор назначает любую роль; Head — только роль MEMBER внутри
     своего пространства. Вся целостность (инвариант HEAD, синхронизация
@@ -212,6 +213,19 @@ async def add_member(dept_id: int, body: MemberIn, user: User = Depends(get_curr
                     message=f"Пользователь '{target_name}' — "
                             f"подразделение '{dept_name}': {action_desc}")
     await session.commit()
+    # Принудительный перевыпуск session-cookie с АКТУАЛЬНЫМ acl_epoch прямо в
+    # ответе мутации. Без этого при TTL-mirror эпохи (или мультипроцессных
+    # воркерах) перезагрузка страницы после смены роли могла отрендериться по
+    # устаревшему epoch из cookie — роль в пространстве отображалась старой,
+    # хотя права уже поменялись. force=True читает epoch из БД, минуя mirror.
+    from app.core.permcache import get_epoch as _get_epoch
+    from app.core.security import SESSION_COOKIE, create_session_token
+    from app.core.config import get_settings
+    response.set_cookie(
+        SESSION_COOKIE,
+        create_session_token({"uid": user.id, "acl_epoch": await _get_epoch(session, force=True)}),
+        httponly=True, samesite="lax", max_age=86400 * 14,
+        secure=get_settings().session_cookie_secure)
     return {"ok": True}
 
 

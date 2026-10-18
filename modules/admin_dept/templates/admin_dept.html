@@ -63,7 +63,9 @@
   {% if is_admin_global %}
   <button class="adm-tab" data-tab="departments" onclick="showTab('departments')">🏢 Подразделения <span class="sub" id="tabCntDepts">{{ departments|length }}</span></button>
   {% endif %}
+  {% if department or global_mode %}
   <button class="adm-tab" data-tab="overview" onclick="showTab('overview')">📋 Обзор</button>
+  {% endif %}
   {% if department %}
   <button class="adm-tab" data-tab="members" onclick="showTab('members')">👥 Участники <span class="sub" id="tabCntMembers">{{ members|length }}</span></button>
   {% endif %}
@@ -154,7 +156,7 @@
       {% for m in members[:8] %}
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
         <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}</span>
-        <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
       </div>
       {% endfor %}
       {% if not members %}<p class="muted">Участников нет — добавьте на вкладке «Участники».</p>{% endif %}
@@ -174,6 +176,50 @@
         <div style="font-size:13px;padding:4px 0;border-bottom:1px solid #eef2f8">{{ s.title }} <span class="muted">→ {{ s.to_dept or s.from_dept }}</span></div>
         {% endfor %}
       {% else %}<p class="muted">Шерингов нет.</p>{% endif %}
+    </div>
+  </div>
+</section>
+{% elif global_mode %}
+{# Режим «Вся система»: серверный обзор всей системы — KPI, последние
+   участники и события загружаются сразу, без выбора подразделения. #}
+<section class="adm-pane" id="pane-overview">
+  <div class="card pad" style="margin-bottom:14px;padding:10px 14px;background:#eef4ff;border:1px solid #cddcff">
+    Активен режим <b>🌐 Вся система</b>
+    <span class="muted"> — данные агрегируются по всем пространствам. Для управления одним пространством выберите его в шапке.</span>
+  </div>
+  <div class="adm-kpi">
+    <div class="k"><b>{{ kpis.users }}</b><span>учётных записей</span></div>
+    <div class="k"><b>{{ kpis.depts }}</b><span>подразделений</span></div>
+    <div class="k"><b>{{ kpis.heads }}</b><span>руководителей</span></div>
+    <div class="k"><b>{{ kpis.entities }}</b><span>сущностей в системе</span></div>
+    <div class="k"><b>{{ kpis.shares }}</b><span>шерингов</span></div>
+    <div class="k"><b>{{ kpis.modules }}</b><span>модулей включено</span></div>
+  </div>
+  <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">🪪 Последние учётные записи</h3>
+      {% for m in ov_members %}
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eef2f8;font-size:13px">
+        <span>{{ m.name }}{% if m.email %} <span class="muted">· {{ m.email }}</span>{% endif %}
+          {% if m.department %}<div class="muted" style="font-size:11px">{{ m.department }}</div>{% endif %}</span>
+        <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">{{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
+      </div>
+      {% endfor %}
+      {% if not ov_members %}<p class="muted">Учётных записей нет.</p>{% endif %}
+      <button class="btn sm" style="margin-top:10px" onclick="showTab('users')">Все учётные записи →</button>
+    </div>
+    <div class="card pad">
+      <h3 style="margin:0 0 10px">📜 Последние события системы</h3>
+      {% for e in ov_events.items %}
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef2f8;font-size:12px">
+        <span><span class="badge {{ 'b-red' if e.level=='error' else ('b-amber' if e.level=='warning' else 'b-blue') }}">{{ e.action }}</span>
+          {{ e.object or '' }} <span class="muted">{{ e.message or '' }}</span></span>
+        <span class="muted" style="white-space:nowrap">{{ (e.at or '').replace('T',' ').replace('Z','') }}</span>
+      </div>
+      {% endfor %}
+      {% if not ov_events.items %}<p class="muted">Событий нет.</p>{% endif %}
+      <p class="muted" style="font-size:12px;margin-top:8px">Всего в журнале: {{ ov_events.total }} · вкладка «Журнал» — полный список с поиском.</p>
+      <button class="btn sm" style="margin-top:6px" onclick="showTab('events')">Открыть журнал →</button>
     </div>
   </div>
 </section>
@@ -198,18 +244,18 @@
         <tr data-uid="{{ m.user_id }}">
           <td><b>{{ m.name }}</b></td>
           <td class="muted">{{ m.email }}</td>
-          <td class="muted">{{ {'ADMIN':'Администратор','COORDINATOR':'Координатор','HEAD':'Руководитель','MEMBER':'Участник'}.get(m.global_role, m.global_role) }}</td>
+          <td class="muted">{{ {'admin':'Администратор','coordinator':'Координатор','head':'Руководитель','member':'Участник'}.get(m.global_role, m.global_role) }}</td>
           <td>
-            {% if can_manage and m.global_role != 'ADMIN' %}
+            {% if can_manage and m.global_role != 'admin' %}
             <select class="roleSel" style="padding:4px 8px">
-              <option value="member" {% if m.dept_role=='MEMBER' %}selected{% endif %}>Участник</option>
-              <option value="head"   {% if m.dept_role=='HEAD' %}selected{% endif %}>Руководитель</option>
+              <option value="member" {% if m.dept_role=='member' %}selected{% endif %}>Участник</option>
+              <option value="head"   {% if m.dept_role=='head' %}selected{% endif %}>Руководитель</option>
             </select>
-            {% elif can_manage and m.dept_role=='HEAD' %}
+            {% elif can_manage and m.dept_role=='head' %}
             <span class="badge b-purple">Руководитель</span>
             {% else %}
-            <span class="badge {{ 'b-purple' if m.dept_role=='HEAD' else 'b-gray' }}">
-              {{ 'Руководитель' if m.dept_role=='HEAD' else 'Участник' }}</span>
+            <span class="badge {{ 'b-purple' if m.dept_role=='head' else 'b-gray' }}">
+              {{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
             {% endif %}
           </td>
           <td>{{ '✅' if m.tg_bound else '—' }}</td>
@@ -436,6 +482,86 @@
   </div>
 </section>
 {% endif %}
+{% elif is_admin_global %}
+{# Режим «Вся система» (администратор/координатор, department_id=0): глобальные
+   вкладки работают без конкретного пространства. #}
+<section class="adm-pane" id="pane-modules"></section>
+<section class="adm-pane" id="pane-refdata">
+  <div class="card pad"><span class="muted">Загрузка справочников…</span></div>
+</section>
+<section class="adm-pane" id="pane-sharing"></section>
+<section class="adm-pane" id="pane-notify">
+  <div id="ntgStatus" class="card pad" style="margin-bottom:14px"><span class="muted">Проверка конфигурации доставки…</span></div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">🛡 Базовые сценарии уведомлений</h3>
+      <span class="muted">Применимы ко всем пользователям; пользователь не может их отключить</span>
+      <button class="btn sm primary" style="margin-left:auto" onclick="naScenForm()">➕ Создать</button>
+    </div>
+    <div id="nscList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">📄 Шаблоны уведомлений</h3>
+      <span class="muted">Для ручных рассылок; плейсхолдеры {name} {login}</span>
+      <button class="btn sm primary" style="margin-left:auto" onclick="naTplForm()">➕ Создать</button>
+    </div>
+    <div id="ntplList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad" style="margin-bottom:14px">
+    <h3 style="margin:0 0 8px">📣 Рассылка пользователям</h3>
+    <p class="muted" style="margin:0 0 10px">Наименование, содержание, дата/время отправки и аудитория: все, конкретные пользователи, участники подразделения (± руководитель), все руководители. Отправка — фактическая доставка в Telegram через очередь.</p>
+    <form id="bcFrm" style="display:grid;gap:9px;max-width:720px">
+      <label class="sub">Шаблон (подставит название и текст)
+        <select name="template_id" class="adm-inp" onchange="naApplyTpl(this.value)"><option value="">— без шаблона —</option></select></label>
+      <label class="sub">Наименование уведомления<input name="title" class="adm-inp" required maxlength="300"></label>
+      <label class="sub">Содержание<textarea name="body" rows="4" class="adm-inp" required></textarea></label>
+      <label class="sub">Дата и время отправки<input name="send_at" type="datetime-local" class="adm-inp" required></label>
+      <label class="sub">Кому отправить
+        <select name="mode" class="adm-inp" onchange="naAudChange()">
+          <option value="all">Всем пользователям</option>
+          <option value="users">Конкретным пользователям</option>
+          <option value="department">Подразделению (участники + руководитель)</option>
+          <option value="heads">Всем руководителям подразделений</option>
+        </select></label>
+      <div id="bcAudUsers" style="display:none">
+        <label class="sub">Пользователи (Ctrl/Cmd+клик — несколько)<select name="user_ids" multiple size="6" class="adm-inp" id="bcUserSel"></select></label>
+      </div>
+      <div id="bcAudDept" style="display:none">
+        <label class="sub">Подразделение<select name="department_id" class="adm-inp" id="bcDeptSel"></select></label>
+        <label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" name="include_head" checked> включить руководителя подразделения</label>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" type="submit">📨 Отправить</button>
+        <span id="bcPreview" class="muted"></span>
+      </div>
+    </form>
+    <h4 style="margin:16px 0 6px">История рассылок</h4>
+    <div id="bcList" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card pad">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <h3 style="margin:0">🚚 Очередь доставки (Telegram)</h3>
+      <button class="btn sm ghost" style="margin-left:auto" onclick="naLoadOutbox()">⟳ Обновить</button>
+    </div>
+    <div id="ntgOutbox" class="muted">Откройте вкладку для загрузки…</div>
+  </div>
+</section>
+<section class="adm-pane" id="pane-events">
+  <div class="card pad" style="overflow:auto">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+      <h3 style="margin:0">📜 Журнал событий — вся система</h3>
+      <a class="btn sm" href="/admin/events" style="text-decoration:none">⤴ Расширенный журнал (фильтры, статистика)</a>
+    </div>
+    <p class="adm-scope">Все события системы (режим «Вся система»). Для журнала одного пространства выберите подразделение в шапке.</p>
+    <input id="evQ" class="adm-search" placeholder="Поиск по журналу…" oninput="debounceEvents()" style="margin-bottom:10px">
+    <div id="evList" class="muted">Откройте вкладку для загрузки…</div>
+  </div>
+</section>
 {% else %}
 {# Нет активного пространства — заглушки, чтобы JS showTab() не падал #}
 <section class="adm-pane" id="pane-modules"></section>
@@ -453,12 +579,16 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/refdata.js?v=20261018b"></script>
-<script src="/static/js/notify_admin.js?v=20261018b"></script>
+<script src="/static/js/refdata.js?v=20261018c"></script>
+<script src="/static/js/notify_admin.js?v=20261018c"></script>
 <script>
 const ADM = JSON.parse(document.getElementById('admData').textContent);
 const DEPT = ADM.department ? ADM.department.id : null;
 const IS_ADMIN = !!ADM.is_global_admin;
+// refdata.js/notify_admin.js загружаются ДО этого скрипта — пробрасываем им
+// глобалы страницы в window, чтобы их ленивые проверки (typeof IS_ADMIN)
+// видели корректные значения при вызове из showTab().
+window.DEPT = DEPT; window.IS_ADMIN = IS_ADMIN;
 let USERS_CACHE = null;
 /* Подразделения для формы создания УЗ: берём из ADM.departments (активные
    пространства, сервер передаёт их всегда — даже когда подразделений ещё нет,
@@ -468,13 +598,16 @@ let tabState = ADM.default_tab || (DEPT ? 'overview' : 'departments');
 let evTimer = null;
 
 /* ---------------- вкладки ---------------- */
+// Режим «Вся система»: активное пространство не выбрано, но админ/координатор
+// работает глобально (KPI, справочники всех пространств, журнал всей системы).
+const GLOBAL_MODE = !!ADM.global_mode;
 function switchDept(id){ location.href='/admin_dept/?department_id='+id+((typeof tabState!=='undefined'&&tabState!=='overview')?'#'+tabState:''); }
 function showTab(name){
   // вкладки, недоступные текущей роли -> на безопасную
   const pane = document.getElementById('pane-'+name);
-  if(!pane){ name = DEPT ? 'overview' : 'departments'; }
+  if(!pane){ name = (DEPT||GLOBAL_MODE) ? 'overview' : 'departments'; }
   // руководитель без активного пространства не имеет scoped-вкладок
-  if(!DEPT && !IS_ADMIN && name!=='users'){ name='users'; }
+  if(!DEPT && !GLOBAL_MODE && name!=='users'){ name='users'; }
   tabState = name;
   document.querySelectorAll('.adm-tab').forEach(t=>t.classList.toggle('on', t.dataset.tab===name));
   document.querySelectorAll('.adm-pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+name));
@@ -555,13 +688,21 @@ async function removeMember(userId,btn){
 document.querySelectorAll('.roleSel').forEach(sel=>{
   sel.addEventListener('change',async()=>{
     const uid=+sel.closest('tr').dataset.uid;
+    const prev=sel.dataset.prev||sel.value;
     try{ await api(`/api/core/departments/${DEPT}/members`,'POST',{user_id:uid,role_in_dept:sel.value});
-      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch — перечитываем
-      // страницу, чтобы badge/скрытые панели/кнопки соответствовали НОВЫМ правам
-      // (в т.ч. самого пользователя, если меняет роль себе).
+      // Инвалидация кэша прав на клиенте: сервер поднял acl_epoch (и перевыпустил
+      // cookie в этом же ответе) — перечитываем страницу, чтобы badge/скрытые
+      // панели/кнопки соответствовали НОВЫМ правам (в т.ч. самого пользователя,
+      // если меняет роль себе).
       toast('Роль обновлена'); setTimeout(()=>location.reload(),500); }
-    catch(e){ location.reload(); }  // откат UI к фактическому состоянию (напр. 409)
+    catch(e){
+      // Мутацию отклонили (напр. 409 «в подразделении должен остаться хотя бы
+      // один руководитель») — возвращаем селект к фактическому состоянию и
+      // перезагружаем страницу; текст ошибки уже показан toast'ом из api().
+      sel.value=prev; toast('Роль не изменена: '+((e&&e.message)||'запрещено'),true);
+      setTimeout(()=>location.reload(),600); }
   });
+  sel.dataset.prev=sel.value;
 });
 
 /* ---------------- шеринг: отзыв / отказ / изменение прав ---------------- */
@@ -760,22 +901,38 @@ async function headRemove(uid){
 /* ---------------- журнал ---------------- */
 function debounceEvents(){clearTimeout(evTimer);evTimer=setTimeout(loadEvents,350);}
 async function loadEvents(){
-  const box=document.getElementById('evList'); if(!box||!DEPT) return;
+  const box=document.getElementById('evList'); if(!box) return;
+  // Режим «Вся система» (DEPT=null): глобальный журнал всех событий системы;
+  // иначе — журнал выбранного подразделения.
+  if(DEPT){
+    const q=(document.getElementById('evQ')?.value||'').trim();
+    let url='/api/core/admin/dept-events?department_id='+DEPT+'&limit=100';
+    if(q)url+='&q='+encodeURIComponent(q);
+    try{
+      const r=await api(url);
+      evRender(box,r,`Показано ${r.items.length} из ${r.total} записей по подразделению «${esc(r.department)}».`);
+    }catch(e){ box.innerHTML='<span class="muted">Журнал недоступен.</span>'; }
+    return;
+  }
+  if(!IS_ADMIN){ box.innerHTML='<span class="muted">'+(GLOBAL_MODE?'Глобальный журнал недоступен.':'Журнал доступен после выбора подразделения.')+'</span>'; return; }
   const q=(document.getElementById('evQ')?.value||'').trim();
-  let url='/api/core/admin/dept-events?department_id='+DEPT+'&limit=100';
+  let url='/api/core/admin/events?limit=100';
   if(q)url+='&q='+encodeURIComponent(q);
   try{
     const r=await api(url);
-    if(!r.items.length){box.innerHTML='<span class="muted">Событий нет.</span>';return;}
-    box.innerHTML='<table class="tbl"><thead><tr><th>Когда (UTC)</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Сообщение</th></tr></thead><tbody>'+
-      r.items.map(e=>`<tr>
-        <td class="muted" style="white-space:nowrap">${(e.at||'').replace('T',' ').replace('Z','')}</td>
-        <td>${esc(e.user||'')}</td>
-        <td><span class="badge ${e.level==='error'?'b-red':(e.level==='warning'?'b-amber':'b-blue')}">${esc(e.action)}</span></td>
-        <td>${esc(e.object||'')}</td>
-        <td class="muted">${esc(e.message||'')}</td></tr>`).join('')+'</tbody></table>'+
-      `<p class="muted" style="font-size:12px;margin-top:8px">Показано ${r.items.length} из ${r.total} записей по подразделению «${esc(r.department)}».</p>`;
+    evRender(box,r,`Показано ${Math.min(r.items.length,100)} последних записей журнала всей системы.`);
   }catch(e){ box.innerHTML='<span class="muted">Журнал недоступен.</span>'; }
+}
+function evRender(box,r,footnote){
+  if(!r.items.length){box.innerHTML='<span class="muted">Событий нет.</span>';return;}
+  box.innerHTML='<table class="tbl"><thead><tr><th>Когда (UTC)</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Сообщение</th></tr></thead><tbody>'+
+    r.items.map(e=>`<tr>
+      <td class="muted" style="white-space:nowrap">${(e.at||'').replace('T',' ').replace('Z','')}</td>
+      <td>${esc(e.user||'')}</td>
+      <td><span class="badge ${e.level==='error'?'b-red':(e.level==='warning'?'b-amber':'b-blue')}">${esc(e.action)}</span></td>
+      <td>${esc(e.object||'')}</td>
+      <td class="muted">${esc(e.message||'')}</td></tr>`).join('')+'</tbody></table>'+
+    `<p class="muted" style="font-size:12px;margin-top:8px">${footnote}</p>`;
 }
 
 window.addEventListener('hashchange',()=>{const h=(location.hash||'').replace('#','');if(h)showTab(h);});

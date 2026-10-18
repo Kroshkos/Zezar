@@ -23,11 +23,17 @@ const RD_TYPES = {
 let RD_CACHE = null;          // последний ответ /sections (кэш в памяти, НЕ localStorage)
 let RD_SUB = 'status:task';   // активный подраздел
 
-function rdDept(){ return (typeof DEPT!=='undefined' && DEPT) ? DEPT : null; }
-function rdIsGlobal(){ return !!(typeof IS_ADMIN!=='undefined' && IS_ADMIN); }
+// Глобальные переменные страницы admin_dept объявлены в inline-скрипте ПОСЛЕ
+// загрузки этого файла — читаем их лениво (в функциях), а не на этапе парсинга.
+function rdAdm(){ return (typeof ADM!=='undefined' && ADM) ? ADM : {}; }
+function rdDept(){ const d=(typeof DEPT!=='undefined')?DEPT:null; return d||null; }
+// «Вся система»: администратор/координатор без выбранного пространства.
+// IS_ADMIN включает также координатора-руководителя (у него есть scoped-вкладки),
+// поэтому глобальный режим определяем по флагу сервера GLOBAL_MODE/ADM.global_mode.
+function rdIsGlobal(){ return !!(typeof IS_ADMIN!=='undefined' && IS_ADMIN) && !!rdAdm().global_mode; }
 // право ведения справочников: администратор/координатор (глобально) и руководитель
 // подразделения; участник — только просмотр (сервер дублирует проверку на API)
-function rdCanWrite(){ return rdIsGlobal() || !!(ADM.can_manage && rdDept()); }
+function rdCanWrite(){ return (typeof IS_ADMIN!=='undefined' && IS_ADMIN) || !!rdAdm().can_manage; }
 function rdDeptQ(){ const d=rdDept(); return d?('department_id='+d):''; }
 
 async function rdLoad(force){
@@ -301,6 +307,13 @@ function sectionLabel(section,arg){
 
 /* ---------- каркас вкладки (вызывается из showTab('refdata')) ---------- */
 async function initRefDataPane(){
+  // Режим «Вся система» доступен только администратору/координатору;
+  // руководитель без выбранного пространства справочники не видит.
+  if(!rdDept() && !rdIsGlobal()){
+    const box=document.getElementById('rdBody');
+    if(box) box.innerHTML='<span class="muted">Выберите подразделение в шапке — справочники доступны руководителю только в его пространстве.</span>';
+    return;
+  }
   const pane=document.getElementById('pane-refdata'); if(!pane) return;
   const card=pane.querySelector('.card'); if(!card) return;
   let data; try{ data=await rdLoad(true); }catch(e){ card.innerHTML='<span class="muted">Справочники недоступны.</span>'; return; }
@@ -310,7 +323,7 @@ async function initRefDataPane(){
   for(const t of Object.keys(RD_TYPES)) if(data.types[t]) subs.push(['type:'+t, RD_TYPES[t].title]);
   if(data.wf&&Object.keys(data.wf).length) subs.push(['wf','Маршруты']);
   if(data.groups&&Object.keys(data.groups).length) subs.push(['groups','Группы задач']);
-  const writable = rdIsGlobal() || ADM.can_manage;
+  const writable = (typeof IS_ADMIN!=='undefined' && IS_ADMIN) || !!rdAdm().can_manage;
   card.innerHTML =
      '<p class="adm-scope">Единые справочники ядра: все изменения сохраняются в <b>базе данных</b> (не в браузере). 🌐 общесистемные шаблоны создаёт <b>администратор</b> — они применяются ко всем подразделениям согласно подключённым модулям; <b>руководитель подразделения</b> применяет их у себя, деактивирует/включает обратно и ведёт собственные записи своего пространства.</p>'
     +'<div id="rdSubtabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'

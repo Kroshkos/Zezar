@@ -189,7 +189,10 @@ async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> t
     if body.department_id is not None:
         if body.department_id <= 0:
             raise HTTPException(422, f"Некорректный department_id: {body.department_id}")
-        if user.role not in (Role.ADMIN, Role.COORDINATOR):
+        # Руководитель/участник вправе явно указать СВОЁ пространство
+        # (фронтенд всегда шлёт department_id из селекта со своими подразделениями);
+        # чужое пространство доступно только админу/координатору.
+        if user.role not in (Role.ADMIN, Role.COORDINATOR)                 and body.department_id not in dept_ids:
             raise HTTPException(403, "Выбор чужого пространства доступен только админу/координатору")
         # проверка существования ДО записи: несуществующий dept_id иначе давал
         # sqlite3.IntegrityError: FOREIGN KEY constraint failed на flush()
