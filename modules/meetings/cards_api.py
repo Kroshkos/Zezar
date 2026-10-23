@@ -188,6 +188,12 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
         pk = ent.priority_key or ""
         pref = _pick(prio_refs.get((ent.owner_department_id, pk), [])
                      + prio_refs.get((None, pk), []), ent.owner_department_id)
+        # Fallback на стандартные цвета, если приоритет не настроен в PriorityLevel
+        _PRIORITY_COLORS: dict[str, str] = {
+            "critical": "b-red", "high": "b-red", "urgent": "b-red",
+            "medium": "b-amber", "normal": "b-blue", "low": "b-green",
+        }
+        prio_color = (pref.color if pref else None) or _PRIORITY_COLORS.get(pk, "b-gray")
         out.append({
             "uid": ent.uid, "type": card_type, "kind": ent.kind.value,
             "module_key": ent.module_key, "tag": tag,
@@ -198,7 +204,7 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "status_color": stcolor.get((ent.kind.value, ent.status_key or ""), "b-gray"),
             "priority_key": pk,
             "priority_label": (pref.label if pref else "") or pk,
-            "priority_color": (pref.color if pref else "b-gray") or "b-gray",
+            "priority_color": prio_color,
             "due_date": ent.due_date or "",
             "responsible": resp[0] if resp else "",
             "responsibles": resp,
