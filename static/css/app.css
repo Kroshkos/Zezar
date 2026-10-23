@@ -256,29 +256,49 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 .pcardwrap{position:relative}
 .pcardwrap .pcard{width:100%}
 .pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
-.pcard{border:1.8px solid #ccc;padding:10px 12px 10px 26px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000}
-.pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
+.pcard{border:1.8px solid #ccc;padding:8px 10px 8px 24px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000;min-height:0}
+.pcard>*{min-height:0}
+.pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
 .pcard .ptag{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:4px;color:#fff}
-.pcard .ptitle{font-size:17px;font-weight:800;line-height:1.24;margin-bottom:9px;flex:1}
-.pcard .pmeta{font-size:12.5px;color:#333;margin-bottom:4px}
+.pcard .ptitle{font-size:15.5px;font-weight:800;line-height:1.22;margin-bottom:7px}
+.pcard .pmeta{font-size:12px;color:#333;margin-bottom:3px;line-height:1.35}
 .pcard .pbottom{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
-.pcard .pqr{flex:0 0 auto;border-radius:3px}
-.pcard .pid{font-size:10px;color:#999;font-family:monospace}
+.pcard .pqr{flex:0 0 auto;border-radius:3px;width:60px;height:60px}
+/* дата печати вместо технического id (полупрозрачная) */
+.pcard .pid.pdate{color:rgba(0,0,0,.35);font-size:10px;font-family:'Inter',system-ui,sans-serif}
+/* наименование подразделения — над плашкой приоритета */
+.pcard .pdept{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pcard .pdir{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-bottom:3px}
 /* чек-лист этапов (карточка сущности с workflow) */
-.pchecklist{flex:1;overflow:hidden;font-size:12px;margin:2px 0 8px}
+.pchecklist{flex:1;min-height:0;overflow:hidden;font-size:11.5px;margin:2px 0 6px}
 .pchecklist .pk{display:flex;gap:6px;align-items:flex-start;margin-bottom:5px;line-height:1.3}
 .pchecklist .pk .bx{flex:0 0 auto;width:13px;height:13px;border:1.6px solid #555;border-radius:2px;margin-top:1px}
 .pchecklist .pk .tx{flex:1;min-width:0}
 .pchecklist .pk .nm{font-weight:700;word-break:break-word}
 .pchecklist .pk .sm{color:#555;font-size:10.5px}
 /* место для рукописных заметок (карточка автономной задачи) */
-.pnotes{flex:1;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 8px;min-height:70px;background:repeating-linear-gradient(#fff,#fff 23px,#e8ecf3 24px)}
+.pnotes{flex:1;min-height:0;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 6px;background:repeating-linear-gradient(#fff,#fff 21px,#e8ecf3 22px)}
+/* Печать раздела «Карточки»: изолированный оверлей-контейнер, который
+   печатается даже при открытом представлении «Список совещаний»
+   (наследие visibility-подхода прототипа ИС_Цезарь.html). */
+#printCardsOverlay{display:none}
 @media print{
+  @page{size:A4 landscape;margin:6mm}
   .print-controls,.sidebar,.topbar,.segbtns,#cardsFilters,#v-list,#mViews{display:none !important}
-  #cardPages .csel{display:none !important}
-  .pcardwrap:has(.csel:checked){outline:none !important}
-  .pcard{padding-left:12px !important}
-  .printpage{box-shadow:none;page-break-after:always;margin:0}
-  .content{padding:0 !important}
+  body.printing-cards #cardPages .csel{display:none !important}
+  body.printing-cards .pcardwrap:has(.csel:checked){outline:none !important}
+  body.printing-cards .pcard{padding-left:10px !important}
+  /* режим печати карточек: скрываем всё, показываем только листы */
+  body.printing-cards *{visibility:hidden}
+  body.printing-cards{background:#fff;height:auto !important;overflow:visible !important}
+  body.printing-cards #app,body.printing-cards main,body.printing-cards .content{
+    display:block !important;position:static !important;height:auto !important;
+    overflow:visible !important;padding:0 !important;margin:0 !important}
+  body.printing-cards #v-cards{display:block !important}
+  #printCardsOverlay.on{display:block !important;position:absolute !important;left:0;top:0;width:100%;z-index:99999;background:#fff}
+  body.printing-cards #printCardsOverlay,body.printing-cards #printCardsOverlay *{visibility:visible}
+  body.printing-cards #printCardsOverlay .printpage{box-shadow:none !important;margin:0 auto !important;page-break-after:always;break-after:page}
+  body.printing-cards #printCardsOverlay .printpage:last-child{page-break-after:auto}
+  body.printing-cards #printCardsOverlay .printpage.fmt-a4{width:285mm;height:190mm;padding:6mm;gap:4mm}
+  body.printing-cards #printCardsOverlay .printpage.fmt-a3{width:285mm;height:190mm;padding:6mm;gap:3mm}
 }
