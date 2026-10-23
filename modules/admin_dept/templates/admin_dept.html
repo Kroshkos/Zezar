@@ -134,7 +134,7 @@
           </td>
         </tr>
       {% endfor %}
-      {% if not dept_list %}<tr><td colspan="4" class="muted">Подразделений пока нет — создайте первое формой выше.</td></tr>{% endif %}
+      {% if not dept_list %}<tr><td colspan="5" class="muted">Подразделений пока нет — создайте первое формой выше.</td></tr>{% endif %}
       </tbody>
     </table>
     <p class="muted" style="font-size:12px;margin-top:10px">«Управлять» открывает выбранное пространство во всех остальных
@@ -647,14 +647,27 @@ async function createDept(){
   }catch(e){}
 }
 function editDept(id,btn){
-  const name=btn.dataset.name||'', desc=btn.dataset.desc||'';
+  const name=btn.dataset.name||'', desc=btn.dataset.desc||'', color=btn.dataset.color||'';
   openModal('Изменить подразделение',
     '<label>Название</label><input name="name" value="'+esc(name)+'" required>'+
-    '<label>Описание</label><input name="description" value="'+esc(desc||'')+'">',
+    '<label>Описание</label><input name="description" value="'+esc(desc||'')+'">'+
+    '<label>Цвет карточек подразделения (левая полоса при печати)</label>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+      '<input name="color" type="color" value="'+(esc(color)||'#01696F')+'" style="width:52px;height:36px;padding:2px;border:1px solid var(--line);border-radius:8px;background:#fff">'+
+      '<span class="muted" id="deptColorHex" style="font-size:12px">'+esc(color||'не задан — системный цвет по умолчанию')+'</span>'+
+    '</div>',
     async(fd)=>{
-      await api('/api/core/departments/'+id,'PATCH',{name:fd.name.value.trim(),description:fd.description.value.trim()});
+      // input[type=color] всегда возвращает #rrggbb — приводим к верхнему регистру
+      const raw=(fd.color||'').toUpperCase();
+      await api('/api/core/departments/'+id,'PATCH',{name:fd.name.value.trim(),description:fd.description.value.trim(),color:raw});
       closeModal();toast('Сохранено');setTimeout(()=>location.reload(),400);
     });
+  // Живой показ HEX под палитрой
+  const form=document.getElementById('mform');
+  if(form){
+    const ci=form.elements['color'], hx=document.getElementById('deptColorHex');
+    if(ci&&hx) ci.addEventListener('input',()=>{hx.textContent=ci.value.toUpperCase();});
+  }
 }
 async function setDeptActive(id,active){
   if(active){ await api('/api/core/departments/'+id,'PATCH',{is_active:true}); toast('Подразделение активировано'); setTimeout(()=>location.reload(),400); return; }

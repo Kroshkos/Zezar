@@ -82,14 +82,27 @@ function qrDataURL(text, size = 4) {
 }
 
 /* ---------- рендер одной карточки (дизайн оригинала) ---------- */
+// Цвет левой полосы = цвет подразделения (задаётся администратором);
+// при отсутствии настроенного цвета — детерминированный подбор из палитры.
+const DEPT_PALETTE = ['#01696F', '#7c3aed', '#2563eb', '#d97706', '#dc2626',
+                      '#0e7490', '#16a34a', '#92700c', '#be185d', '#4338ca'];
+function deptColor(id) {
+  const d = CD.departments.find(x => x.id === id);
+  if (d && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(d.color || '')) return d.color;
+  return DEPT_PALETTE[Math.abs(Number(id) || 0) % DEPT_PALETTE.length];
+}
+// Дата печати (формируется один раз за сессию просмотра/печати)
+const PRINT_DATE = new Date().toLocaleDateString('ru-RU');
+
 function cardHTML(c) {
-  const color = ccolor(c.priority_color);
+  const dcolor = deptColor(c.department_id);          // полоса — по подразделению
+  const pcolor = ccolor(c.priority_color);            // плашка — приоритет (как раньше)
   // QR ведёт на профиль сущности: полный URL текущего хоста (чтобы сканер
   // с телефона попал в ту же инсталляцию, что открыта в браузере).
   let qrBlock;
   try {
     const url = location.protocol + '//' + location.host + c.profile_url;
-    qrBlock = `<img class="pqr" src="${qrDataURL(url, 4)}" width="72" height="72" alt="QR">`;
+    qrBlock = `<img class="pqr" src="${qrDataURL(url, 4)}" width="60" height="60" alt="QR">`;
   } catch (e) {
     qrBlock = `<div class="pqr-missing" style="font-size:10px;color:#999;text-align:center">QR недоступен</div>`;
   }
@@ -97,7 +110,6 @@ function cardHTML(c) {
   if (c.responsible) parts.push(`<b>Отв.:</b> ${esc(c.responsible)}`);
   const others = (c.participants || []).filter(p => p !== c.responsible);
   if (others.length) parts.push(`<b>Участники:</b> ${esc(others.join(', '))}`);
-  const shortId = (c.uid || '').slice(0, 8);
 
   // содержание: чек-лист этапов (entity) либо зона заметок (task)
   let body;
@@ -112,23 +124,25 @@ function cardHTML(c) {
     body = `<div class="pnotes" title="Место для рукописных заметок"></div>`;
   }
 
+  const dname = cdeptName(c.department_id);
   return `<label class="pcardwrap" data-uid="${esc(c.uid)}" style="display:flex;overflow:hidden">
     <input type="checkbox" class="csel" style="position:absolute;top:6px;left:6px;z-index:2;margin:0"
            ${CSEL.has(c.uid) ? 'checked' : ''} onchange="tglCardSel('${esc(c.uid)}',this.checked)">
-    <div class="pcard" style="flex:1;border-left:8px solid ${color}">
+    <div class="pcard" style="flex:1;border-left:8px solid ${dcolor}">
       <div>
         <div class="ptop">
-          <span class="ptag" style="background:${color}">${esc(c.priority_label) || 'Без приоритета'}</span>
-          <span class="pid">${esc(shortId)}</span>
+          <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
+          <span class="pid pdate">${PRINT_DATE}</span>
         </div>
-        <div class="pdir" style="color:${color}">${esc(c.tag)}${c.cross_dept ? ' · межпространственная' : ''}</div>
+        ${dname ? `<div class="pdept" style="color:${dcolor}">${esc(dname)}</div>` : ''}
+        <div class="pdir" style="color:${dcolor}">${esc(c.tag)}${c.cross_dept ? ' · межпространственная' : ''}</div>
         <div class="ptitle">${esc(c.title)}</div>
         ${body}
       </div>
       <div>
         <div class="pmeta"><b>Срок:</b> ${cfmt(c.due_date)}</div>
         <div class="pmeta">${parts.join(' · ') || '<b>Отв.:</b> —'}</div>
-        <div class="pbottom"><span class="pid">${esc(cdeptName(c.department_id))}</span>${qrBlock}</div>
+        <div class="pbottom">${qrBlock}</div>
       </div>
     </div>
   </label>`;
@@ -165,11 +179,19 @@ function updatePrintSrcInfo(data) {
 }
 
 /* ---------- разбивка на печатные листы ---------- */
+function buildSheetsHtml(data, fmt) {
+  const perPage = PRINT_PER_PAGE[fmt] || 6;
+  return chunk(data, perPage).map(page =>
+    `<div class="printpage fmt-${fmt}">`
+    + page.map(cardHTML).join('')
+    + Array(perPage - page.length).fill('<div></div>').join('')
+    + `</div>`).join('');
+}
+
 function renderCardSheets() {
   if (!CD.loaded) return;
   const fmt = document.getElementById('c-format').value;
   try { localStorage.setItem('cards_fmt', fmt); } catch (e) {}
-  const perPage = PRINT_PER_PAGE[fmt] || 6;
   let data;
   if (CSEL.size > 0) {
     data = CD.cards.filter(c => CSEL.has(c.uid));       // отмеченные — независимо от фильтра
@@ -178,12 +200,40 @@ function renderCardSheets() {
   }
   updatePrintSrcInfo(data);
   document.getElementById('cempty').hidden = data.length > 0;
-  const pages = chunk(data, perPage);
-  document.getElementById('cardPages').innerHTML = pages.map(page =>
-    `<div class="printpage fmt-${fmt}">`
-    + page.map(cardHTML).join('')
-    + Array(perPage - page.length).fill('<div></div>').join('')
-    + `</div>`).join('');
+  document.getElementById('cardPages').innerHTML = buildSheetsHtml(data, fmt);
+}
+
+/* ---------- печать ----------
+   Листы копируются в изолированный оверлей #printCardsOverlay и печатаются
+   через @media print (visibility-подход, как в прототипе). Это гарантирует,
+   что на бумаге будут карточки, даже если открыто представление «Список
+   совещаний» или контейнер скрыт/обрезан экраном. */
+async function printCards() {
+  if (!CD.loaded) await loadCards();
+  const fmt = document.getElementById('c-format').value;
+  const data = CSEL.size > 0 ? CD.cards.filter(c => CSEL.has(c.uid)) : filteredCards();
+  if (!data.length) { toast('Нет карточек для печати', 'warn'); return; }
+  const ov = document.getElementById('printCardsOverlay');
+  ov.innerHTML = buildSheetsHtml(data, fmt);
+  // Дождаться загрузки dataURL-изображений QR — иначе печать может выйти пустой
+  const imgs = Array.from(ov.querySelectorAll('img'));
+  await Promise.all(imgs.map(i => i.complete ? Promise.resolve()
+    : new Promise(res => { i.onload = i.onerror = res; })));
+  document.body.classList.add('printing-cards');
+  ov.classList.add('on');
+  try {
+    window.print();
+  } finally {
+    // afterprint возвращается не во всех браузерах — ставим и событие, и таймер
+    const cleanup = () => {
+      document.body.classList.remove('printing-cards');
+      ov.classList.remove('on');
+      ov.innerHTML = '';
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup, { once: true });
+    setTimeout(cleanup, 1500);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
