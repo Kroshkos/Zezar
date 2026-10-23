@@ -239,6 +239,19 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
 
 # ---------------- REST ----------------
 
+@router.get("/cards/api-list")
+async def cards_api_list(user: User = Depends(get_current_user),
+                         session: AsyncSession = Depends(session_dep)):
+    """Раздел «Карточки»: печатные карточки для всех сущностей.
+
+    Тип entity (чек-лист этапов) — для проектов/ПО/документов и прочих сущностей
+    с workflow; тип task (место под рукописные заметки) — для автономных задач.
+    Подразделения — только свои сущности, администраторы/координаторы — все.
+    """
+    from modules.meetings.cards_api import cards_api as _cards_api
+    return await _cards_api(user, session)
+
+
 @router.get("/api-list")
 async def list_meetings(user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):

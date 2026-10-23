@@ -5,17 +5,60 @@
 {% endblock %}
 
 {% block content %}
-<div class="card pad" style="margin-bottom:16px">
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <input id="mq" placeholder="🔍 Поиск по теме, номеру, месту, председателю…" style="flex:1;min-width:220px" oninput="renderMeetCards()">
-    <span id="mchips" style="display:flex;gap:6px;flex-wrap:wrap">
-      {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglM(this)">{{ s.label }}</button>{% endfor %}
-    </span>
+<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+  <div class="segbtns" id="mViews">
+    <button class="on" data-v="list" onclick="mView('list')">🤝 Список совещаний</button>
+    <button data-v="cards" onclick="mView('cards')">🖨 Карточки</button>
   </div>
 </div>
 
-<div class="cards" id="mcards"></div>
-<div class="empty" id="mempty" hidden>🤝<p>Совещаний нет. Нажмите «＋ Новое совещание».</p></div>
+<div id="v-list">
+  <div class="card pad" style="margin-bottom:16px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input id="mq" placeholder="🔍 Поиск по теме, номеру, месту, председателю…" style="flex:1;min-width:220px" oninput="renderMeetCards()">
+      <span id="mchips" style="display:flex;gap:6px;flex-wrap:wrap">
+        {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglM(this)">{{ s.label }}</button>{% endfor %}
+      </span>
+    </div>
+  </div>
+
+  <div class="cards" id="mcards"></div>
+  <div class="empty" id="mempty" hidden>🤝<p>Совещаний нет. Нажмите «＋ Новое совещание».</p></div>
+</div>
+
+{# ======================= Раздел «Карточки» (печатные карточки всех сущностей) ======================= #}
+<div id="v-cards" hidden>
+  <div class="card pad print-controls" id="cardsFilters">
+    <label>Формат
+      <select id="c-format" onchange="renderCardSheets()">
+        <option value="a4">А4 (альбомная) — 6 карточек на лист (3×2)</option>
+        <option value="a3">А3 (альбомная) — 12 карточек на лист (4×3)</option>
+      </select>
+    </label>
+    <label>Тип
+      <select id="c-type" onchange="renderCardSheets()">
+        <option value="">Все типы</option>
+        <option value="entity">Сущности (чек-лист этапов)</option>
+        <option value="task">Задачи (заметки от руки)</option>
+      </select>
+    </label>
+    <label>Подразделение
+      <select id="c-dept" onchange="renderCardSheets()"><option value="">—</option></select>
+    </label>
+    <input id="cq" placeholder="🔍 Поиск по названию…" style="flex:1;min-width:180px" oninput="renderCardSheets()">
+    <button class="btn sm" onclick="selAllCards(true)">Отметить все</button>
+    <button class="btn sm" onclick="selAllCards(false)">Снять</button>
+    <button class="btn primary" onclick="window.print()">🖨 Печать</button>
+    <span id="printSrcInfo" style="color:var(--muted);font-size:12.5px"></span>
+  </div>
+  <div class="sub" style="margin:-6px 0 12px;color:var(--muted);font-size:12.5px">
+    А4 (альбомная) — 6 карточек на лист (3×2); А3 (альбомная) — 12 карточек на лист (4×3).
+    Печатаются либо отмеченные карточки, либо все под текущим фильтром — если ничего не отмечено.
+    QR-код ведёт на страницу соответствующей сущности/задачи. Подразделения видят только свои карточки; администраторы и координаторы — всю систему.
+  </div>
+  <div id="cardPages"></div>
+  <div class="empty" id="cempty" hidden>🖨<p>Карточек нет. Создайте проект/ПО/документ с этапами или автономную задачу.</p></div>
+</div>
 
 <script id="meetData" type="application/json">
 {{ {'meetings': meetings, 'statuses': statuses, 'departments': departments,
@@ -25,5 +68,7 @@
 
 {% block scripts %}
 <script src="/static/js/profile.js"></script>
+<script src="/static/js/qrcode.min.js"></script>
 <script src="/static/js/meetings.js"></script>
+<script src="/static/js/meetings_cards.js"></script>
 {% endblock %}
