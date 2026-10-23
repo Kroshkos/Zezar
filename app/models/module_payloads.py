@@ -46,6 +46,11 @@ class MeetingPayload(TimestampMixin, Base):
     location: Mapped[Optional[str]] = mapped_column(String(200))
     start_at: Mapped[Optional[str]] = mapped_column(String(32))       # ISO datetime для календаря
     end_at: Mapped[Optional[str]] = mapped_column(String(32))
+    # ---- Раздел «Карточки» (по образцу модуля «Совещания» прототипа
+    # ИС_Цезарь.html): карточки задач, заведённых на совещании.
+    # Структура записи — как new_tasks в mBlank()/mRenderNewTaskList():
+    # {uid, title, tag, priority, due, assignee_id, assignee_name, status_key}
+    cards: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class ProjectPayload(TimestampMixin, Base):

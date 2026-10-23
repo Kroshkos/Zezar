@@ -1,8 +1,12 @@
 """Модуль-плагин «Совещания»: REST + HTML (карточки как renderMeetings() из прототипа).
 
-Специфика (num/chair/secretary/attendees/time/agenda/decisions) — в MeetingPayload;
+Специфика (num/chair/secretary/attendees/time/agenda/decisions/cards) — в MeetingPayload;
 общие поля (title/status/priority/due_date) и права — через ядро (entity_service/access).
 Календарь: событие на дату+время совещания (см. integrations/yandex_calendar._window).
+
+Раздел «Карточки» (cards в payload) — по образу и подобию формы совещания из
+прототипа ИС_Цезарь.html: карточки задач, заведённых на совещании
+(new_tasks -> mPushNewTasksToKanban), с кнопкой переноса в модуль «Задачи».
 """
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +37,31 @@ async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
     """Признак межпространственности — ЯВНЫЙ SELECT (см. tasks/_has_shares)."""
     return await session.scalar(
         select(EntityShare.id).where(EntityShare.entity_id == ent.id)) is not None
+
+
+async def _cards_count(session: AsyncSession, ctx) -> int:
+    """Быстрый счётчик для вкладки «Карточки» (без сборки чек-листов):
+    сущности с непустым stages + автономные задачи в поле зрения пользователя."""
+    from app.models.module_payloads import (
+        ProjectPayload, SoftPayload, TaskPayload)
+    n = 0
+    # workflow-сущности с этапами: только модели, у которых реально есть stages
+    # (у DocPayload поля stages нет — документы получают карточку через задачи-этапы)
+    for Model in (ProjectPayload, SoftPayload):
+        if not hasattr(Model, "stages"):
+            continue
+        uids = set(await session.scalars(
+            select(Model.entity_id).where(Model.stages.isnot(None))))
+        if not uids:
+            continue
+        q = select(Entity.id).where(Entity.id.in_(uids), access.entity_filter(ctx))
+        n += len((await session.scalars(q)).all())
+    tq = select(func.count(Entity.id)).where(
+        Entity.kind == EntityKind.TASK, access.entity_filter(ctx),
+        ~Entity.id.in_(select(TaskPayload.entity_id)
+                       .where(TaskPayload.project_entity_uid.isnot(None))))
+    n += await session.scalar(tq) or 0
+    return n
 
 
 class MeetingIn(BaseModel):
@@ -77,6 +106,9 @@ def _meet_dict(ent: Entity, p: MeetingPayload | None, perm: Permission | None,
         "time": (p.time_ if p else "") or "", "location": p.location if p else "",
         "agenda": (p.agenda if p else []) or [],
         "decisions": (p.decisions if p else []) or [],
+        # Раздел «Карточки»: карточки задач, заведённых на совещании
+        # (new_tasks из прототипа ИС_Цезарь.html).
+        "cards": (p.cards if p else []) or [],
         "linked_task_uids": (p.linked_task_uids if p else []) or [],
         "project_entity_uid": p.project_entity_uid if p else None,
         "project_title": project_title or "",
@@ -225,12 +257,26 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         page_sub="Повестка, решения и протоколы; события синхронизируются с Яндекс.Календарём",
         counts={MODULE_KEY: len(items)},
         meetings=items,
+        cards_count=await _cards_count(session, ctx),
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         departments=depts, people=people, projects=projects,
     )
 
 
 # ---------------- REST ----------------
+
+@router.get("/cards/api-list")
+async def cards_api_list(user: User = Depends(get_current_user),
+                         session: AsyncSession = Depends(session_dep)):
+    """Раздел «Карточки»: печатные карточки для всех сущностей.
+
+    Тип entity (чек-лист этапов) — для проектов/ПО/документов и прочих сущностей
+    с workflow; тип task (место под рукописные заметки) — для автономных задач.
+    Подразделения — только свои сущности, администраторы/координаторы — все.
+    """
+    from modules.meetings.cards_api import cards_api as _cards_api
+    return await _cards_api(user, session)
+
 
 @router.get("/api-list")
 async def list_meetings(user: User = Depends(get_current_user),
@@ -288,13 +334,13 @@ async def create_meeting(body: MeetingIn, user: User = Depends(get_current_user)
         secretary=body.secretary or None, attendees=body.attendees or None,
         time_=body.time_ or None, location=body.location or None,
         start_at=start_at, project_entity_uid=body.project_entity_uid or None,
-        agenda=[], decisions=[], linked_task_uids=[]))
+        agenda=[], decisions=[], linked_task_uids=[], cards=[]))
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
 _MEET_FIELDS = {"num", "chair", "secretary", "attendees", "location", "agenda",
-                "decisions", "linked_task_uids", "project_entity_uid"}
+                "decisions", "linked_task_uids", "project_entity_uid", "cards"}
 
 
 @router.patch("/{uid}")
