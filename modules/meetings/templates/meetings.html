@@ -49,7 +49,7 @@
     <span style="flex:1"></span>
     <button class="btn sm" onclick="selAllCards(true)">Отметить все</button>
     <button class="btn sm" onclick="selAllCards(false)">Снять</button>
-    <button class="btn primary" onclick="window.print()">🖨 Печать</button>
+    <button class="btn primary" onclick="printCards()">🖨 Печать</button>
     <span id="printSrcInfo" style="color:var(--muted);font-size:12.5px"></span>
   </div>
   <div class="sub" style="margin:-6px 0 12px;color:var(--muted);font-size:12.5px">
@@ -60,6 +60,9 @@
   <div id="cardPages"></div>
   <div class="empty" id="cempty" hidden>🖨<p>Карточек нет. Создайте проект/ПО/документ с этапами или автономную задачу.</p></div>
 </div>
+
+{# Изолированный контейнер для печати карточек (заполняется printCards(), виден только в @media print) #}
+<div id="printCardsOverlay"></div>
 
 <script id="meetData" type="application/json">
 {{ {'meetings': meetings, 'statuses': statuses, 'departments': departments,

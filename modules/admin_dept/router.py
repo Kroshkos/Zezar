@@ -110,7 +110,8 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
                     WorkspaceModule.workspace_id == ws.id))).all()
                 en = sum(1 for x in wm if x.is_enabled)
             out.append({"id": d.id, "code": d.code, "name": d.name,
-                        "description": d.description or "", "is_active": bool(d.is_active),
+                        "description": d.description or "", "color": d.color or "",
+                        "is_active": bool(d.is_active),
                         "member_count": mc, "modules_enabled": en, "modules_total": total_mods})
         return out
 

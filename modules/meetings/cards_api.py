@@ -195,5 +195,5 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
         drows = (await session.scalars(
             select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
     return {"is_global": ctx.is_global,
-            "departments": [{"id": d.id, "name": d.name} for d in drows],
+            "departments": [{"id": d.id, "name": d.name, "color": d.color or ""} for d in drows],
             "cards": out}

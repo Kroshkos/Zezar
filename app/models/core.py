@@ -118,6 +118,7 @@ class Department(TimestampMixin, Base):
     code: Mapped[str] = mapped_column(String(32), unique=True)   # короткий ключ, как group-key в демо
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text)
+    color: Mapped[Optional[str]] = mapped_column(String(16))     # HEX-цвет подразделения (печать карточек, задаёт админ)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     members: Mapped[List["DepartmentMember"]] = relationship(

@@ -50,7 +50,8 @@ async def list_departments(user: User = Depends(get_current_user),
     if not ctx.is_global:
         q = q.where(Department.id.in_(ctx.department_ids or [-1]))
     rows = (await session.scalars(q)).all()
-    return [{"id": d.id, "code": d.code, "name": d.name, "description": d.description} for d in rows]
+    return [{"id": d.id, "code": d.code, "name": d.name, "description": d.description,
+             "color": d.color} for d in rows]
 
 
 @router.post("/departments")
@@ -98,10 +99,16 @@ async def patch_department(dept_id: int, body: dict, user: User = Depends(get_cu
         raise HTTPException(403, "Только администратор/координатор")
     if not dept:
         raise HTTPException(404)
-    changed = [k for k in ("name", "description", "is_active") if k in body]
-    for k in ("name", "description", "is_active"):
-        if k in body:
-            setattr(dept, k, body[k])
+    # Валидация цвета подразделения (#RRGGBB), если передан
+    if "color" in body and body["color"]:
+        import re as _re
+        if not _re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", str(body["color"])):
+            raise HTTPException(422, "Цвет должен быть в формате #RRGGBB")
+    allowed = ("name", "description", "is_active") + \
+              (("color",) if ctx.can_admin_system else ())
+    changed = [k for k in allowed if k in body]
+    for k in changed:
+        setattr(dept, k, body[k])
     if changed:
         await log_event(session, "update_department", category="dept", user=user,
                         object=dept.name, level="warning",
