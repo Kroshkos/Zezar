@@ -277,7 +277,9 @@ async function printCards() {
   document.body.classList.add('printing-cards');
   ov.classList.add('on');
   // Страховка на случай, если браузер не поддерживает событие afterprint
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned) return; cleaned = true;
     document.body.classList.remove('printing-cards');
     ov.classList.remove('on');
     ov.innerHTML = '';

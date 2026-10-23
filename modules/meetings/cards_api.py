@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import Text, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,8 +116,11 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
     # Журнал печати: последняя дата печати каждой сущности (фильтр
     # «ещё не печатались» на клиенте). Отдельный запрос — без изменения
     # updated_at самих сущностей.
+    # CAST(... AS TEXT): без него SQLAlchemy возвращает datetime-объекты и
+    # print-log не может записать в них ISO-строку (TypeError на сервере).
     printed_map = dict((await session.execute(
-        select(CardPrintLog.entity_id, func.max(CardPrintLog.printed_at))
+        select(CardPrintLog.entity_id,
+               func.cast(func.max(CardPrintLog.printed_at), Text))
         .group_by(CardPrintLog.entity_id))).all())
 
     def _iso(dt):

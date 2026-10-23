@@ -292,10 +292,12 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 @media print{
   html,body{height:auto !important;background:#fff}
   .no-print,.print-controls,.sidebar,.topbar,.segbtns,#cardsFilters,#v-list,#mViews{display:none !important}
-  /* чекбоксы выбора карточек и рамка выделения — только для экрана, не для бумаги */
-  .csel{display:none !important}
+  /* чекбоксы выбора карточек и рамка выделения — только для экрана, не для бумаги.
+     visibility:hidden вместо display:none: высота строки сетки не меняется,
+     поэтому раскладка на экране и на бумаге идентична (нет наложений А3). */
+  .csel{visibility:hidden !important}
   .pcardwrap:has(.csel:checked){outline:none !important}
-  body.printing-cards #cardPages .csel{display:none !important}
+  body.printing-cards #cardPages .csel{visibility:hidden !important}
   body.printing-cards .pcardwrap:has(.csel:checked){outline:none !important}
   body.printing-cards .pcard{padding-left:10px !important}
   /* режим печати карточек: скрываем всё, показываем только листы */
@@ -313,6 +315,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
      A4 landscape 297×210 -> 287×200; А3 landscape 420×297 -> 410×287.
      grid-template/minmax наследуются из экранных правил (.fmt-a4/.fmt-a3),
      поэтому дублировать сетку здесь не нужно. */
-  body.printing-cards #printCardsOverlay .printpage.fmt-a4{width:287mm;height:200mm;padding:6mm;gap:4mm}
-  body.printing-cards #printCardsOverlay .printpage.fmt-a3{width:410mm;height:287mm;padding:6mm;gap:4mm}
+  body.printing-cards #printCardsOverlay .printpage.fmt-a4{width:287mm;height:200mm;padding:6mm;gap:4mm;grid-template-rows:repeat(2,minmax(0,94mm))}
+  body.printing-cards #printCardsOverlay .printpage.fmt-a3{width:410mm;height:287mm;padding:6mm;gap:4mm;grid-template-rows:repeat(2,minmax(0,135.5mm))}
+  /* ячейка листа не может выйти за свои границы — контент обрезается внутри,
+     а не наслаивается на соседнюю карточку */
+  body.printing-cards #printCardsOverlay .pcardwrap{overflow:hidden;min-height:0}
+  body.printing-cards #printCardsOverlay .pcard{height:100%;max-height:100%;min-height:0}
 }
