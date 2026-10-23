@@ -32,7 +32,7 @@
     <label>Формат
       <select id="c-format" onchange="renderCardSheets()">
         <option value="a4">А4 (альбомная) — 6 карточек на лист (3×2)</option>
-        <option value="a3">А3 (альбомная) — 12 карточек на лист (4×3)</option>
+        <option value="a3">А3 (альбомная) — 8 карточек на лист (4×2)</option>
       </select>
     </label>
     <label>Тип
@@ -45,6 +45,14 @@
     <label>Подразделение
       <select id="c-dept" onchange="renderCardSheets()"><option value="">—</option></select>
     </label>
+    <label>Изменения
+      <select id="c-recent" onchange="renderCardSheets()">
+        <option value="">Все карточки</option>
+        <option value="1">Изменённые/созданные за день</option>
+        <option value="7">Изменённые/созданные за неделю</option>
+        <option value="new">Ещё не печатались</option>
+      </select>
+    </label>
     <input id="cq" placeholder="🔍 Поиск по названию…" style="flex:1;min-width:180px" oninput="renderCardSheets()">
     <span style="flex:1"></span>
     <button class="btn sm" onclick="selAllCards(true)">Отметить все</button>
@@ -53,8 +61,10 @@
     <span id="printSrcInfo" style="color:var(--muted);font-size:12.5px"></span>
   </div>
   <div class="sub" style="margin:-6px 0 12px;color:var(--muted);font-size:12.5px">
-    А4 (альбомная) — 6 карточек на лист (3×2); А3 (альбомная) — 12 карточек на лист (4×3).
+    А4 (альбомная) — 6 карточек на лист (3×2); А3 (альбомная) — 8 карточек на лист (4×2).
     Печатаются либо отмеченные карточки, либо все под текущим фильтром — если ничего не отмечено.
+    «Изменения»: за день/неделю — по дате создания или последнего изменения сущности;
+    «Ещё не печатались» — по журналу печати.
     QR-код ведёт на страницу соответствующей сущности/задачи. Подразделения видят только свои карточки; администраторы и координаторы — всю систему.
   </div>
   <div id="cardPages"></div>

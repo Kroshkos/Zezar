@@ -18,12 +18,17 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import Text, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import access
-from app.models.core import Department, Entity, EntityKind, PriorityLevel, StatusSet, User
+from app.db.base import utcnow
+from app.models.core import (
+    CardPrintLog, Department, Entity, EntityKind, PriorityLevel, StatusSet, User,
+)
 from app.models.module_payloads import (
     DocPayload, ProjectPayload, SoftPayload, TaskPayload,
 )
@@ -108,6 +113,24 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             stages_by_project.setdefault(t.project_entity_uid, []).append(t.entity_id)
     task_ids = {e.id: e for e in ents if e.kind == EntityKind.TASK}
 
+    # Журнал печати: последняя дата печати каждой сущности (фильтр
+    # «ещё не печатались» на клиенте). Отдельный запрос — без изменения
+    # updated_at самих сущностей.
+    # CAST(... AS TEXT): без него SQLAlchemy возвращает datetime-объекты и
+    # print-log не может записать в них ISO-строку (TypeError на сервере).
+    printed_map = dict((await session.execute(
+        select(CardPrintLog.entity_id,
+               func.cast(func.max(CardPrintLog.printed_at), Text))
+        .group_by(CardPrintLog.entity_id))).all())
+
+    def _iso(dt):
+        """DateTime (SQLite отдаёт naive) -> ISO с меткой времени для JS."""
+        if dt is None:
+            return ""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
     out: list[dict] = []
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
@@ -182,6 +205,10 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "department_id": ent.owner_department_id,
             "cross_dept": cross,
             "can_edit": access.can_write(perm),
+            # Для фильтров «изменения за день/неделю» и «ещё не печатались»
+            "created_at": _iso(ent.created_at),
+            "updated_at": _iso(ent.updated_at),
+            "printed_at": _iso(printed_map.get(ent.id)),
             "url_path": f"/{ent.module_key}/",
             # QR ведёт на страницу модуля и открывает профиль сущности
             # (общий механизм ?entity=<uid> из static/js/profile.js)
@@ -197,3 +224,25 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
     return {"is_global": ctx.is_global,
             "departments": [{"id": d.id, "name": d.name, "color": d.color or ""} for d in drows],
             "cards": out}
+
+
+async def register_print(session: AsyncSession, user: User, uids: list[str]) -> int:
+    """Записать факт печати карточек (журнал CardPrintLog).
+
+    Пишем по entity_uid; чужие/недоступные uid просто не находятся в реестре.
+    Возвращает количество записанных строк.
+    """
+    if not uids:
+        return 0
+    ids = dict((await session.execute(
+        select(Entity.uid, Entity.id).where(Entity.uid.in_(uids[:2000])))).all())
+    now = utcnow()
+    n = 0
+    for uid in set(uids):
+        ent_id = ids.get(uid)
+        if ent_id is None:
+            continue
+        session.add(CardPrintLog(entity_id=ent_id, user_id=user.id, printed_at=now))
+        n += 1
+    await session.commit()
+    return n

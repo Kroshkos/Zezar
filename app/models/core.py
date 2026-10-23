@@ -230,6 +230,22 @@ class Entity(TimestampMixin, Base):
         lazy="selectin", foreign_keys="EntityShare.entity_id", viewonly=True)
 
 
+class CardPrintLog(Base):
+    """Журнал печати печатных карточек (раздел «Карточки» модуля «Совещания»).
+
+    Одна строка на факт печати карточки конкретным пользователем. Используется
+    для фильтра «Ещё не печатались» и не меняет updated_at сущности (иначе
+    печать сбрасывала бы фильтр «изменения за день/неделю»).
+    """
+    __tablename__ = "card_print_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"),
+                                           index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    printed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class EntityResponsible(TimestampMixin, Base):
     """Ответственный за сущность. Инвариант: по одному от каждого участвующего
     подразделения (своё + все, кому расшарено)."""
