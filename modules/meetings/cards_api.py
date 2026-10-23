@@ -124,9 +124,11 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
         .group_by(CardPrintLog.entity_id))).all())
 
     def _iso(dt):
-        """DateTime (SQLite отдаёт naive) -> ISO с меткой времени для JS."""
+        """DateTime (SQLite отдаёт naive) или строка -> ISO с меткой времени для JS."""
         if dt is None:
             return ""
+        if isinstance(dt, str):
+            return dt
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat()
