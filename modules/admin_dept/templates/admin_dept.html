@@ -108,16 +108,23 @@
   <div class="card pad" style="overflow:auto">
     <h3 style="margin:0 0 10px">🏢 Все подразделения системы</h3>
     <table class="tbl">
-      <thead><tr><th>Подразделение</th><th>Участников</th><th>Модулей включено</th><th style="text-align:right">Действия</th></tr></thead>
+      <thead><tr><th>Подразделение</th><th>Цвет карточек</th><th>Участников</th><th>Модулей включено</th><th style="text-align:right">Действия</th></tr></thead>
       <tbody id="deptsBody">
       {% for d in dept_list %}
         <tr data-did="{{ d.id }}">
           <td><b>{{ d.name }}</b><div class="sub"><code>{{ d.code }}</code>{% if d.description %} · {{ d.description }}{% endif %}{% if not d.is_active %} · <span class="badge b-gray">выключено</span>{% endif %}</div></td>
+          <td>
+            <span class="dept-swatch" title="Цвет левой полосы на печатных карточках (задаёт администратор)"
+                  style="display:inline-flex;align-items:center;gap:6px">
+              <i style="width:18px;height:18px;border-radius:4px;border:1px solid #cbd5e1;display:inline-block;background:{{ d.color or '#01696F' }}"></i>
+              <span class="muted" style="font-size:11px">{{ d.color or 'по умолчанию' }}</span>
+            </span>
+          </td>
           <td><span class="cnt-m">{{ d.member_count }}</span></td>
           <td><span class="cnt-mod">{{ d.modules_enabled }}/{{ d.modules_total }}</span></td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn sm" onclick="openDept({{ d.id }})">Управлять</button>
-            <button class="btn sm ghost" data-name="{{ d.name }}" data-desc="{{ d.description or '' }}"
+            <button class="btn sm ghost" data-name="{{ d.name }}" data-desc="{{ d.description or '' }}" data-color="{{ d.color or '' }}"
                     onclick="editDept({{ d.id }}, this)">✏️</button>
             {% if d.is_active %}
             <button class="btn sm ghost" onclick="setDeptActive({{ d.id }}, false)" title="Деактивировать">🚫</button>
