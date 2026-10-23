@@ -1,0 +1,3 @@
+# CSS/JS — LF всегда, без конвертации
+static/**/*.css text eol=lf
+static/**/*.js text eol=lf
