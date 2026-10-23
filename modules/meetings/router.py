@@ -14,7 +14,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,9 +43,13 @@ async def _cards_count(session: AsyncSession, ctx) -> int:
     """Быстрый счётчик для вкладки «Карточки» (без сборки чек-листов):
     сущности с непустым stages + автономные задачи в поле зрения пользователя."""
     from app.models.module_payloads import (
-        DocPayload, ProjectPayload, SoftPayload, TaskPayload)
+        ProjectPayload, SoftPayload, TaskPayload)
     n = 0
-    for Model in (ProjectPayload, SoftPayload, DocPayload):
+    # workflow-сущности с этапами: только модели, у которых реально есть stages
+    # (у DocPayload поля stages нет — документы получают карточку через задачи-этапы)
+    for Model in (ProjectPayload, SoftPayload):
+        if not hasattr(Model, "stages"):
+            continue
         uids = set(await session.scalars(
             select(Model.entity_id).where(Model.stages.isnot(None))))
         if not uids:
