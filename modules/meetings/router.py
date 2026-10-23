@@ -1,8 +1,12 @@
 """Модуль-плагин «Совещания»: REST + HTML (карточки как renderMeetings() из прототипа).
 
-Специфика (num/chair/secretary/attendees/time/agenda/decisions) — в MeetingPayload;
+Специфика (num/chair/secretary/attendees/time/agenda/decisions/cards) — в MeetingPayload;
 общие поля (title/status/priority/due_date) и права — через ядро (entity_service/access).
 Календарь: событие на дату+время совещания (см. integrations/yandex_calendar._window).
+
+Раздел «Карточки» (cards в payload) — по образу и подобию формы совещания из
+прототипа ИС_Цезарь.html: карточки задач, заведённых на совещании
+(new_tasks -> mPushNewTasksToKanban), с кнопкой переноса в модуль «Задачи».
 """
 from __future__ import annotations
 
@@ -77,6 +81,9 @@ def _meet_dict(ent: Entity, p: MeetingPayload | None, perm: Permission | None,
         "time": (p.time_ if p else "") or "", "location": p.location if p else "",
         "agenda": (p.agenda if p else []) or [],
         "decisions": (p.decisions if p else []) or [],
+        # Раздел «Карточки»: карточки задач, заведённых на совещании
+        # (new_tasks из прототипа ИС_Цезарь.html).
+        "cards": (p.cards if p else []) or [],
         "linked_task_uids": (p.linked_task_uids if p else []) or [],
         "project_entity_uid": p.project_entity_uid if p else None,
         "project_title": project_title or "",
@@ -288,13 +295,13 @@ async def create_meeting(body: MeetingIn, user: User = Depends(get_current_user)
         secretary=body.secretary or None, attendees=body.attendees or None,
         time_=body.time_ or None, location=body.location or None,
         start_at=start_at, project_entity_uid=body.project_entity_uid or None,
-        agenda=[], decisions=[], linked_task_uids=[]))
+        agenda=[], decisions=[], linked_task_uids=[], cards=[]))
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
 _MEET_FIELDS = {"num", "chair", "secretary", "attendees", "location", "agenda",
-                "decisions", "linked_task_uids", "project_entity_uid"}
+                "decisions", "linked_task_uids", "project_entity_uid", "cards"}
 
 
 @router.patch("/{uid}")
