@@ -69,19 +69,29 @@ def _stage_rows(stages: list | None) -> list[dict]:
     return rows
 
 
+def _pick(refs: list, dept: int | None):
+    """Справка подразделения важнее глобального шаблона (department_id=NULL)."""
+    own = [r for r in refs if r.department_id == dept]
+    return own[-1] if own else (refs[0] if refs else None)
+
+
 async def cards_api(user: User, session: AsyncSession) -> dict:
     """Список печатных карточек с учетом прав (изоляция по подразделениям)."""
     ctx = await access.build_context(session, user)
-    # Справочники статусов/приоритетов (метки и цвета — как в прототипе)
+    # Справочники статусов/приоритетов (метки и цвета — как в прототипе).
+    # Глобальные шаблоны + собственные справочники подразделений; при коллизии
+    # ключа приоритет у справки конкретного подразделения.
     labels: dict[tuple[str, str], str] = {}
-    colors: dict[str, str] = {}
-    prlabels: dict[str, str] = {}
-    for s in (await session.scalars(select(StatusSet))).all():
+    stcolor: dict[tuple[str, str], str] = {}
+    prio_refs: dict[tuple[int | None, str], list] = {}
+    for s in (await session.scalars(
+            select(StatusSet).where(StatusSet.is_active == True))).all():  # noqa: E712
         k = s.kind.value if hasattr(s.kind, "value") else str(s.kind)
         labels[(k, s.key)] = s.label
-    for p in (await session.scalars(select(PriorityLevel))).all():
-        colors[p.key] = p.color
-        prlabels.setdefault(p.key, p.label)
+        stcolor[(k, s.key)] = s.color or "b-gray"
+    for p in (await session.scalars(
+            select(PriorityLevel).where(PriorityLevel.is_active == True))).all():  # noqa: E712
+        prio_refs.setdefault((p.department_id, p.key), []).append(p)
 
     ents = (await session.scalars(
         select(Entity).where(access.entity_filter(ctx))
@@ -150,6 +160,9 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             tag = KIND_LABEL.get(ent.kind.value, ent.kind.value)
 
         resp = await _resp_names(session, ent)
+        pk = ent.priority_key or ""
+        pref = _pick(prio_refs.get((ent.owner_department_id, pk), [])
+                     + prio_refs.get((None, pk), []), ent.owner_department_id)
         out.append({
             "uid": ent.uid, "type": card_type, "kind": ent.kind.value,
             "module_key": ent.module_key, "tag": tag,
@@ -157,9 +170,10 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "status_key": ent.status_key or "",
             "status_label": labels.get((ent.kind.value, ent.status_key or ""),
                                        ent.status_key or ""),
-            "priority_key": ent.priority_key or "",
-            "priority_label": prlabels.get(ent.priority_key or "", ent.priority_key or ""),
-            "priority_color": colors.get(ent.priority_key or "", "b-gray"),
+            "status_color": stcolor.get((ent.kind.value, ent.status_key or ""), "b-gray"),
+            "priority_key": pk,
+            "priority_label": (pref.label if pref else "") or pk,
+            "priority_color": (pref.color if pref else "b-gray") or "b-gray",
             "due_date": ent.due_date or "",
             "responsible": resp[0] if resp else "",
             "responsibles": resp,
@@ -169,7 +183,9 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "cross_dept": cross,
             "can_edit": access.can_write(perm),
             "url_path": f"/{ent.module_key}/",
-            "profile_url": f"/{ent.module_key}/?open={ent.uid}",
+            # QR ведёт на страницу модуля и открывает профиль сущности
+            # (общий механизм ?entity=<uid> из static/js/profile.js)
+            "profile_url": f"/{ent.module_key}/?entity={ent.uid}",
         })
 
     if ctx.is_global:

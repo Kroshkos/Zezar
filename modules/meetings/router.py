@@ -39,6 +39,27 @@ async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
         select(EntityShare.id).where(EntityShare.entity_id == ent.id)) is not None
 
 
+async def _cards_count(session: AsyncSession, ctx) -> int:
+    """Быстрый счётчик для вкладки «Карточки» (без сборки чек-листов):
+    сущности с непустым stages + автономные задачи в поле зрения пользователя."""
+    from app.models.module_payloads import (
+        DocPayload, ProjectPayload, SoftPayload, TaskPayload)
+    n = 0
+    for Model in (ProjectPayload, SoftPayload, DocPayload):
+        uids = set(await session.scalars(
+            select(Model.entity_id).where(Model.stages.isnot(None))))
+        if not uids:
+            continue
+        q = select(Entity.id).where(Entity.id.in_(uids), access.entity_filter(ctx))
+        n += len((await session.scalars(q)).all())
+    tq = select(func.count(Entity.id)).where(
+        Entity.kind == EntityKind.TASK, access.entity_filter(ctx),
+        ~Entity.id.in_(select(TaskPayload.entity_id)
+                       .where(TaskPayload.project_entity_uid.isnot(None))))
+    n += await session.scalar(tq) or 0
+    return n
+
+
 class MeetingIn(BaseModel):
     title: str = Field(min_length=2, max_length=500)
     status_key: str | None = None            # planned/held/postponed/canceled (seed MEETING_STATUSES)
@@ -232,6 +253,7 @@ async def meetings_page(request: Request, user: User = Depends(get_current_user)
         page_sub="Повестка, решения и протоколы; события синхронизируются с Яндекс.Календарём",
         counts={MODULE_KEY: len(items)},
         meetings=items,
+        cards_count=await _cards_count(session, ctx),
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         departments=depts, people=people, projects=projects,
     )
