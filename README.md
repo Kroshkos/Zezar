@@ -3,7 +3,7 @@
 Веб-сервис, превращающий статический прототип `sipm_lite_v3.html` в полноценное
 многопользовательское приложение с ролевой моделью, изолированными рабочими
 пространствами (подразделениями), межпространственным шерингом сущностей и
-интеграциями с Яндекс ID / Яндекс.Календарём / Telegram.
+интеграциями с Яндекс.Календарём и Telegram.
 
 ## Технологии
 
@@ -12,7 +12,7 @@
 | Backend | Python 3.12, FastAPI (async) |
 | БД | SQLite (файл строго в `/data`, путь через `.env`), SQLAlchemy 2.x async + aiosqlite |
 | Frontend | Оригинальная вёрстка прототипа + Jinja2 SSR + Vanilla JS (без React/Vue) |
-| Auth | OAuth 2.0 через Яндекс ID; регистрация закрыта (допуск по invite/списку админа) |
+| Auth | Логин + пароль (OAuth Яндекс ID удалён из системы); регистрация закрыта — учётные записи создаёт администратор; env-админ через `ADMIN_USERNAME`/`ADMIN_PASSWORD` |
 | Фоновые задачи | Transactional Outbox + asyncio-воркеры в lifespan (Telegram, CalDAV-синхронизация) |
 | Инфраструктура | Docker / docker-compose, non-root контейнер, healthcheck |
 
@@ -30,13 +30,13 @@ payload-модель, календарный маппер). Реестр под�
 
 ### Ключевые сущности БД
 
-* `User` — роль `ADMIN | COORDINATOR | HEAD | MEMBER`, `yandex_id`, привязки
-  `telegram_chat_id` и зашифрованный (Fernet) app-пароль Яндекс.Диска/Календаря.
+* `User` — роль `ADMIN | COORDINATOR | HEAD | MEMBER`, логин и хеш пароля,
+  привязка `telegram_chat_id` и зашифрованный (Fernet) app-пароль Яндекс.Календаря.
 * `Department → Workspace → WorkspaceModule` — изолированное пространство.
 * `Entity` — полиморфный реестр карточек всех модулей (title/status/priority/due/tags);
   специфика модуля — в его `*_payload` (1:1). Единый механизм шеринга, ответственных,
   аудита и интеграций работает для любого модуля без правок ядра.
-* `EntityShare` — шеринг сущности другому подразделению (`READ | EDIT`).
+* `EntityShare` — шеринг сущности другому подразделению (`READ | EDIT | FULL`).
 * `EntityResponsible` — **по одному ответственному от каждого участвующего
   подразделения** (инвариант обеспечивается на уровне сервиса).
 * `AuditLog` + `OutboxEvent` — транзакционная очередь фоновых задач.
@@ -48,15 +48,16 @@ payload-модель, календарный маппер). Реестр под�
   UID детерминирован → идемпотентность. Область: Member — свои, Head — подразделение,
   Coordinator/Admin — система.
 * **Telegram:** уведомления о создании/редактировании/смене статуса/назначении
-  ответственного с той же областью видимости; бот поддерживает `/start <код>`
-  (привязка), `/tasks`, `/mute`, `/unmute`.
+  ответственного с той же областью видимости; привязка без кодов — бот запрашивает
+  логин и пароль ЦЕЗАРЬ и удаляет сообщения из диалога; команды `/mute`, `/unmute`,
+  `/help`.
 
 Подробная архитектура — в [docs/STEP1_ARCHITECTURE.md](docs/STEP1_ARCHITECTURE.md).
 
 ## Структура проекта
 
 ```
-app/                # ядро: config, security, oauth, RBAC (access.py), реестр модулей,
+app/                # ядро: config, security (логин+пароль), RBAC (access.py), реестр модулей,
                     # модели, роутеры (auth/departments/sharing/admin/pages), шаблоны
 modules/            # плагины: dashboard, tasks, projects, meetings, admin_dept,
                     # docs, softs, grants, schols, priority
@@ -84,13 +85,13 @@ uvicorn app.main:app --reload
 PYTHONPATH=. python scripts/e2e_test.py
 ```
 
-16 сквозных сценариев: OAuth/dev-вход, RBAC, CRUD модулей, outbox-воркер,
+16 сквозных сценариев: вход по логину/паролю, RBAC, CRUD модулей, outbox-воркер,
 шеринг и изоляция пространств, инвариант ответственных, ICS/время совещаний.
 
 ## Деплой в продакшен
 
 См. подробную инструкцию: **[docs/DEPLOY.md](docs/DEPLOY.md)**
-(OAuth Яндекс ID, Telegram-бот, TLS/reverse-proxy, бэкапы).
+(переменные окружения, Telegram-бот, TLS/reverse-proxy, бэкапы).
 
 **Миграции схемы — Alembic**: базовая ревизия `alembic/versions/*baseline*` создаёт всю
 схему (ядро + payload-таблицы модулей); контейнер при старте сам применяет
@@ -104,13 +105,29 @@ PYTHONPATH=. python scripts/e2e_test.py
 | **Amvera** (облачный PaaS) | `amvera.yaml` (окружение `python`/toolchain `pip`) | сборка через venv+pip по `requirements.txt`; ASGI-запуск uvicorn на порту 8080 (`containerPort`); стандартный путь БД `/data/caesar.db` — постоянное хранилище монтируется в `/data` параметром `run.persistenceMount` (по доке [Хранилище и пути](https://docs.amvera.ru/applications/storage.html)). `Dockerfile` — для self-hosted. Инструкция — DEPLOY.md, п. 10 |
 | **Self-hosted VPS** | `docker-compose.yml` + `Dockerfile` | свой nginx/TLS, volume `caesar-data:/data` |
 
-Инструкция для конечных пользователей: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
+## Инструкции по ролям
+
+| Аудитория | Документ | Ключевые темы |
+|---|---|---|
+| Пользователь (участник, MEMBER) | [docs/INSTRUCTION_USER.md](docs/INSTRUCTION_USER.md) | вход по логину и паролю, свои карточки и статусы, ответственные, Telegram/Календарь, частые ситуации |
+| Руководитель подразделения (HEAD) | [docs/INSTRUCTION_HEAD.md](docs/INSTRUCTION_HEAD.md) | создание задач/проектов в своих пространствах, администрирование подразделения, роли участников (повышение/понижение), шеринг, контроль потока |
+| Координатор (COORDINATOR) | [docs/INSTRUCTION_COORDINATOR.md](docs/INSTRUCTION_COORDINATOR.md) | агрегированный дашборд, работа в любом пространстве, помощь руководителям, инварианты системы |
+| Администратор (ADMIN) | [docs/INSTRUCTION_ADMIN.md](docs/INSTRUCTION_ADMIN.md) | общая админка `/admin`: пользователи, пароли и глобальные роли, подразделения, аудит, безопасность |
+| Технические специалисты (dev/devops/support) | [docs/INSTRUCTION_TECH.md](docs/INSTRUCTION_TECH.md) | сборка и запуск, миграции Alembic, тесты, RBAC-модель и кэш прав (`permcache`), диагностика типовых проблем |
+
+Все инструкции учитывают актуальное поведение системы:
+руководитель может создавать сущности в любом пространстве, где он состоит
+(явный выбор своего пространства разрешён); роль в пространстве применяется
+немедленно (перевыпуск cookie с новым `acl_epoch`); понижение последнего
+руководителя запрещено и сопровождается понятным сообщением в интерфейсе.
+
+Полное руководство пользователя: **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**.
 
 ## Безопасность
 
 * В `ENVIRONMENT=production` приложение **не стартует** (fail-fast), если
   `SECRET_KEY` дефолтный/короткий (<32 символов), включён dev-вход или демо-сид,
-  не заданы OAuth-креденшелы.
+  не задан администратор (`ADMIN_USERNAME`/`ADMIN_PASSWORD`).
 * Session-cookie подписан HMAC-SHA256, флаг `Secure` обязателен за HTTPS.
 * App-пароли Яндекс хранятся в БД только в виде Fernet-шифротекста.
 * CSP/XFO/nosniff выдаются middleware'ом; секреты — только через `.env`.

@@ -244,3 +244,41 @@ table.tbl{width:100%;border-collapse:collapse}
 .entlink:hover{color:var(--acc);border-bottom-style:solid}
 a.lchip{text-decoration:none;cursor:pointer;display:inline-block}
 a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
+
+/* ================= Раздел «Карточки» (модуль «Совещания») — дизайн из прототипа ИС_Цезарь.html ================= */
+.segbtns{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.segbtns button{border:0;background:var(--surface);padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted)}
+.segbtns button.on{background:var(--acc);color:#fff}
+.print-controls{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.printpage{background:#fff;margin:0 auto 14px;box-shadow:0 0 0 1px #ddd;display:grid;gap:5mm}
+.printpage.fmt-a4{width:297mm;height:210mm;padding:8mm;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr)}
+.printpage.fmt-a3{width:420mm;height:297mm;padding:10mm;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr)}
+.pcardwrap{position:relative}
+.pcardwrap .pcard{width:100%}
+.pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
+.pcard{border:1.8px solid #ccc;padding:10px 12px 10px 26px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000}
+.pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
+.pcard .ptag{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:4px;color:#fff}
+.pcard .ptitle{font-size:17px;font-weight:800;line-height:1.24;margin-bottom:9px;flex:1}
+.pcard .pmeta{font-size:12.5px;color:#333;margin-bottom:4px}
+.pcard .pbottom{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
+.pcard .pqr{flex:0 0 auto;border-radius:3px}
+.pcard .pid{font-size:10px;color:#999;font-family:monospace}
+.pcard .pdir{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-bottom:3px}
+/* чек-лист этапов (карточка сущности с workflow) */
+.pchecklist{flex:1;overflow:hidden;font-size:12px;margin:2px 0 8px}
+.pchecklist .pk{display:flex;gap:6px;align-items:flex-start;margin-bottom:5px;line-height:1.3}
+.pchecklist .pk .bx{flex:0 0 auto;width:13px;height:13px;border:1.6px solid #555;border-radius:2px;margin-top:1px}
+.pchecklist .pk .tx{flex:1;min-width:0}
+.pchecklist .pk .nm{font-weight:700;word-break:break-word}
+.pchecklist .pk .sm{color:#555;font-size:10.5px}
+/* место для рукописных заметок (карточка автономной задачи) */
+.pnotes{flex:1;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 8px;min-height:70px;background:repeating-linear-gradient(#fff,#fff 23px,#e8ecf3 24px)}
+@media print{
+  .print-controls,.sidebar,.topbar,.segbtns,#cardsFilters,#v-list,#mViews{display:none !important}
+  #cardPages .csel{display:none !important}
+  .pcardwrap:has(.csel:checked){outline:none !important}
+  .pcard{padding-left:12px !important}
+  .printpage{box-shadow:none;page-break-after:always;margin:0}
+  .content{padding:0 !important}
+}
