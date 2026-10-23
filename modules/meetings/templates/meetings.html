@@ -46,6 +46,7 @@
       <select id="c-dept" onchange="renderCardSheets()"><option value="">—</option></select>
     </label>
     <input id="cq" placeholder="🔍 Поиск по названию…" style="flex:1;min-width:180px" oninput="renderCardSheets()">
+    <span style="flex:1"></span>
     <button class="btn sm" onclick="selAllCards(true)">Отметить все</button>
     <button class="btn sm" onclick="selAllCards(false)">Снять</button>
     <button class="btn primary" onclick="window.print()">🖨 Печать</button>

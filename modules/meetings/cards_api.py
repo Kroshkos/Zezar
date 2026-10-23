@@ -75,11 +75,13 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
     # Справочники статусов/приоритетов (метки и цвета — как в прототипе)
     labels: dict[tuple[str, str], str] = {}
     colors: dict[str, str] = {}
+    prlabels: dict[str, str] = {}
     for s in (await session.scalars(select(StatusSet))).all():
         k = s.kind.value if hasattr(s.kind, "value") else str(s.kind)
         labels[(k, s.key)] = s.label
     for p in (await session.scalars(select(PriorityLevel))).all():
         colors[p.key] = p.color
+        prlabels.setdefault(p.key, p.label)
 
     ents = (await session.scalars(
         select(Entity).where(access.entity_filter(ctx))
@@ -156,6 +158,7 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "status_label": labels.get((ent.kind.value, ent.status_key or ""),
                                        ent.status_key or ""),
             "priority_key": ent.priority_key or "",
+            "priority_label": prlabels.get(ent.priority_key or "", ent.priority_key or ""),
             "priority_color": colors.get(ent.priority_key or "", "b-gray"),
             "due_date": ent.due_date or "",
             "responsible": resp[0] if resp else "",

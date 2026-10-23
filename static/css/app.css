@@ -253,7 +253,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 .printpage{background:#fff;margin:0 auto 14px;box-shadow:0 0 0 1px #ddd;display:grid;gap:5mm}
 .printpage.fmt-a4{width:297mm;height:210mm;padding:8mm;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr)}
 .printpage.fmt-a3{width:420mm;height:297mm;padding:10mm;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr)}
-.pcard{border:1.8px solid #ccc;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000}
+.pcardwrap{position:relative}
+.pcardwrap .pcard{width:100%}
+.pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
+.pcard{border:1.8px solid #ccc;padding:10px 12px 10px 26px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000}
 .pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px}
 .pcard .ptag{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:4px;color:#fff}
 .pcard .ptitle{font-size:17px;font-weight:800;line-height:1.24;margin-bottom:9px;flex:1}
@@ -272,7 +275,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 /* место для рукописных заметок (карточка автономной задачи) */
 .pnotes{flex:1;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 8px;min-height:70px;background:repeating-linear-gradient(#fff,#fff 23px,#e8ecf3 24px)}
 @media print{
-  .print-controls,.sidebar,.topbar,.segbtns,#cardsFilters{display:none !important}
+  .print-controls,.sidebar,.topbar,.segbtns,#cardsFilters,#v-list,#mViews{display:none !important}
+  #cardPages .csel{display:none !important}
+  .pcardwrap:has(.csel:checked){outline:none !important}
+  .pcard{padding-left:12px !important}
   .printpage{box-shadow:none;page-break-after:always;margin:0}
   .content{padding:0 !important}
 }
