@@ -217,14 +217,14 @@
     </div>
     <div class="card pad">
       <h3 style="margin:0 0 10px">📜 Последние события системы</h3>
-      {% for e in ov_events.items %}
+      {% for e in ov_events["items"] %}
       <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef2f8;font-size:12px">
         <span><span class="badge {{ 'b-red' if e.level=='error' else ('b-amber' if e.level=='warning' else 'b-blue') }}">{{ e.action }}</span>
           {{ e.object or '' }} <span class="muted">{{ e.message or '' }}</span></span>
         <span class="muted" style="white-space:nowrap">{{ (e.at or '').replace('T',' ').replace('Z','') }}</span>
       </div>
       {% endfor %}
-      {% if not ov_events.items %}<p class="muted">Событий нет.</p>{% endif %}
+      {% if not ov_events["items"] %}<p class="muted">Событий нет.</p>{% endif %}
       <p class="muted" style="font-size:12px;margin-top:8px">Всего в журнале: {{ ov_events.total }} · вкладка «Журнал» — полный список с поиском.</p>
       <button class="btn sm" style="margin-top:6px" onclick="showTab('events')">Открыть журнал →</button>
     </div>
