@@ -278,6 +278,15 @@ async def cards_api_list(user: User = Depends(get_current_user),
     return await _cards_api(user, session)
 
 
+@router.post("/cards/print-log")
+async def cards_print_log(body: dict, user: User = Depends(get_current_user),
+                          session: AsyncSession = Depends(session_dep)):
+    """Журнал печати карточек (для фильтра «Ещё не печатались»)."""
+    from modules.meetings.cards_api import register_print
+    uids = [str(u) for u in (body or {}).get("uids", []) if isinstance(u, str)]
+    return {"logged": await register_print(session, user, uids)}
+
+
 @router.get("/api-list")
 async def list_meetings(user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):

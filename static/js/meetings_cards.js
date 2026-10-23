@@ -7,7 +7,10 @@
 
 const CD = { cards: [], departments: [], is_global: false, loaded: false, loading: false };
 const CSEL = new Set();                       // отмеченные uid (печатаются первыми)
-const PRINT_PER_PAGE = { a4: 6, a3: 12 };     // А4 3×2, А3 4×3 (альбомные)
+// А4 альбомная: 6 карточек (3×2); А3 альбомная: 8 карточек (4×2).
+// Для А3 при 12 ячейках (4×3) карточки не помещаются на лист и наслаиваются
+// друг на друга — поэтому сетка уменьшена до двух рядов.
+const PRINT_PER_PAGE = { a4: 6, a3: 8 };      // см. также grid-template в app.css
 // Справочник badge-классов системы (static/css/app.css) -> печатный HEX
 // (значения подобраны по оригиналу ИС_Цезарь.html: насыщенный цвет плашки/полосы).
 const PRI_HEX = { "b-red": "#dc2626", "b-amber": "#d97706", "b-blue": "#2563eb",
@@ -125,11 +128,16 @@ function cardHTML(c) {
   }
 
   const dname = cdeptName(c.department_id);
-  return `<label class="pcardwrap" data-uid="${esc(c.uid)}" style="display:flex;overflow:hidden">
-    <input type="checkbox" class="csel" style="position:absolute;top:6px;left:6px;z-index:2;margin:0"
-           ${CSEL.has(c.uid) ? 'checked' : ''} onchange="tglCardSel('${esc(c.uid)}',this.checked)">
-    <div class="pcard" style="flex:1;border-left:8px solid ${dcolor}">
-      <div>
+  // Обёртка-ячейка сетки: position:relative для чекбокса выбора; сама карточка
+  // min-height:0 + overflow:hidden — чтобы при переполнении контент не вылезал
+  // за нижнюю границу (QR/подразделение). Чекбокс и «рамка выбора» на печать
+  // не попадают (см. @media print в app.css).
+  return `<div class="pcardwrap" data-uid="${esc(c.uid)}">
+    <input type="checkbox" class="csel no-print" style="position:absolute;top:6px;left:6px;z-index:2;margin:0"
+           ${CSEL.has(c.uid) ? 'checked' : ''} onchange="tglCardSel('${esc(c.uid)}',this.checked)"
+           title="Отметить для печати">
+    <div class="pcard" style="height:100%;min-height:0;border-left:8px solid ${dcolor}">
+      <div style="min-height:0;overflow:hidden">
         <div class="ptop">
           <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
           <span class="pid pdate">${PRINT_DATE}</span>
@@ -139,13 +147,13 @@ function cardHTML(c) {
         <div class="ptitle">${esc(c.title)}</div>
         ${body}
       </div>
-      <div>
+      <div style="min-height:0">
         <div class="pmeta"><b>Срок:</b> ${cfmt(c.due_date)}</div>
         <div class="pmeta">${parts.join(' · ') || '<b>Отв.:</b> —'}</div>
         <div class="pbottom">${qrBlock}</div>
       </div>
     </div>
-  </label>`;
+  </div>`;
 }
 
 /* ---------- выбор карточек для печати ---------- */
@@ -158,6 +166,26 @@ function selAllCards(on) {
   renderCardSheets();
 }
 
+/* ---------- фильтры: тип, подразделение, изменения/печать, поиск ---------- */
+// Значения фильтра «Изменения»: '' — все; '1'/'7' — созданные/изменённые за
+// день/неделю (по created_at/updated_at сущности); 'new' — ещё ни разу не
+// печатались (по журналу card_print_log).
+function recentFilter() {
+  const el = document.getElementById('c-recent');
+  return el ? el.value : '';
+}
+
+function matchesRecent(c) {
+  const mode = recentFilter();
+  if (!mode) return true;
+  if (mode === 'new') return !c.printed_at;
+  const days = Number(mode) || 0;
+  const since = Date.now() - days * 86400000;
+  const ts = Math.max(Date.parse(c.created_at || '') || 0,
+                      Date.parse(c.updated_at || '') || 0);
+  return ts >= since;
+}
+
 function filteredCards() {
   const type = document.getElementById('c-type').value;
   const dept = document.getElementById('c-dept').value;
@@ -166,6 +194,7 @@ function filteredCards() {
     if (type && c.type !== type) return false;
     if (dept && String(c.department_id) !== dept) return false;
     if (q && !(c.title + ' ' + c.tag).toLowerCase().includes(q)) return false;
+    if (!matchesRecent(c)) return false;
     return true;
   });
 }
@@ -179,6 +208,20 @@ function updatePrintSrcInfo(data) {
 }
 
 /* ---------- разбивка на печатные листы ---------- */
+// Динамический @page: размер листа должен соответствовать выбранному формату.
+// Если @page захардкодить (например, A4), браузер масштабирует листы А3 до A4
+// — карточки начинают наслаиваться друг на друга.
+function setCardPageSize(fmt) {
+  let el = document.getElementById('cardPageStyle');
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'cardPageStyle';
+    document.head.appendChild(el);
+  }
+  const size = fmt === 'a3' ? 'A3 landscape' : 'A4 landscape';
+  el.textContent = '@media print{@page{size:' + size + ';margin:5mm}}';
+}
+
 function buildSheetsHtml(data, fmt) {
   const perPage = PRINT_PER_PAGE[fmt] || 6;
   return chunk(data, perPage).map(page =>
@@ -192,6 +235,7 @@ function renderCardSheets() {
   if (!CD.loaded) return;
   const fmt = document.getElementById('c-format').value;
   try { localStorage.setItem('cards_fmt', fmt); } catch (e) {}
+  setCardPageSize(fmt);
   let data;
   if (CSEL.size > 0) {
     data = CD.cards.filter(c => CSEL.has(c.uid));       // отмеченные — независимо от фильтра
@@ -204,6 +248,9 @@ function renderCardSheets() {
 }
 
 /* ---------- печать ----------
+   ВАЖНО: window.print() блокирует JS-поток до закрытия диалога печати,
+   поэтому все изменения DOM (оверлей, класс printing-cards) выполняются ДО
+   вызова; снятие — в событии afterprint + страховочный таймер.
    Листы копируются в изолированный оверлей #printCardsOverlay и печатаются
    через @media print (visibility-подход, как в прототипе). Это гарантирует,
    что на бумаге будут карточки, даже если открыто представление «Список
@@ -211,29 +258,43 @@ function renderCardSheets() {
 async function printCards() {
   if (!CD.loaded) await loadCards();
   const fmt = document.getElementById('c-format').value;
+  setCardPageSize(fmt);                 // @page под выбранный формат (А3/А4)
   const data = CSEL.size > 0 ? CD.cards.filter(c => CSEL.has(c.uid)) : filteredCards();
   if (!data.length) { toast('Нет карточек для печати', 'warn'); return; }
+  // Печатаемые uid: с них снимаем чекбоксы в оверлее и регистрируем печать
+  const printUids = new Set(data.map(c => c.uid));
   const ov = document.getElementById('printCardsOverlay');
   ov.innerHTML = buildSheetsHtml(data, fmt);
+  // Чекбоксы выбора — только для экрана (на бумаге их быть не должно)
+  ov.querySelectorAll('.csel').forEach(i => i.remove());
+  ov.querySelectorAll('.pcardwrap').forEach(w => {
+    if (printUids.has(w.dataset.uid)) w.classList.add('is-printed');
+  });
   // Дождаться загрузки dataURL-изображений QR — иначе печать может выйти пустой
   const imgs = Array.from(ov.querySelectorAll('img'));
   await Promise.all(imgs.map(i => i.complete ? Promise.resolve()
     : new Promise(res => { i.onload = i.onerror = res; })));
   document.body.classList.add('printing-cards');
   ov.classList.add('on');
+  // Страховка на случай, если браузер не поддерживает событие afterprint
+  const cleanup = () => {
+    document.body.classList.remove('printing-cards');
+    ov.classList.remove('on');
+    ov.innerHTML = '';
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup, { once: true });
+  setTimeout(cleanup, 60000);
+  // Журнал печати запускаем ДО print(): код после блокирующего window.print()
+  // может исполниться слишком поздно, а при unsupported afterprint — никогда.
   try {
-    window.print();
-  } finally {
-    // afterprint возвращается не во всех браузерах — ставим и событие, и таймер
-    const cleanup = () => {
-      document.body.classList.remove('printing-cards');
-      ov.classList.remove('on');
-      ov.innerHTML = '';
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup, { once: true });
-    setTimeout(cleanup, 1500);
-  }
+    await api('/api/meetings/cards/print-log', 'POST', { uids: [...printUids] });
+    const nowIso = new Date().toISOString();
+    CD.cards.forEach(c => { if (printUids.has(c.uid)) c.printed_at = nowIso; });
+  } catch (e) {}                                  // журнал не критичен для печати
+  window.print();
+  // Если фильтр «изменения/печать» активен — перечитать выборку (для 'new')
+  if (recentFilter()) renderCardSheets();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
