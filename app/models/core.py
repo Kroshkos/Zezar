@@ -565,3 +565,23 @@ class Notification(Base):
     delivered_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+# ======================= API Tokens (мобильное приложение) =======================
+
+class ApiToken(TimestampMixin, Base):
+    """API-токен для мобильного приложения Zezar-app.
+
+    Токены хранятся в хешированном виде (SHA-256). При создании токена
+    его значение возвращается ОДИН РАЗ — далее в ответе не попадает.
+    """
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # SHA-256 хеш токена (хранится на диске); сам токен — нет
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))  # метка для пользователя (напр. "iPhone")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

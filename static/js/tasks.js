@@ -44,7 +44,9 @@ function renderTaskTable(){
       +'<td><button class="badge '+st.color+'" style="border:0;cursor:pointer;font-family:inherit" title="Нажмите, чтобы сменить статус"'
       +(t.can_edit?'':' disabled')+' onclick="cycleTask(\''+t.uid+'\')">'+st.label+'</button></td>'
       +'<td style="white-space:nowrap">'+(t.can_edit?'<button class="icobtn" onclick="taskFormModal(\''+t.uid+'\')">✏️</button>':'')
-      +(t.can_edit?'<button class="icobtn" onclick="delTask(\''+t.uid+'\')">🗑</button>':'')+'</td></tr>';
+      +(t.can_edit?'<button class="icobtn" onclick="delTask(\''+t.uid+'\')">🗑</button>':'')
+      +'<button class="icobtn" title="QR-код для мобильного приложения" onclick="openQRCode(\''+t.uid+'\')">📱</button>'
+      +'</td></tr>';
   }).join('');
 }
 
@@ -131,4 +133,17 @@ async function shareTask(uid){
 
 // мягкий автообнов счётчика в навигации
 function notifyChanged(){/* можно дернуть /api/tasks/api-list для синхронизации */}
+
+// QR-код для сущности
+function openQRCode(uid){
+  const url='/api/core/entities/'+uid+'/qr';
+  const linkUrl='/api/core/entities/'+uid+'/share-link';
+  
+  // Показываем QR-код в модальном окне
+  const body='<div style="text-align:center"><img id="qrImage" src="'+url+'" style="max-width:300px;border:2px solid #e5e7eb;border-radius:8px" onload="document.getElementById(\'qrLink\').href=\''+linkUrl+'\''+'"><br><br>'
+    +'<a id="qrLink" href="'+linkUrl+'" target="_blank" style="color:#2563eb;font-size:13px">Ссылка для шаринга</a>'
+    +'<p style="font-size:12px;color:#6b7280;margin-top:12px">Сканируйте QR-код в мобильном приложении Zezar</p></div>';
+  openModal('QR-код задачи',body);
+}
+
 document.addEventListener('DOMContentLoaded',renderTaskTable);
