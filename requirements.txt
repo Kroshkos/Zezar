@@ -15,3 +15,7 @@ python-multipart==0.0.20
 # HTTP-клиент (OAuth Яндекс ID, Telegram Bot API, CalDAV WebDAV) и шифрование app-паролей
 httpx==0.28.1
 cryptography==45.0.5
+
+# QR-коды для мобильного приложения
+qrcode==8.2
+Pillow==11.3.0
