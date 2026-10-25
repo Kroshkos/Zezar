@@ -166,22 +166,39 @@ async def send_media(chat_id: int, m: dict, caption: str = "") -> bool:
     return res is not None
 
 
-async def send_message(chat_id: int, text: str, keyboard: list | None = None) -> bool:
-    """Отправить текст; keyboard — список строк inline-кнопок (см. tg_admin.build_keyboard)."""
+async def send_message(chat_id: int, text: str, keyboard: list | dict | None = None) -> bool:
+    """Отправить текст с клавиатурой.
+
+    keyboard — список строк: reply-клавиатура (закреплённые кнопки над полем
+    ввода), если кнопки без callback_data, иначе inline-кнопки под сообщением.
+    dict — служебная клавиатура ({remove_keyboard: True} / {force_reply: ...}).
+    """
     kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if keyboard:
-        kwargs["reply_markup"] = {"inline_keyboard": keyboard}
+        kwargs["reply_markup"] = _markup(keyboard)
     result = await call_bot("sendMessage", **kwargs)
     return result is not None
 
 
+def _is_inline(kb: list) -> bool:
+    return any(b.get("callback_data") for row in kb for b in row)
+
+
+def _markup(keyboard: list | dict) -> dict:
+    if isinstance(keyboard, dict):
+        return keyboard
+    if _is_inline(keyboard):
+        return {"inline_keyboard": keyboard}
+    return {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True}
+
+
 async def edit_message_text(chat_id: int, message_id: int, text: str,
-                            keyboard: list | None = None) -> bool:
-    """Редактировать текст/клавиатуру сообщения бота (ответ на нажатие кнопки)."""
+                            keyboard: list | dict | None = None) -> bool:
+    """Редактировать текст/клавиатуру сообщения бота (ответ на нажатие inline-кнопки)."""
     kwargs = {"chat_id": chat_id, "message_id": message_id,
               "text": text, "parse_mode": "HTML"}
     if keyboard:
-        kwargs["reply_markup"] = {"inline_keyboard": keyboard}
+        kwargs["reply_markup"] = _markup(keyboard)
     result = await call_bot("editMessageText", **kwargs)
     return result is not None
 
@@ -271,15 +288,19 @@ class _LastAsk:
 _last_ask = _LastAsk()
 
 
-async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, list[int], list | None]:
+async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, list[int], list | dict | None]:
     """Обработка входящего апдейта Bot API.
 
-    Возвращает (текст_ответа, [message_id для удаления], inline-клавиатура или None).
+    Возвращает (текст_ответа, [message_id для удаления], клавиатура или None):
+    list — строки кнопок (reply-клавиатура закрепляется над полем ввода,
+    inline — под сообщением), dict — служебная (remove/force_reply).
     Правила ТЗ: после успешной регистрации бот только отправляет уведомления;
     посторонние сообщения обычного пользователя удаляются из чата.
-    Администратор/координатор: полноценный помощник — кнопки админ-меню
-    (integrations/tg_admin.py :: handle_callback) и текстовые команды /report,
-    /broadcast (с фото/видео), /find и т.д. Клавиатура с админ-кнопками
+    Администратор/координатор: полноценный помощник — закреплённая клавиатура
+    админ-меню (integrations/tg_admin.py, нажатия приходят текстом и
+    обрабатываются tg_admin.handle_reply_menu) плюс inline-списки выбора
+    (карточки/рассылки → tg_admin.handle_callback) и текстовые команды
+    /report, /broadcast (с фото/видео), /find и т.д. Клавиатура с админ-кнопками
     прикладывается только если роль пользователя проходит tg_admin._allow,
     поэтому обычным пользователям админские функции недоступны и не видны.
     Сценарий привязки: «логин → пароль», код привязки не используется.
@@ -304,7 +325,7 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
 
         is_adm = await tg_admin._allow(session, user)   # клавиатура — только админу/координатору
 
-        def out(reply: str | None, delete: bool = True, kb: list | None = None):
+        def out(reply: str | None, delete: bool = True, kb: list | dict | None = None):
             return reply, ([mid] if delete and reply is not None else ([] if delete else [mid])), kb
 
         # медиа от администратора: вложение к рассылке / библиотеку.
@@ -325,9 +346,15 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
                     return await tg_admin.cmd_help(session, user, args), [mid], \
                         tg_admin.main_keyboard(is_adm)
                 if cmd == "/start":
-                    # главное меню: кнопки админ-функций (только для админа/координатора)
+                    # главное меню: закреплённая клавиатура админ-функций
+                    # (только для админа/координатора)
                     return await tg_admin.cmd_menu(session, user), [mid], \
                         tg_admin.main_keyboard(is_adm)
+                # нажатие закреплённой reply-кнопки приходит как обычный текст
+                action = tg_admin.menu_action(text)
+                if action is not None:
+                    reply, kb = await tg_admin.handle_reply_menu(session, user, action)
+                    return out(reply, kb=kb)
                 if cmd in ("/cancel", "/pending", "/overdue", "/find", "/task",
                            "/broadcast", "/report", "/media"):
                     # все эти команды — административные; внутри каждой стоит _allow,
@@ -345,7 +372,7 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
                     if cmd == "/media":
                         return ("Отправьте фото или видео следующим сообщением — "
                                 "прикреплю его к следующей рассылке."), [mid], \
-                            tg_admin.back_keyboard()
+                            tg_admin.force_reply("Отправьте фото или видео")
                     fn = {"/cancel": tg_admin.cmd_cancel, "/pending": tg_admin.cmd_pending,
                           "/overdue": tg_admin.cmd_overdue, "/find": tg_admin.cmd_find,
                           "/task": tg_admin.cmd_task}[cmd]

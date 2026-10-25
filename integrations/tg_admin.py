@@ -147,7 +147,19 @@ HELP_ADMIN = (
 )
 
 
-# ---------------- inline-клавиатуры (кнопки видны только админу/координатору) ----------------
+# ---------------- клавиатуры (кнопки видны только админу/координатору) ----------------
+#
+# Навигационные кнопки — закреплённая reply-клавиатура (всегда над полем ввода,
+# Telegram хранит её на уровне чата: одно место — одна актуальная клавиатура).
+# Списки выбора (карточки, рассылки) — inline-кнопки под сообщением.
+# Шаги с текстовым вводом — ReplyKeyboardRemove/ForceReply, чтобы не перехватывать
+# ввод пользователя закреплёнными кнопками.
+
+MENU_BUTTONS = ["📊 Сводка", "⚠️ Просрочки", "📢 Рассылка", "🗂 Мои рассылки",
+                "🔎 Поиск", "🖼 Медиа", "ℹ️ Помощь"]
+
+NAV_BACK = ["🏠 Меню", "✖️ Отмена"]
+
 
 def _btn(text: str, data: str) -> dict:
     return {"text": text, "callback_data": data}
@@ -158,52 +170,61 @@ def _rows(pairs: list[tuple[str, str]], per_row: int = 2) -> list:
     return [btns[i:i + per_row] for i in range(0, len(btns), per_row)]
 
 
+def nav_reply(buttons: list[str], per_row: int = 2) -> list:
+    """Строки reply-клавиатуры (текстовые кнопки — без callback_data)."""
+    return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+
+
 def main_keyboard(is_admin: bool) -> list | None:
-    """Главное меню. Кнопки админ-функций — только если роль прошла _allow."""
+    """Главное меню — закреплённая reply-клавиатура. Пусто, если роль не прошла _allow."""
     if not is_admin:
         return None
-    return _rows([
-        ("📊 Сводка", "adm:report"),
-        ("⚠️ Просрочки", "adm:overdue"),
-        ("📢 Рассылка", "adm:bcast"),
-        ("🗂 Мои рассылки", "adm:pending"),
-        ("🔎 Поиск", "adm:find"),
-        ("📌 Карточка", "adm:task"),
-        ("🖼 Медиа-библиотека", "adm:media"),
-        ("ℹ️ Помощь", "adm:help"),
-    ])
+    return nav_reply(MENU_BUTTONS)
 
 
 def back_keyboard() -> list:
-    return [[_btn("« Меню", "adm:menu")]]
+    """Шаг вне машины рассылки: «вернуться/отменить»reply-кнопками."""
+    return nav_reply(NAV_BACK)
 
 
 def cancel_keyboard() -> list:
-    """Меню + подсказка: отмена рассылки — кнопкой из списка /pending."""
-    return [[_btn("« Меню", "adm:menu")],
-            [_btn("🚫 Отменить рассылку…", "adm:cancelpick")]]
+    """Меню + отмена рассылки — закреплены, пока открыт раздел «Мои рассылки»."""
+    return nav_reply(["🚫 Отменить рассылку…"] + MENU_BUTTONS)
+
+
+def remove_keyboard() -> dict:
+    """Снять закреплённые кнопки (нужно перед шагом текстового ввода)."""
+    return {"remove_keyboard": True}
+
+
+def force_reply(prompt: str) -> dict:
+    """Открыть поле ввода с подсказкой — ответом станет следующий текст."""
+    return {"force_reply": True, "input_field_placeholder": prompt[:64]}
 
 
 def bcast_kb(step: str, rows: list) -> tuple[str, list]:
     """Единый формат шагов машины рассылки: текст + кнопки вместо ввода чисел."""
     return step + "\n\n" + "\n".join(
-        " ".join(f"[{b['text']}]" for b in row) for row in rows), rows
+        " ".join(f"[{b.get('text', '')}]" for b in row) for row in rows), rows
 
 
 def audience_keyboard() -> list:
-    return _rows([(label, f"bc:aud:{key}") for key, label in AUDIENCE_BUTTONS]) \
-        + [[_btn("✖️ Отмена", "bc:cancel")]]
+    """Выбор аудитории — reply-кнопки (машина рассылки перехватывает следующий текст)."""
+    rows = nav_reply([label for _, label in AUDIENCE_BUTTONS])
+    rows.append(nav_reply(["✖️ Отмена"])[0])
+    return rows
 
 
 def dept_keyboard(items: list[tuple[str, str]]) -> list:
-    rows = _rows(items, per_row=1)
-    rows.append([_btn("✖️ Отмена", "bc:cancel")])
+    """Подразделения — reply-кнопки; items: [(название, 'номер')]."""
+    rows = nav_reply([t for t, _ in items], per_row=1)
+    rows.append(nav_reply(["✖️ Отмена"])[0])
     return rows
 
 
 def confirm_keyboard() -> list:
-    return [[_btn("✅ Отправить", "bc:send"), _btn("✖️ Отмена", "bc:cancel")],
-            [_btn("✏️ Изменить текст", "bc:edit"), _btn("➕ Добавить медиа", "bc:addmedia")]]
+    """Подтверждение рассылки — reply-кнопки."""
+    return nav_reply(["✅ Отправить", "✖️ Отмена", "✏️ Текст", "➕ Медиа"])
 
 
 def pending_keyboard(rows: list) -> list:
@@ -213,6 +234,7 @@ def pending_keyboard(rows: list) -> list:
 
 
 def find_keyboard(items: list[tuple[str, str]]) -> list:
+    """Результаты поиска — inline под сообщением (короткий список, не портит меню)."""
     kb = _rows(items, per_row=1)
     kb.append([_btn("🔎 Искать ещё", "adm:find"), _btn("« Меню", "adm:menu")])
     return kb
@@ -258,6 +280,67 @@ async def cmd_cancelpick(session: AsyncSession, user: User) -> tuple[str, list]:
                 for n in rows], per_row=1)
     kb.append([_btn("« Меню", "adm:menu")])
     return "<b>🚫 Выберите рассылку для отмены:</b>", kb
+
+
+# ---------------- закреплённая reply-клавиатура: нажатия приходят как текст ----------------
+
+_REPLY_MENU_MAP = {
+    "📊 Сводка": "report",
+    "⚠️ Просрочки": "overdue",
+    "📢 Рассылка": "bcast",
+    "🗂 Мои рассылки": "pending",
+    "🔎 Поиск": "find",
+    "🖼 Медиа": "media",
+    "ℹ️ Помощь": "help",
+    "🏠 Меню": "menu",
+    "🚫 Отменить рассылку…": "cancelpick",
+}
+
+
+def menu_action(text: str) -> str | None:
+    """Текст сообщения -> действие главного меню (reply-кнопка). None — не кнопка."""
+    return _REPLY_MENU_MAP.get((text or "").strip())
+
+
+async def handle_reply_menu(session: AsyncSession, user: User, action: str,
+                            text_in: str = "") -> tuple[str | None, object]:
+    """Обработка нажатия закреплённой кнопки (для poller'а — обычный текст).
+
+    Возвращает (ответ, клавиатуру): dict — служебная reply-клавиатура
+    (remove/force), list — inline-кнопки под сообщением.
+    """
+    if not await _allow(session, user):
+        return "⛔ Административные кнопки доступны только администраторам и координаторам.", \
+            remove_keyboard()
+    if action == "menu":
+        return await cmd_menu(session, user), main_keyboard(True)
+    if action == "report":
+        return await cmd_report(session, user, ""), back_keyboard()
+    if action == "overdue":
+        return await cmd_overdue(session, user, ""), back_keyboard()
+    if action == "help":
+        return HELP_ADMIN, main_keyboard(True)
+    if action == "media":
+        return ("🖼 <b>Медиа-библиотека</b>\nОтправьте фото или видео следующим "
+                "сообщением — оно будет автоматически прикреплено к следующей рассылке."), \
+            force_reply("Отправьте фото или видео")
+    if action == "pending":
+        return await cmd_pending(session, user, ""), cancel_keyboard()
+    if action == "cancelpick":
+        t, kb = await cmd_cancelpick(session, user)
+        return t + _kb_note(kb), kb
+    if action == "find":
+        t, kb = await cmd_find_kb(session, user)
+        return t + _kb_note(kb), kb
+    if action == "bcast":
+        if text_in:   # /broadcast <текст> — сразу к выбору аудитории
+            return await cmd_broadcast(session, user, text_in)
+        return ("Формат: /broadcast &lt;текст сообщения&gt;\n"
+                "Например: <code>/broadcast Завтра в 10:00 планёрка в переговорной</code>"
+                "\n\n💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
+                "сообщением (до подтверждения)."), \
+            [[_btn("📝 Написать текст", "bc:text"), _btn("« Меню", "adm:menu")]]
+    return None, None
 
 
 # ---------------- обработчик нажатий кнопок ----------------
@@ -321,38 +404,11 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> str | None:
         text, kb = await cmd_broadcast(session, user, "")
         return text + _kb_note(kb)
 
-    # ---- шаги машины рассылки (bc:*) ----
-    if data == "bc:cancel":
-        st = _bcast.pop(int(cid), None)
-        _media_lib.pop(int(cid), None)
-        return "Рассылка отменена, ничего не отправлено." + _kb_note(main_keyboard(True))
-    if data == "bc:back":
-        st = _bcast.get(int(cid))
-        if st is None:
-            return "Черновик рассылки уже закрыт." + _kb_note(main_keyboard(True))
-        st["step"] = "confirm_audience"
-        st["expires"] = time.time() + 900
-        text, kb = await _show_audience(st)
-        return text + _kb_note(kb)
-    if data == "bc:addmedia":
-        st = _bcast.get(int(cid))
-        if st is None:
-            return "Черновик рассылки уже закрыт." + _kb_note(main_keyboard(True))
-        st["expires"] = time.time() + 900
-        return ("📎 Отправьте фото или видео следующим сообщением — добавлю к "
-                f"вложениям (сейчас: {len(st['media'])}). После загрузки снова "
-                "нажмите «Добавить медиа» или подтвердите рассылку.") + _kb_note(confirm_keyboard())
-    if data == "bc:edit":
-        st = _bcast.get(int(cid))
-        if st is None:
-            return "Черновик рассылки уже закрыт." + _kb_note(main_keyboard(True))
-        st["step"] = "edit_text"
-        st["expires"] = time.time() + 900
-        return "✏️ Отправьте новый текст рассылки одним сообщением."
+    # ---- шаги машины рассылки (bc:* — только inline-кнопки ввода текста) ----
     if data == "bc:text":
         st = _bcast.get(int(cid))
         if st is None:
-            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»." \
+            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка». " \
                    + _kb_note(main_keyboard(True))
         st["step"] = "ask_text"
         st["expires"] = time.time() + 900
@@ -360,50 +416,12 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> str | None:
     if data == "bc:send":
         st = _bcast.get(int(cid))
         if st is None or st.get("step") != "confirm":
-            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»." \
-                   + _kb_note(main_keyboard(True))
-        text = await _do_send(session, user, st)
-        return text + _kb_note(main_keyboard(True))
-    if data.startswith("bc:aud:"):
-        mode = data.split(":", 2)[2]
-        st = _bcast.get(int(cid))
-        if st is None:
-            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»." \
-                   + _kb_note(main_keyboard(True))
-        st["expires"] = time.time() + 900
-        if mode in ("all", "heads"):
-            st["audience"] = {"mode": mode}
-            st["step"] = "confirm"
-            text = await _confirm_text(session, st)
-            return text + _kb_note(confirm_keyboard())
-        if mode == "dept":
-            depts = (await session.execute(
-                select(Department.id, Department.name).order_by(Department.name)
-            )).all()
-            if not depts:
-                st["step"] = "confirm_audience"
-                return "Подразделения не заведены." + _kb_note(audience_keyboard())
-            st["depts"] = {str(i + 1): did for i, (did, _) in enumerate(depts)}
-            st["step"] = "ask_dept"
-            items = [(_esc(name)[:36], f"bc:dept:{i + 1}") for i, (did, name) in enumerate(depts[:15])]
-            return "<b>🏢 Выберите подразделение:</b>" + _kb_note(dept_keyboard(items))
-        if mode == "users":
-            st["step"] = "ask_users"
-            return ("🎯 Через запятую укажите логины или фамилии получателей "
-                    "(например: <code>ivanov i, petrov</code>).\n"
-                    "0 — назад к выбору аудитории.")
-        return None
-    if data.startswith("bc:dept:"):
-        st = _bcast.get(int(cid))
-        if st is None or st.get("step") != "ask_dept":
-            return "Шаг рассылки устарел — начните заново." + _kb_note(main_keyboard(True))
-        did = st.get("depts", {}).get(data.split(":", 2)[2])
-        if did is None:
-            return "Такого подразделения нет." + _kb_note(back_keyboard())
-        st["audience"] = {"mode": "department", "department_id": did, "include_head": True}
-        st["step"] = "confirm"
-        text = await _confirm_text(session, st)
-        return text + _kb_note(confirm_keyboard())
+            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»."
+        return await _do_send(session, user, st)
+    if data == "bc:cancel":
+        st = _bcast.pop(int(cid), None)
+        _media_lib.pop(int(cid), None)
+        return "Рассылка отменена, ничего не отправлено." + _kb_note(main_keyboard(True))
     return None
 
 
@@ -646,6 +664,9 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
 async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -> tuple[str | None, list | None]:
     """Второй+ шаги машины /broadcast (текстовый ввод — совместимость с кнопками).
 
+    Нажатия reply-клавиатуры приходят как обычный текст — здесь они и
+    распознаются (по подписям кнопок, числа 1–4 работают как раньше).
+
     Возвращает (ответ, клавиатура) или (None, None), если это не наша ветка."""
     cid = int(user.telegram_chat_id)
     st = _bcast.get(cid)
@@ -662,15 +683,18 @@ async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -
         return await _show_audience(st)
 
     if st["step"] == "confirm_audience":
-        if t == "1":
-            st["audience"] = {"mode": "all"}
+        mode = {"1": "all", "2": "heads", "3": "dept", "4": "users"}.get(t)
+        if mode is None:   # нажатие reply-кнопки приходит подписью текста
+            for key, label in AUDIENCE_BUTTONS:
+                if t == label:
+                    mode = key
+                    break
+        if mode in ("all", "heads"):
+            st["audience"] = {"mode": mode}
             st["step"] = "confirm"
+            st["expires"] = time.time() + 900
             return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
-        if t == "2":
-            st["audience"] = {"mode": "heads"}
-            st["step"] = "confirm"
-            return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
-        if t == "3":
+        if mode == "dept":
             st["step"] = "ask_dept"
             depts = (await session.execute(
                 select(Department.id, Department.name).order_by(Department.name)
@@ -679,36 +703,45 @@ async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -
                 st["step"] = "confirm_audience"
                 return bcast_kb("Подразделения не заведены.", audience_keyboard())
             st["depts"] = {str(i + 1): did for i, (did, _) in enumerate(depts)}
-            items = [(_esc(name)[:36], f"bc:dept:{i + 1}") for i, (did, name) in enumerate(depts[:15])]
+            st["dept_names"] = {name[:36]: did for did, name in depts[:15]}
+            items = [(_esc(name)[:36], str(i + 1)) for i, (did, name) in enumerate(depts[:15])]
             return bcast_kb("<b>🏢 Выберите подразделение:</b>", dept_keyboard(items))
-        if t == "4":
+        if mode == "users":
             st["step"] = "ask_users"
+            st["expires"] = time.time() + 900
             return ("🎯 Через запятую укажите логины или фамилии получателей "
                     "(например: <code>ivanov i, petrov</code>).\n"
-                    "0 — назад к выбору аудитории."), [[_btn("✖️ Отмена", "bc:cancel")]]
-        if t in ("0", "отмена", "cancel"):
+                    "0 — назад к выбору аудитории."), force_reply("логины через запятую")
+        if t in ("0", "отмена", "cancel", "✖️ Отмена"):
             _bcast.pop(cid, None)
+            _media_lib.pop(cid, None)
             return "Рассылка отменена.", main_keyboard(True)
         return "Выберите аудиторию кнопкой (или числом 1–4, 0 — отмена).", \
             audience_keyboard()
 
     if st["step"] == "ask_dept":
         did = st.get("depts", {}).get(t)
+        if did is None:   # reply-кнопка с названием подразделения
+            did = st.get("dept_names", {}).get(t[:36])
         if did is None:
+            if t in ("0", "отмена", "cancel", "✖️ Отмена"):
+                st["step"] = "confirm_audience"
+                return await _show_audience(st)
             return "Такого подразделения нет. Кнопка из списка или 0 — отмена.", \
                 [[_btn("✖️ Отмена", "bc:cancel")]]
         st["audience"] = {"mode": "department", "department_id": did, "include_head": True}
         st["step"] = "confirm"
+        st["expires"] = time.time() + 900
         return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
 
     if st["step"] == "ask_users":
-        if t in ("0", "отмена", "cancel"):
+        if t in ("0", "отмена", "cancel", "✖️ Отмена"):
             st["step"] = "confirm_audience"
             return await _show_audience(st)
         parts = [p.strip().lower() for p in t.replace(";", ",").split(",") if p.strip()]
         if not parts:
             return "Не понял список. Логины/фамилии через запятую или 0 — отмена.", \
-                [[_btn("✖️ Отмена", "bc:cancel")]]
+                force_reply("логины через запятую")
         found_ids, unknown = [], []
         for p in parts:
             u = await session.scalar(
@@ -721,36 +754,40 @@ async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -
                 unknown.append(p)
         if not found_ids:
             return (f"Никого не нашёл по: {_esc(', '.join(unknown))}. Повторите список "
-                    "или 0 — отмена."), [[_btn("✖️ Отмена", "bc:cancel")]]
+                    "или 0 — отмена."), force_reply("логины через запятую")
         st["audience"] = {"mode": "users", "user_ids": sorted(set(found_ids))}
         st["unknown"] = unknown
         st["step"] = "confirm"
+        st["expires"] = time.time() + 900
         return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
 
     if st["step"] == "confirm":
         low = t.lower()
-        if low in ("да", "ok", "yes", "✅", "отправить"):
+        if low in ("да", "ok", "yes", "✅", "отправить") or t == "✅ Отправить":
             text_ = await _do_send(session, user, st)
-            return text_ + _kb_note(main_keyboard(True)), main_keyboard(True)
-        if low in ("нет", "отмена", "cancel", "0", "✖️"):
+            return text_, main_keyboard(True)
+        if low in ("нет", "отмена", "cancel", "0", "✖️") or t == "✖️ Отмена":
             _bcast.pop(cid, None)
             _media_lib.pop(cid, None)
             return "Рассылка отменена, ничего не отправлено.", main_keyboard(True)
-        if low in ("текст", "редактировать"):
+        if low in ("текст", "редактировать") or t == "✏️ Текст":
             st["step"] = "edit_text"
-            return "Отправьте новый текст рассылки одним сообщением.", None
-        if low.startswith("+") or low.startswith("добавить"):
+            st["expires"] = time.time() + 900
+            return "✏️ Отправьте новый текст рассылки одним сообщением.", \
+                force_reply("новый текст рассылки")
+        if low.startswith("+") or low.startswith("добавить") or t == "➕ Медиа":
             # добавить ещё медиа: библиотека остаётся, шаг не меняется
             return ("Отправьте фото/видео — добавлю к вложениям "
-                    f"(сейчас: {len(st['media'])}). Для подтверждения напишите «да»."
-                    + _kb_note(confirm_keyboard()), confirm_keyboard())
-        return ("Напишите «да» — отправить, «текст» — изменить, «+» — ещё медиа, "
-                "«нет» — отмена.") + _kb_note(confirm_keyboard()), confirm_keyboard()
+                    f"(сейчас: {len(st['media'])}). Для подтверждения напишите «да»."), \
+                remove_keyboard()
+        return ("Нажмите кнопку «✅ Отправить», либо текстом: «да» — отправить, "
+                "«текст» — изменить, «+» — ещё медиа, «нет» — отмена."), confirm_keyboard()
 
     if st["step"] == "edit_text":
         st["body"] = t
         st["title"] = t.split("\n", 1)[0][:120]
         st["step"] = "confirm"
+        st["expires"] = time.time() + 900
         return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
     return None, None
 
@@ -769,8 +806,8 @@ async def _confirm_text(session: AsyncSession, st: dict) -> str:
             f"<i>{_esc(st['body'])}</i>\n\n"
             f"Аудитория: {mode_labels.get(aud.get('mode'), aud.get('mode'))} — ~{cnt} получ.{unk}"
             f"{media_note}\n\n"
-            "Нажмите «✅ Отправить» (или текстом: «да» — отправить, «текст» — изменить, "
-            "«+» — добавить медиа, «нет» — отмена)")
+            "Кнопки закреплены над полем ввода: «✅ Отправить», «✖️ Отмена», "
+            "«✏️ Текст», «➕ Медиа»")
 
 
 async def _audience_count(session, aud: dict) -> int:
@@ -867,22 +904,19 @@ async def handle_media(session: AsyncSession, user: User, msg: dict) -> tuple[st
     if st is not None:
         st["media"].append(info)
         st["expires"] = time.time() + 900
+        note_head = (f"📎 Добавлено {mtype} ({_fmt_size(info['size'])}), всего вложений: "
+                     f"{len(st['media'])}.")
         if st.get("audience"):
             st["step"] = "confirm"
             text, kb = bcast_kb(await _confirm_text(session, st), confirm_keyboard())
-            note = (f"📎 Добавлено {mtype} ({_fmt_size(info['size'])}), всего вложений: "
-                    f"{len(st['media'])}.\n\n{text}")
-            return note, kb
+            return f"{note_head}\n\n{text}", kb
         a_text, a_kb = await _show_audience(st)
-        note = (f"📎 Добавлено {mtype} ({_fmt_size(info['size'])}), всего вложений: "
-                f"{len(st['media'])}.\n\n{a_text}")
-        return note, a_kb
+        return f"{note_head}\n\n{a_text}", a_kb
     lib = _media_lib.setdefault(cid, [])
     lib.append(info)
     return (f"📎 Файл загружен в библиотеку ({_fmt_size(info['size'])}) — "
             f"{mtype}. Он будет прикреплён к следующей рассылке автоматически.\n"
-            f"В библиотеке: {len(lib)}."), [[_btn("📢 Начать рассылку", "adm:bcast"),
-                                             _btn("« Меню", "adm:menu")]]
+            f"В библиотеке: {len(lib)}."), main_keyboard(True)
 
 
 def attach_pending_media(st: dict, cid: int) -> None:
