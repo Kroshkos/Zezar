@@ -3,13 +3,19 @@
 Все эндпоинты — под Bearer-аутентификацией API-токенов (app/routers/token_auth.py),
 права — через штатный RBAC-механизм ядра (access.build_context / resolve_permission).
 
-  GET  /api/mobile/bootstrap          профиль + подразделения + модули + справочники
-  GET  /api/mobile/entities           карточки (filter: module_key, kind, dept_id, q)
-  GET  /api/mobile/entities/{uid}     одна карточка по uid
-  POST /api/mobile/tasks              создать задачу
-  PATCH /api/mobile/entities/{uid}    изменить карточку (статус/приоритет/сроки/описание)
+  GET   /api/mobile/bootstrap          профиль + подразделения + модули + справочники
+  GET   /api/mobile/entities           карточки (filter: module_key, kind, dept_id, q)
+  GET   /api/mobile/entities/{uid}     одна карточка по uid
+  POST  /api/mobile/tasks              создать задачу
+  PATCH /api/mobile/entities/{uid}     изменить карточку (статус/приоритет/сроки/описание)
+  POST  /api/mobile/push/register      зарегистрировать Expo Push Token устройства
+  POST  /api/mobile/push/unregister    удалить подписку устройства
+  GET   /api/mobile/events             лента событий (?since_id=N&wait=сек — long-poll)
+  POST  /api/mobile/events/read        отметить события прочитанными
 """
 from __future__ import annotations
+
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -18,11 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access, entity_service, refdata
 from app.core.config import get_settings
+from app.db.base import utcnow
 from app.deps import session_dep
 from app.models.core import (
     Department, DepartmentMember, Entity, EntityKind, EntityShare,
     Role, User, Workspace, WorkspaceModule,
 )
+from app.models.mobile import MobileEvent, PushSubscription
 from app.routers.token_auth import get_current_user_from_token
 
 router = APIRouter(
@@ -273,3 +281,119 @@ async def patch_entity(uid: str, body: MobileEntityPatch,
     await session.commit()
     await session.refresh(ent)
     return _entity_brief(ent, perm, await _resp_names(session, ent))
+
+
+# ======================= Push-подписки =======================
+
+class PushRegisterIn(BaseModel):
+    expo_token: str = Field(min_length=10, max_length=120)
+    platform: str = Field(default="ios", pattern="^(ios|android|web)$")
+    device_label: str | None = None
+
+
+@router.post("/push/register")
+async def push_register(body: PushRegisterIn,
+                        user: User = Depends(get_current_user_from_token),
+                        session: AsyncSession = Depends(session_dep)):
+    """Зарегистрировать Expo Push Token устройства пользователя (идемпотентно)."""
+    sub = await session.scalar(
+        select(PushSubscription).where(PushSubscription.expo_token == body.expo_token))
+    if sub is None:
+        session.add(PushSubscription(
+            user_id=user.id, expo_token=body.expo_token,
+            platform=body.platform, device_label=body.device_label,
+            is_active=True, last_seen_at=utcnow()))
+    else:
+        # токен мог «переехать» на другого пользователя (сброс приложения) —
+        # перепривязываем и реактивируем
+        sub.user_id, sub.platform = user.id, body.platform
+        sub.is_active, sub.fail_count = True, 0
+        sub.last_seen_at = utcnow()
+    await session.commit()
+    return {"ok": True}
+
+
+class PushUnregisterIn(BaseModel):
+    expo_token: str = Field(min_length=10, max_length=120)
+
+
+@router.post("/push/unregister")
+async def push_unregister(body: PushUnregisterIn,
+                          user: User = Depends(get_current_user_from_token),
+                          session: AsyncSession = Depends(session_dep)):
+    """Деактивировать подписку устройства (при выходе из приложения)."""
+    sub = await session.scalar(
+        select(PushSubscription).where(
+            PushSubscription.expo_token == body.expo_token,
+            PushSubscription.user_id == user.id))
+    if sub:
+        sub.is_active = False
+        await session.commit()
+    return {"ok": True}
+
+
+# ======================= Лента событий (long-poll) =======================
+
+def _event_brief(ev: MobileEvent) -> dict:
+    return {
+        "id": ev.id, "type": ev.type, "title": ev.title, "body": ev.body or "",
+        "entity_uid": ev.entity_uid, "module_key": ev.module_key,
+        "payload": ev.payload_json or {},
+        "created_at": ev.created_at.isoformat() if ev.created_at else None,
+        "read_at": ev.read_at.isoformat() if ev.read_at else None,
+    }
+
+
+@router.get("/events")
+async def list_events(
+    since_id: int = 0,
+    wait: int = 0,           # сек. long-poll (0..25) — ждём новые события
+    limit: int = 50,
+    user: User = Depends(get_current_user_from_token),
+    session: AsyncSession = Depends(session_dep),
+):
+    """События пользователя c id > since_id; опционально — долгое голосование."""
+    wait = max(0, min(wait, 25))
+    deadline = asyncio.get_event_loop().time() + wait
+
+    async def _query():
+        return (await session.scalars(
+            select(MobileEvent)
+            .where(MobileEvent.user_id == user.id, MobileEvent.id > since_id)
+            .order_by(MobileEvent.id.desc()).limit(min(max(limit, 1), 200)))).all()
+
+    events = await _query()
+    while not events and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(1.5)
+        # long-poll: сессия держит snapshot — начинаем новую транзакцию
+        await session.rollback()
+        events = await _query()
+
+    unread = await session.scalar(
+        select(func.count(MobileEvent.id)).where(
+            MobileEvent.user_id == user.id, MobileEvent.read_at.is_(None)))
+    return {"events": [_event_brief(e) for e in events],
+            "unread": int(unread or 0),
+            "last_id": max([e.id for e in events], default=since_id)}
+
+
+class EventsReadIn(BaseModel):
+    ids: list[int] = []
+    all: bool = False
+
+
+@router.post("/events/read")
+async def mark_events_read(body: EventsReadIn,
+                           user: User = Depends(get_current_user_from_token),
+                           session: AsyncSession = Depends(session_dep)):
+    """Отметить события прочитанными (по списку id или все сразу)."""
+    from sqlalchemy import update as _upd
+    cond = [MobileEvent.user_id == user.id, MobileEvent.read_at.is_(None)]
+    if not body.all:
+        if not body.ids:
+            return {"ok": True, "updated": 0}
+        cond.append(MobileEvent.id.in_(body.ids))
+    res = await session.execute(_upd(MobileEvent).where(*cond)
+                                 .values(read_at=utcnow()))
+    await session.commit()
+    return {"ok": True, "updated": res.rowcount or 0}

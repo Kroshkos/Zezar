@@ -123,6 +123,28 @@ async def main() -> int:
         assert r.status_code == 200, (r.status_code, r.text[:200])
         print("OK  legacy /api/core/departments via Bearer")
 
+        # 9b. push-подписка + лента событий (v1.3)
+        r = await c.post("/api/mobile/push/register", headers=H,
+                         json={"expo_token": "ExponentPushToken[smoketest000000]",
+                               "platform": "ios", "device_label": "Smoke iPhone"})
+        assert r.status_code == 200, r.text
+        print("OK  push/register")
+
+        r = await c.get("/api/mobile/events?since_id=0&wait=0", headers=H)
+        assert r.status_code == 200, r.text
+        feed = r.json()
+        assert "events" in feed and "unread" in feed, r.text
+        print(f"OK  events feed (unread={feed['unread']}, last_id={feed['last_id']})")
+
+        # патч чужой карточки другим пользователем → событие в ленте владельца;
+        # но проще: создали/патчили сами — себе не шлём. Проверяем read no-op и unregister.
+        r = await c.post("/api/mobile/events/read", headers=H, json={"all": True})
+        assert r.status_code == 200, r.text
+        r = await c.post("/api/mobile/push/unregister", headers=H,
+                         json={"expo_token": "ExponentPushToken[smoketest000000]"})
+        assert r.status_code == 200, r.text
+        print("OK  events/read + push/unregister")
+
         # 10. отзыв токена -> снова 401
         r = await c.post("/api/auth/token-revoke", headers=H)
         assert r.status_code == 200, r.text

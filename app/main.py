@@ -36,6 +36,7 @@ def _import_all_models() -> None:
     """Ядро + payload-таблицы должны быть импортированы до create_all."""
     import app.models.core            # noqa: F401
     import app.models.module_payloads  # noqa: F401
+    import app.models.mobile           # noqa: F401  (push_subscriptions, mobile_events)
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +695,12 @@ async def lifespan(app: FastAPI):
                 tasks.append(asyncio.create_task(tg_poller(stop)))
         except Exception as e:  # noqa: BLE001
             log.warning("workers disabled: %s", e)
+        # push-воркер Zezar-app (Expo Push): независим от integrations/*
+        try:
+            from app.workers.push_worker import push_worker
+            tasks.append(asyncio.create_task(push_worker(stop)))
+        except Exception as e:  # noqa: BLE001
+            log.warning("push worker disabled: %s", e)
 
     yield
 
