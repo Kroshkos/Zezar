@@ -79,26 +79,30 @@ function stageRow(s){
 }
 function addStage(){document.getElementById('pstagebox').insertAdjacentHTML('beforeend',stageRow({}));}
 
-/* ---------- Холст маршрута (упрощённая версия wfCanvasHTML из прототипа) ----------
-   !important: в profile.js уже есть функция wfCanvasHTML — объявление через window.*,
-   чтобы не перекрывать её и не зависеть от порядка загрузки скриптов. */
-window.wfCanvasHTML = function(p){
-  const st=p.stages||[];
-  if(!st.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте этапы при редактировании.</div>';
-  const STEP={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Готово','b-green'],rejected:['Отклонён','b-red']};
-  let h='<label>🧭 Холст маршрута</label><div style="overflow-x:auto"><div style="display:flex;gap:8px;align-items:stretch;padding:6px 2px">';
-  st.forEach((s,i)=>{
-    const w=STEP[s.state]||['—','b-gray'];
-    h+='<div style="min-width:170px;max-width:210px;border:1px solid #cfd8e8;border-radius:12px;padding:9px;background:#fff">'
-      +'<div style="font-weight:600;font-size:12.5px">'+esc(s.name)+'</div>'
-      +'<div style="margin-top:5px"><span class="badge '+w[1]+'">'+w[0]+'</span></div>'
-      +(s.deadline?'<div style="font-size:11.5px;color:var(--muted);margin-top:5px">⏰ '+pfmt(s.deadline)+'</div>':'')
-      +(s.taskId?'<div style="font-size:11px;color:var(--muted);margin-top:3px">автозадача ✓</div>':'')
-      +'</div>';
-    if(i<st.length-1)h+='<div style="align-self:center;color:#94a3b8">→</div>';
-  });
-  h+='</div></div>';
-  return h;
+/* ---------- Холст маршрута ----------
+   Полноценный интерактивный холст (Obsidian-like) живёт в wf_canvas.js,
+   который подключается на странице ДО projects.js и задаёт window.wfCanvasHTML
+   (просмотр с координатами/связями) и window.wfCanvasEditor (редактор).
+   Здесь — только резервный рендерер на случай, если wf_canvas.js не загрузился. */
+if (!window.wfCanvasHTML) {
+  window.wfCanvasHTML = function(p){
+    const st=p.stages||[];
+    if(!st.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте этапы при редактировании.</div>';
+    const STEP={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Готово','b-green'],rejected:['Отклонён','b-red']};
+    let h='<label>🧭 Холст маршрута</label><div style="overflow-x:auto"><div style="display:flex;gap:8px;align-items:stretch;padding:6px 2px">';
+    st.forEach((s,i)=>{
+      const w=STEP[s.state]||['—','b-gray'];
+      h+='<div style="min-width:170px;max-width:210px;border:1px solid #cfd8e8;border-radius:12px;padding:9px;background:#fff">'
+        +'<div style="font-weight:600;font-size:12.5px">'+esc(s.name)+'</div>'
+        +'<div style="margin-top:5px"><span class="badge '+w[1]+'">'+w[0]+'</span></div>'
+        +(s.deadline?'<div style="font-size:11.5px;color:var(--muted);margin-top:5px">⏰ '+pfmt(s.deadline)+'</div>':'')
+        +(s.taskId?'<div style="font-size:11px;color:var(--muted);margin-top:3px">автозадача ✓</div>':'')
+        +'</div>';
+      if(i<st.length-1)h+='<div style="align-self:center;color:#94a3b8">→</div>';
+    });
+    h+='</div></div>';
+    return h;
+  };
 }
 
 function renderProjCards(){

@@ -13,6 +13,11 @@
    (автоукладка слева направо), связи восстанавливаются по порядку/branches. */
 "use strict";
 
+// esc может не быть, если wf_canvas.js загружен раньше core.js — своя копия
+const _wfEsc = (typeof esc === "function") ? esc
+  : s => String(s == null ? "" : s).replace(/[&<>"']/g,
+      c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
 const WF_STEP = {pending: ["Ожидает", "#94a3b8"], active: ["В работе", "#2563eb"],
                  done: ["Готово", "#16a34a"], rejected: ["Отклонён", "#dc2626"]};
 const WF_NODE_W = 190, WF_NODE_H = 88, WF_GRID = 24;
@@ -104,13 +109,13 @@ function _wfShell(st, opts) {
     const w = WF_STEP[_wfState(n)] || WF_STEP.pending;
     const dl = n.deadline ? '<div class="wf-dl">⏰ ' + String(n.deadline).split("-").reverse().join(".") + '</div>' : "";
     const tk = n.taskId ? '<span class="wf-tk" title="Автозадача создана">🤖</span>' : "";
-    html += '<div class="wf-node st-' + _wfState(n) + '" data-id="' + esc(n.id) + '"'
+    html += '<div class="wf-node st-' + _wfState(n) + '" data-id="' + _wfEsc(n.id) + '"'
       + ' style="left:' + n.x + 'px;top:' + n.y + 'px;width:' + WF_NODE_W + 'px">'
       + '<div class="wf-head"><span class="wf-dot" style="background:' + w[1] + '"></span>'
-      + '<span class="wf-name">' + esc(n.name || "") + '</span>' + tk + '</div>'
+      + '<span class="wf-name">' + _wfEsc(n.name || "") + '</span>' + tk + '</div>'
       + '<div class="wf-state" style="color:' + w[1] + '">' + w[0] + '</div>' + dl
-      + (opts.editable ? '<button type="button" class="wf-add" data-id="' + esc(n.id) + '" title="Добавить этап после этого">＋→</button>'
-        + '<button type="button" class="wf-del" data-id="' + esc(n.id) + '" title="Удалить этап">✕</button>' : "")
+      + (opts.editable ? '<button type="button" class="wf-add" data-id="' + _wfEsc(n.id) + '" title="Добавить этап после этого">＋→</button>'
+        + '<button type="button" class="wf-del" data-id="' + _wfEsc(n.id) + '" title="Удалить этап">✕</button>' : "")
       + '</div>';
   });
   html += '</div>';
