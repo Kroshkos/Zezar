@@ -133,3 +133,18 @@ PYTHONPATH=. python scripts/e2e_test.py
 * Session-cookie подписан HMAC-SHA256, флаг `Secure` обязателен за HTTPS.
 * App-пароли Яндекс хранятся в БД только в виде Fernet-шифротекста.
 * CSP/XFO/nosniff выдаются middleware'ом; секреты — только через `.env`.
+
+## Сайт документации и новостей
+
+Сайт вынесен в **отдельный репозиторий**: https://github.com/Kroshkos/zezar.docs
+
+Схема работы (по желанию владельца):
+* папка `news/*.md` в том репозитории → раздел «Новости» на сайте;
+* папка `docs/*.md` → раздел «Документация»;
+* при деплое на Amvera генератор `content_site.py` собирает всё в `static/content.json`.
+
+Формат front-matter (`title`, `date`, `order`, `tag`) и инструкция по добавлению
+материалов — в README того репозитория. В этом приложении путь `/docs` делает
+редирект на внешний сайт (URL задаётся в константе `_DOCS_SITE_URL` в `app/main.py`).
+
+логика — в `app/content_site.py`, эндпоинт данных — `GET /docs/content.json`.

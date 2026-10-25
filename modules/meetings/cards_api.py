@@ -236,7 +236,10 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "responsible": resp[0] if resp else "",
             "responsibles": resp,
             "participants": sorted(set(executors + resp)),
-            "stages": stages,
+            # Чек-лист этапов в содержании карточки больше не печатается:
+            # текущий этап показывается отдельной плашкой (current_stage).
+            # Поле оставлено пустым для обратной совместимости клиента.
+            "stages": [],
             # текущий этап маршрута — плашка в карточке (как приоритет); None у
             # карточек-задач и сущностей без этапов
             "current_stage": _current_stage_of(stages) if card_type == "entity" else None,
