@@ -21,12 +21,13 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import notify
+from integrations import telegram_service as tg
 from app.core.access import build_context
 from app.core.config import get_settings
 from app.core.events import log_event
@@ -76,12 +77,29 @@ class AudienceIn(BaseModel):
     include_head: bool = True
 
 
+class MediaIn(BaseModel):
+    file_id: str = Field(min_length=5)   # Telegram file_id, загруженный ботом
+    type: str = "photo"                  # photo | video
+    caption: str | None = None
+
+
 class BroadcastIn(BaseModel):
     title: str = Field(min_length=2, max_length=300)
     body: str = Field(min_length=1)
     send_at: datetime              # naive = локальное время сервера трактуем как UTC
     audience: AudienceIn
     template_id: int | None = None
+    media: list[MediaIn] = []      # опциональные фото/видео вложения (file_id из TG)
+
+    @field_validator("media")
+    @classmethod
+    def _check_media(cls, v: list[MediaIn]):
+        if len(v) > 10:
+            raise ValueError("Не более 10 вложений")
+        for m in v:
+            if m.type not in ("photo", "video"):
+                raise ValueError(f"Недопустимый тип вложения: {m.type}")
+        return v
 
 
 def _validate_scenario_body(b: ScenarioIn):
@@ -382,6 +400,55 @@ async def audience_preview(department_id: int | None = None, mode: str = "all",
     return {"total": len(users), "telegram_linked": linked}
 
 
+@router.post("/admin/notify/upload-media")
+async def upload_broadcast_media(file: UploadFile = File(...),
+                                 caption: str | None = Form(None),
+                                 user: User = Depends(get_current_user),
+                                 session: AsyncSession = Depends(session_dep)):
+    """Загрузка фото/видео для рассылки из веб-админки.
+
+    Файл пересылается ботом в чат администратора (sendPhoto/sendVideo) — так
+    получается постоянный file_id того же бота, которым затем доставляем
+    вложения всем получателям (своё хранилище не нужно). Без привязанного
+    Telegram у пользователя медиа для рассылок недоступно.
+    """
+    await _require_admin(session, user)
+    if not user.telegram_chat_id:
+        raise HTTPException(422, "У вас не привязан Telegram — пришлите файл боту или привяжите аккаунт")
+    mime = file.content_type or ""
+    if mime.startswith("image/"):
+        mtype, tg_method = "photo", "sendPhoto"
+    elif mime.startswith("video/"):
+        mtype, tg_method = "video", "sendVideo"
+    else:
+        raise HTTPException(422, f"Поддерживаются только фото и видео (получено: {mime or 'unknown'})")
+    data = await file.read()
+    max_mb = 50 if mtype == "video" else 10
+    if len(data) > max_mb * 1024 * 1024:
+        raise HTTPException(422, f"Файл больше {max_mb} МБ")
+    result = await tg.upload_media_to_chat(int(user.telegram_chat_id), data,
+                                           file.filename or mtype, mime)
+    if result is None:
+        raise HTTPException(502, "Telegram не принял файл. Попробуйте другой формат.")
+    msg = result.get("result") or {}
+    if mtype == "photo":
+        photos = msg.get("photo") or []
+        fid = photos[-1]["file_id"] if photos else ""
+        size = photos[-1].get("file_size", len(data)) if photos else len(data)
+    else:
+        vid = msg.get("video") or {}
+        fid = vid.get("file_id", "")
+        size = vid.get("file_size", len(data))
+    if not fid:
+        raise HTTPException(502, "Не удалось получить file_id ответа Telegram")
+    await log_event(session, "notify_media_upload", category="admin", user=user,
+                    object=f"media:{fid[:24]}",
+                    message=f"Загружено вложение {mtype} «{file.filename}» ({size} Б)")
+    await session.commit()
+    return {"ok": True, "file_id": fid, "type": mtype, "caption": caption or "",
+            "size": size, "name": file.filename}
+
+
 @router.post("/admin/notify/broadcast")
 async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_user),
                            session: AsyncSession = Depends(session_dep)):
@@ -404,7 +471,8 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
     n = Notification(title=title, body=text_body, send_at=send_at,
                      audience_json=body.audience.model_dump(),
                      status="scheduled", created_by=user.id,
-                     recipients_count=len(users))
+                     recipients_count=len(users),
+                     media_json=[m.model_dump() for m in body.media] or None)
     session.add(n)
     await session.flush()
     if send_at <= datetime.now(timezone.utc).replace(tzinfo=None):
@@ -418,6 +486,7 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
     await session.commit()
     return {"ok": True, "id": n.id, "recipients": len(users),
             "immediate": n.status == "sending",
+            "media": len(body.media),
             "send_at": send_at.isoformat(timespec="minutes")}
 
 
@@ -430,6 +499,7 @@ async def list_broadcasts(user: User = Depends(get_current_user),
     return {"items": [{"id": r.id, "title": r.title, "body": (r.body or "")[:300],
                        "send_at": r.send_at.isoformat(timespec="minutes"),
                        "status": r.status, "audience": r.audience_json,
+                       "media": len(r.media_json or []),
                        "recipients": r.recipients_count, "delivered": r.delivered_count,
                        "sent_at": r.sent_at.isoformat(timespec="seconds") if r.sent_at else None}
                       for r in rows]}

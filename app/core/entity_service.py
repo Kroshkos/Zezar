@@ -68,7 +68,10 @@ async def create_entity(
         uid=_uid(), kind=kind, module_key=module_key,
         owner_department_id=owner_department_id, title=title,
         description=description, status_key=status_key, priority_key=priority_key,
-        due_date=due_date, tags=tags or [], extra_json=extra_json or {},
+        due_date=due_date, tags=tags or [],
+        # created_by — автор карточки: используется планировщиком напоминаний
+        # (notify.schedule_due_reminders), чтобы не слать автору «сам себе»
+        extra_json={**(extra_json or {}), "created_by": user.id},
         sync_state=SyncState.PENDING, cal_uid=f"caesar-{uuid.uuid4().hex[:10]}@app",
     )
     # Исполнители (несколько, как в прототипе): денормализованно в extra_json —
@@ -219,7 +222,7 @@ async def create_entity(
             "action": "create", "event_keys": ["created"],
             "entity_id": ent.id, "entity_uid": ent.uid,
             "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-            "actor": user.display_name,
+            "actor": user.display_name, "actor_user_id": user.id,
             "details": {"note": f"Создана новая сущность ({ent.module_key})"},
             "link": link_for(ent.uid, ent.kind.value),
             "target_user_ids": others,
@@ -336,7 +339,7 @@ async def update_entity(
                 "event_keys": sorted(ACTION_EVENT_KEYS.get(action, {action})),
                 "entity_id": ent.id, "entity_uid": ent.uid,
                 "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-                "actor": user.display_name,
+                "actor": user.display_name, "actor_user_id": user.id,
                 "details": {"changed": changed, "old_status": old_status,
                             "due_date": ent.due_date},
                 "link": link_for(ent.uid, ent.kind.value),
@@ -497,7 +500,7 @@ async def _emit_assigned(session: AsyncSession, actor: User, ent: Entity,
         "event_keys": sorted(ACTION_EVENT_KEYS.get("reassign", {"assigned"})),
         "entity_id": ent.id, "entity_uid": ent.uid,
         "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-        "actor": actor.display_name,
+        "actor": actor.display_name, "actor_user_id": actor.id,
         "details": {"due_date": ent.due_date},
         "link": link_for(ent.uid, ent.kind.value),
         "target_user_ids": targets,
@@ -522,7 +525,7 @@ async def _log_and_emit(session: AsyncSession, user: User, action: str,
         "event_keys": sorted(ACTION_EVENT_KEYS.get(action, {action})),
         "entity_id": ent.id, "entity_uid": ent.uid,
         "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
-        "actor": user.display_name, "details": details,
+        "actor": user.display_name, "actor_user_id": user.id, "details": details,
         "link": link_for(ent.uid, ent.kind.value),
     }))
     if action != "delete":

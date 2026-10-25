@@ -122,6 +122,50 @@ RESET_HINT = ("🔄 Окно ввода пароля закрыто. Чтобы 
               "<b>логин</b> от системы ЦЕЗАРЬ одним сообщением.")
 
 
+async def upload_media_to_chat(chat_id: int, data: bytes, filename: str, mime: str) -> dict | None:
+    """Загрузить фото/видео (multipart) в чат бота и вернуть сырой ответ Bot API.
+
+    Используется веб-админкой: файл попадает в чат администратора, а Telegram
+    возвращает message с photo/video[].file_id — постоянным для этого бота.
+    Дальше этот file_id переиспользуется в sendPhoto/sendVideo для всех
+    получателей рассылки без повторной загрузки файла.
+    """
+    s = get_settings()
+    if not s.telegram_bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
+    method = "sendPhoto" if mime.startswith("image/") else "sendVideo"
+    field = "photo" if method == "sendPhoto" else "video"
+    async with _bot_session() as client:
+        r = await client.post(
+            BOT_API.format(token=s.telegram_bot_token, method=method),
+            data={"chat_id": chat_id},
+            files={field: (filename, data, mime)})
+    if r.status_code != 200:
+        log.warning("TG %s(upload) failed %s: %s", method, r.status_code, r.text[:200])
+        return None
+    return r.json()
+
+
+async def send_media(chat_id: int, m: dict, caption: str = "") -> bool:
+    """Отправить вложение (photo/video) по file_id бота.
+
+    file_id привязан к боту и перевыпускается сколько угодно раз — повторная
+    загрузка файла не нужна. При протухшем file_id Telegram вернёт ошибку —
+    считаем доставку медиа неудачной (текст всё равно уходит).
+
+    ВАЖНО: Bot API принимает параметр именно как ``photo``/``video`` (имя метода),
+    а не универсальный ``media`` (это только у sendMediaGroup).
+    """
+    method = "sendPhoto" if m.get("type") == "photo" else "sendVideo"
+    cap = (m.get("caption") or caption or "")[:1024] or None
+    kwargs = {"chat_id": chat_id, method.lower(): m["file_id"]}
+    if cap:
+        kwargs["caption"] = cap
+        kwargs["parse_mode"] = "HTML"
+    res = await call_bot(method, **kwargs)
+    return res is not None
+
+
 async def send_message(chat_id: int, text: str) -> bool:
     result = await call_bot("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
     return result is not None
@@ -208,21 +252,70 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
     """Обработка входящего апдейта Bot API.
 
     Возвращает (текст_ответа, [message_id для удаления]).
-    Правила ТЗ: после успешной регистрации бот только отправляет сообщения;
-    любые входящие сообщения пользователя удаляются из чата.
+    Правила ТЗ: после успешной регистрации бот только отправляет уведомления;
+    посторонние сообщения обычного пользователя удаляются из чата.
+    Администратор/координатор: полноценный помощник — команды /report,
+    /broadcast (с фото/видео), /find и т.д. см. integrations/tg_admin.py.
     Сценарий привязки: «логин → пароль», код привязки не используется.
     """
     msg = upd.get("message") or upd.get("edited_message")
-    if not msg or "text" not in msg:
+    if not msg:
         return None, []
     _gc_pending()
     chat_id = msg["chat"]["id"]
-    text = msg["text"].strip()
     mid = msg["message_id"]
+    text = (msg.get("text") or "").strip()
     user = await session.scalar(select(User).where(User.telegram_chat_id == str(chat_id)))
 
     # --- пользователь уже привязан: команды обрабатываем, остальное удаляем молча ---
     if user is not None:
+        from integrations import tg_admin
+
+        # медиа от администратора: вложение к рассылке / библиотеку.
+        # ВАЖНО: проверяем до text-ветки — у фото/видео бывает caption
+        # (подпись к файлу), это всё равно медиа-сообщение.
+        if ("photo" in msg or "video" in msg or "document" in msg):
+            if await tg_admin._allow(session, user):
+                reply = await tg_admin.handle_media(session, user, msg)
+                return reply, ([mid] if reply else [])
+            return None, [mid]   # обычный пользователь прислал мусор — удаляем
+
+        if text:
+            cmd, _, args = text.partition(" ")
+            cmd = cmd.lower().split("@", 1)[0]
+            # команды привязки/общие — всегда через startswith (обработка ниже)
+            if not cmd.startswith(("/unbind", "/mute", "/unmute")):
+                if cmd == "/help":
+                    return await tg_admin.cmd_help(session, user, args), [mid]
+                if cmd == "/start":
+                    return await tg_admin.cmd_help(session, user, ""), [mid]
+                if cmd in ("/cancel", "/pending", "/overdue", "/find", "/task",
+                           "/broadcast", "/report", "/media"):
+                    # все эти команды — административные; внутри каждой стоит _allow,
+                    # но для обычного пользователя корректный ответ — «удалить молча»,
+                    # а не служебное сообщение про права (иначе тест member-поведения
+                    # и UX ломаются: бот не должен светить существование команд).
+                    if not await tg_admin._allow(session, user):
+                        return None, [mid]
+                    if cmd == "/broadcast":
+                        return await tg_admin.cmd_broadcast(session, user, args), [mid]
+                    if cmd == "/report":
+                        return await tg_admin.cmd_report(session, user, args), [mid]
+                    if cmd == "/media":
+                        return ("Отправьте фото или видео следующим сообщением — "
+                                "прикреплю его к следующей /broadcast."), [mid]
+                    fn = {"/cancel": tg_admin.cmd_cancel, "/pending": tg_admin.cmd_pending,
+                          "/overdue": tg_admin.cmd_overdue, "/find": tg_admin.cmd_find,
+                          "/task": tg_admin.cmd_task}[cmd]
+                    return await fn(session, user, args), [mid]
+                # текст без слэша: может быть шагом машины /broadcast
+                reply = await tg_admin.handle_broadcast_input(session, user, text)
+                if reply is not None:
+                    return reply, [mid]
+                if await tg_admin._allow(session, user):
+                    return "Неизвестная команда. Список — /help", [mid]
+                return None, [mid]   # «просто удаляет» сообщения пользователя
+
         if text.startswith("/unbind"):
             user.telegram_chat_id = None
             user.telegram_bind_code = None

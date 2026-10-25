@@ -311,6 +311,41 @@
     } catch (e) { pv.textContent = ''; }
   }
 
+  /* ---------------- Вложения рассылки (фото/видео) ---------------- */
+  const naMedia = [];   // [{file_id,type,caption,size,name}]
+
+  function naRenderMedia() {
+    const el = document.getElementById('bcMediaList');
+    if (!el) return;
+    if (!naMedia.length) { el.innerHTML = ''; return; }
+    el.innerHTML = naMedia.map((m, i) =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0">` +
+      `${m.type === 'photo' ? '🖼' : '🎬'} ${m.name || m.file_id.slice(0, 12)} ` +
+      `(${Math.round((m.size || 0) / 1024)} КБ)` +
+      `<button type="button" class="btn sm ghost" onclick="naRemoveMedia(${i})">✕</button></span>`
+    ).join('');
+  }
+
+  window.naRemoveMedia = function (i) { naMedia.splice(i, 1); naRenderMedia(); };
+
+  window.naAddMedia = async function (input) {
+    for (const f of input.files) {
+      if (naMedia.length >= 10) { toast('Не более 10 вложений', false); break; }
+      const fd = new FormData();
+      fd.append('file', f);
+      try {
+        const r = await fetch('/api/core/admin/notify/upload-media', {
+          method: 'POST', credentials: 'same-origin', body: fd });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+        naMedia.push({ file_id: data.file_id, type: data.type, size: data.size, name: data.name });
+        toast(`📎 ${data.name} загружен (${data.type})`, true);
+      } catch (e) { toast('⛔ ' + e.message, false); }
+    }
+    input.value = '';
+    naRenderMedia();
+  };
+
   /* ---------------- Форма рассылки ---------------- */
   function initBroadcastForm() {
     const frm = document.getElementById('bcFrm');
@@ -344,11 +379,13 @@
         title, body: bodyTxt,
         send_at: new Date(frm.send_at.value).toISOString(),
         audience: aud,
+        media: naMedia.map(m => ({ file_id: m.file_id, type: m.type, caption: m.caption || null })),
       };
       try {
         const r = await jsend('/api/core/admin/notify/broadcast', 'POST', payload);
         toast(`📨 Рассылка №${r.id}: ${r.recipients} получателей${r.immediate ? ' — отправляется сразу' : ' — запланирована'}`, true);
         frm.title.value = ''; frm.body.value = '';
+        naMedia.length = 0; naRenderMedia();
         naLoadHistory(); loadOutbox(); loadStatus();
       } catch (e) { toast('⛔ ' + e.message, false); }
     });

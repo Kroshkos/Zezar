@@ -117,16 +117,48 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         # адресное событие: цели НЕ обязаны уже быть в карте получателей
         # (слот исполнителя мог ещё не создаться к моменту enqueue)
         recipients = {int(t): ["resp", "exec"] for t in targets if t}
+    # автор действия не должен получать уведомление о собственном действии
+    # (спам «сам себе» при смене статуса/редактировании своей карточки).
+    # ВАЖНО: для широких событий (не адресных) исключаем автора только если у
+    # него есть слот ответственного (роль 'resp'). Плоский список
+    # extra_json['executors'] может содержать автора как purely-информационного
+    # исполнителя — такие назначения делаются осознанно (см. set_executors),
+    # и уведомление «вам назначено исполнение» автору-исполнителю не является
+    # спамом «сам себе».
+    actor_uid = p.get("actor_user_id")
+    if actor_uid:
+        if targets:
+            # Для адресных событий фильтрация обычно сделана на этапе enqueue
+            # (entity_service исключает актёра из target_user_ids), но payload
+            # мог быть поставлен другим кодом (бот, админ-панель) без этой
+            # проверки — исключаем автора действия здесь всегда, иначе автор
+            # получает уведомление «сам себе» (спам).
+            recipients.pop(int(actor_uid), None)
+        elif "resp" in recipients.get(int(actor_uid), []):
+            recipients.pop(int(actor_uid), None)
     if not recipients:
-        raise RuntimeError(
-            f"нет получателей уведомления ({p.get('action')}) у сущности "
-            f"{p.get('entity_uid')} — никто не назначен")
+        # Получателей нет вообще (сущность без ответственных/исполнителей или
+        # все исключены как авторы действия). Для адресных событий (есть
+        # target_user_ids) это аномалия — поднимаем ошибку, чтобы событие
+        # осталось видным во вкладке «Очередь доставки» админ-панели.
+        # Для широких событий (напр. напоминание о сроке задачи, где
+        # единственный участник — её автор) — штатная ситуация «в никуда»:
+        # иначе планировщик при каждом проходе ставит их заново и очередь
+        # забивается 8-кратными ретраями.
+        if targets:
+            raise RuntimeError(
+                f"нет получателей уведомления ({p.get('action')}) у сущности "
+                f"{p.get('entity_uid')} — никто не назначен")
+        log.info("tg notify (%s): нет получателей у %s — событие пропущено",
+                 p.get("action"), p.get("entity_uid"))
+        return
     ctx = notify_core.build_ctx(p)
     event_keys = set(p.get("event_keys") or [p.get("action", "")])
     kinds = p.get("kind", "")
     module = p.get("module", "")
     scn_cache: dict[int, tuple[set, dict]] = {}
     delivered = 0
+    eligible = 0          # получатели, которым сообщение положено по сценариям
     skipped_no_chat: list[str] = []
     skipped_filter = 0
     for uid, roles in recipients.items():
@@ -146,6 +178,7 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         if not keys_hit:
             skipped_filter += 1
             continue
+        eligible += 1
         scn = None
         for k in sorted(keys_hit):
             cand = vis.get(k)
@@ -156,13 +189,22 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         ok = await tg.send_message(int(u.telegram_chat_id), text_)
         if ok:
             delivered += 1
+    if delivered == 0 and eligible > 0:
+        # Реальная попытка отправки была и не удалась — ошибка, будет ретрай.
+        raise RuntimeError(
+            f"уведомление не доставлено ни одному адресату из {eligible}: "
+            f"ошибка Telegram API (send_message вернул False)")
     if delivered == 0:
-        reason = ("адресаты не привязаны к Telegram (chat_id отсутствует; "
-                  "нужно написать боту /start)" if skipped_no_chat and
-                  skipped_no_chat == [str(x) for x in recipients.keys()] else
-                  f"получателей: {len(recipients)}, без chat_id: {len(skipped_no_chat)}, "
-                  f"отфильтровано по сценариям: {skipped_filter}")
-        raise RuntimeError(f"уведомление не доставлено ни одному адресату: {reason}")
+        # Никому не положено (все отфильтрованы по сценариям) или нет chat_id —
+        # это штатная ситуация «обработано в никуда», а не ошибка: иначе
+        # планировщик reminder-событий при каждом проходе ставит их заново и
+        # очередь забивается 8-кратными ретраями.
+        log.info("tg notify (%s): %s не доставлено — событие завершено без ошибки",
+                 p.get("action"),
+                 f"нет привязанных к Telegram адресатов {skipped_no_chat}"
+                 if skipped_no_chat else
+                 f"получателей: {len(recipients)}, отфильтровано по сценариям: {skipped_filter}")
+        return
 
 
 async def _handle_tg_notify(session, p: dict) -> None:
@@ -207,14 +249,22 @@ async def _handle_tg_manual(session, p: dict) -> None:
         User.id.in_(ids), User.is_active.is_(True)))).all()) if ids else []
     sent = 0
     base = (_gs().public_base_url or "").rstrip("/")
+    media = n.media_json or []
     for u in users:
         body = (n.body or "").replace("{name}", u.display_name).replace("{login}", u.login or "")
         text_ = f"<b>📢 {tg._esc(n.title)}</b>\n\n{tg._esc(body)}\n\n🔗 {base}"
         if u.telegram_chat_id and u.telegram_optout != "all":
+            # сначала медиа (фото/видео), затем текст — как в мессенджерах;
+            # сбой вложения не отменяет доставку текста
+            for m in media:
+                try:
+                    await tg.send_media(int(u.telegram_chat_id), m)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("broadcast #%s: media send failed user=%s: %s", n.id, u.login, e)
             if await tg.send_message(int(u.telegram_chat_id), text_):
                 sent += 1
         else:
-            # Telegram не привязан — сохраняем внутри系统的 уведомление в журнале,
+            # Telegram не привязан — сохраняем внутреннее уведомление в журнале,
             # чтобы пользователь увидел его при входе (banner на /dashboard)
             log.info("manual notify #%s: пользователь %s не привязан к Telegram", n.id, u.login)
     n.delivered_count = sent

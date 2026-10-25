@@ -24,3 +24,14 @@ async def my_tasks_text(session: AsyncSession, chat_id: int) -> str:
     for t in mine[:15]:
         out.append(f"• {t.title} — до {t.due_date or '—'} ({t.status_key})")
     return "\n".join(out)
+
+
+# ---------------- команды администратора (делегирование в tg_admin) ----------------
+# Реестр и обработчики вынесены в integrations/tg_admin.py, чтобы модуль
+# запросов не тял Bot API и машину состояний рассылки.
+
+from integrations.tg_admin import (  # noqa: E402,F401
+    AUDIENCE_BUTTONS, HELP_ADMIN, attach_pending_media, cmd_broadcast, cmd_cancel,
+    cmd_find, cmd_help, cmd_overdue, cmd_pending, cmd_report, cmd_task,
+    download_and_rehost_file, handle_broadcast_input, handle_media, overdue_entities,
+)

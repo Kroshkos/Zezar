@@ -471,6 +471,10 @@
         <label class="sub">Подразделение<select name="department_id" class="adm-inp" id="bcDeptSel"></select></label>
         <label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" name="include_head" checked> включить руководителя подразделения</label>
       </div>
+      <label class="sub">Вложения — фото/видео (необязательно)
+        <input type="file" id="bcMedia" accept="image/*,video/*" multiple class="adm-inp" onchange="naAddMedia(this)">
+      </label>
+      <div id="bcMediaList" class="muted" style="font-size:13px"></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" type="submit">📨 Отправить</button>
         <span id="bcPreview" class="muted"></span>
@@ -541,6 +545,10 @@
         <label class="sub">Подразделение<select name="department_id" class="adm-inp" id="bcDeptSel"></select></label>
         <label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" name="include_head" checked> включить руководителя подразделения</label>
       </div>
+      <label class="sub">Вложения — фото/видео (необязательно)
+        <input type="file" id="bcMedia" accept="image/*,video/*" multiple class="adm-inp" onchange="naAddMedia(this)">
+      </label>
+      <div id="bcMediaList" class="muted" style="font-size:13px"></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" type="submit">📨 Отправить</button>
         <span id="bcPreview" class="muted"></span>

@@ -1,16 +1,241 @@
 {% extends "base.html" %}
-{# Дашборд: карточки KPI в стиле виджетов демо #}
+{# Дашборд v2: KPI-полоса, карточки модулей, недельный тренд, распределение
+   статусов, просрочки/контроль, активность, загрузка, рассылки и интеграции. #}
 {% block content %}
-<div class="frow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">
-  {% for s in stats %}
-  <div class="card pad"><div style="font-size:26px;font-weight:800">{{ s.value }}</div>
-    <div class="sub">{{ s.label }}</div></div>
-  {% endfor %}
-  <div class="card pad"><div style="font-size:26px;font-weight:800;color:#dc2626">{{ overdue }}</div>
-    <div class="sub">⚠ Просрочено</div></div>
-  <div class="card pad"><div style="font-size:26px;font-weight:800;color:#2563eb">{{ pending_sync }}</div>
-    <div class="sub">🔄 Ждут синхронизации с календарём</div></div>
+<style>
+.dbw-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.dbw-stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.dbw-stat .v{font-size:30px;font-weight:800;letter-spacing:-1px;line-height:1.05}
+.dbw-stat .l{color:var(--muted);font-size:12px;font-weight:700;margin-top:3px}
+.dbw-stat .t{position:absolute;top:12px;right:14px;font-size:16px;opacity:.9}
+.dbw-stat.warn .v{color:#dc2626}.dbw-stat.ok .v{color:#16a34a}.dbw-stat.acc .v{color:#4f46e5}
+.dbw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-bottom:18px}
+.dbw-mod{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;cursor:pointer;transition:.15s;box-shadow:var(--shadow)}
+.dbw-mod:hover{transform:translateY(-2px);border-color:#c7d2fe}
+.dbw-mod .hd{display:flex;align-items:center;gap:8px;font-weight:800;font-size:13.5px;margin-bottom:8px}
+.dbw-mod .n{font-size:26px;font-weight:800;letter-spacing:-1px}
+.dbw-mod .meta{display:flex;gap:10px;color:var(--muted);font-size:11.5px;font-weight:600;margin-top:6px}
+.dbw-mod .od{color:#dc2626;font-weight:800}
+.dbw-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:14px}
+.dbw-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow);min-width:0}
+.dbw-card h3{margin:0 0 12px;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
+.dbw-card h3 .sp{flex:1}
+.dbw-empty{color:var(--muted);font-size:12.5px;padding:10px 2px}
+/* тренд */
+.tr-chart{display:flex;align-items:flex-end;gap:10px;height:120px;padding:4px 2px 0}
+.tr-day{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:3px;height:100%}
+.tr-bars{display:flex;gap:3px;align-items:flex-end;height:92px}
+.tr-bar{width:12px;border-radius:4px 4px 2px 2px;min-height:2px}
+.tr-bar.c{background:linear-gradient(180deg,#818cf8,#4f46e5)}
+.tr-bar.d{background:linear-gradient(180deg,#34d399,#059669)}
+.tr-lab{font-size:10px;color:var(--muted);font-weight:700}
+.tr-legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);font-weight:700;margin-top:8px}
+.tr-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+/* распределение статусов */
+.sd-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12.5px}
+.sd-lab{width:130px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sd-track{flex:1;height:10px;background:#edf1f8;border-radius:99px;overflow:hidden}
+.sd-fill{height:100%;border-radius:99px}
+.sd-num{width:34px;text-align:right;font-weight:800}
+/* списки задач */
+.tk-item{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px dashed #eef1f7}
+.tk-item:last-child{border-bottom:none}
+.tk-item a{font-weight:750;font-size:13px;color:#1e293b;text-decoration:none;line-height:1.3}
+.tk-item a:hover{color:#4f46e5}
+.tk-sub{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;align-items:center}
+.tk-chip{font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px;background:#f1f5f9;color:#475569}
+.tk-due{margin-left:auto;white-space:nowrap;font-weight:800;font-size:11.5px;color:#475569}
+.tk-due.bad{color:#dc2626}.tk-due.warn{color:#d97706}
+.dot{display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:5px;vertical-align:0}
+/* лента */
+.ac-item{display:flex;gap:9px;padding:7px 0;border-bottom:1px dashed #eef1f7;font-size:12.5px;line-height:1.35}
+.ac-item:last-child{border-bottom:none}
+.ac-time{color:var(--muted);font-size:11px;white-space:nowrap;padding-top:1px;width:78px}
+.ac-item b{color:#334155}
+.ac-item a{color:#1e293b;text-decoration:none;font-weight:700}
+.ac-item a:hover{color:#4f46e5}
+/* загрузка */
+.wl-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px}
+.wl-name{width:150px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-track{flex:1;height:10px;background:#edf1f8;border-radius:99px;overflow:hidden}
+.wl-fill{height:100%;border-radius:99px}
+.wl-num{width:56px;text-align:right;color:var(--muted);font-weight:700;font-size:11.5px}
+/* health */
+.hl-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.hl-cell{background:#f8fafc;border:1px solid #eef1f7;border-radius:10px;padding:10px 12px}
+.hl-cell .v{font-size:19px;font-weight:800}
+.hl-cell .l{font-size:11px;color:var(--muted);font-weight:700;margin-top:2px}
+.hl-cell.bad .v{color:#dc2626}.hl-cell.good .v{color:#16a34a}.hl-cell.neutral .v{color:#2563eb}
+.bc-item{padding:7px 0;border-bottom:1px dashed #eef1f7;font-size:12.5px;display:flex;gap:8px;align-items:baseline}
+.bc-item:last-child{border-bottom:none}
+.st-pill{font-size:10px;font-weight:800;border-radius:99px;padding:2px 8px;text-transform:uppercase}
+.st-sent{background:#dcfce7;color:#166534}.st-scheduled{background:#fef3c7;color:#92400e}.st-sending{background:#dbeafe;color:#1e40af}
+</style>
+
+{# ============ Полоса главных чисел ============ #}
+<div class="dbw-hero">
+  <div class="dbw-stat acc"><div class="t">🗂️</div><div class="v">{{ totals.all }}</div><div class="l">Всего в реестре</div></div>
+  <div class="dbw-stat"><div class="t">⚡</div><div class="v">{{ totals.active }}</div><div class="l">В работе</div></div>
+  <div class="dbw-stat {{ 'warn' if totals.overdue else 'ok' }}"><div class="t">⏰</div><div class="v">{{ totals.overdue }}</div><div class="l">Просрочено</div></div>
+  <div class="dbw-stat {{ 'warn' if totals.urgent else '' }}"><div class="t">🔥</div><div class="v">{{ totals.urgent }}</div><div class="l">Срочный приоритет</div></div>
+  <div class="dbw-stat ok"><div class="t">✅</div><div class="v">{{ totals.done_pct }}%</div><div class="l">Готовность реестра</div></div>
+  <div class="dbw-stat {{ 'warn' if totals.my_overdue else '' }}"><div class="t">🙋</div><div class="v">{{ totals.my_active }}</div><div class="l">Мои активные задачи{% if totals.my_overdue %} · {{ totals.my_overdue }} проср.{% endif %}</div></div>
 </div>
-<p class="sub" style="margin-top:14px">Данные изолированы по вашим рабочим пространствам;
+
+{# ============ Карточки модулей ============ #}
+{% if kpi %}
+<div class="dbw-grid">
+  {% for m in kpi %}
+  <div class="dbw-mod" onclick="location.href='{{ m.url }}'" title="Открыть «{{ m.title }}»">
+    <div class="hd"><span>{{ m.icon }}</span>{{ m.title }}</div>
+    <div class="n">{{ m.total }}</div>
+    <div class="pbar blue" style="margin-top:8px"><i style="width:{{ m.pct }}%"></i></div>
+    <div class="meta">
+      <span>▶ {{ m.active }} в работе</span>
+      {% if m.overdue %}<span class="od">⚠ {{ m.overdue }}</span>{% endif %}
+      <span style="margin-left:auto">{{ m.pct }}% ✓</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ============ Тренд + распределение статусов ============ #}
+<div class="dbw-cols">
+  <div class="dbw-card">
+    <h3>📈 Динамика за неделю <span class="sp"></span>
+      <span style="font-size:11.5px;color:var(--muted);font-weight:700">выполнение: {{ trend.comp_rate }}%</span></h3>
+    <div class="tr-chart">
+      {% for d in trend.days %}
+      <div class="tr-day">
+        <div class="tr-bars">
+          <div class="tr-bar c" style="height:{{ (100 * d.created / trend.max)|round }}px" title="Создано: {{ d.created }}"></div>
+          <div class="tr-bar d" style="height:{{ (100 * d.done / trend.max)|round }}px" title="Звершено/смена статуса: {{ d.done }}"></div>
+        </div>
+        <div class="tr-lab">{{ d.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="tr-legend">
+      <span><i class="tr-dot" style="background:#4f46e5"></i>создано — {{ trend.week_created }}</span>
+      <span><i class="tr-dot" style="background:#059669"></i>завершено — {{ trend.week_done }}</span>
+    </div>
+  </div>
+
+  <div class="dbw-card">
+    <h3>🧭 Активные задачи по статусам</h3>
+    {% if status_dist %}
+      {% set sd_max = status_dist | map(attribute='count') | max %}
+      {% for s in status_dist %}
+      <div class="sd-row">
+        <div class="sd-lab" title="{{ s.label }}">{{ s.label }}</div>
+        <div class="sd-track"><div class="sd-fill" style="width:{{ (100 * s.count / sd_max)|round }}%;background:{{ s.color }}"></div></div>
+        <div class="sd-num">{{ s.count }}</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dbw-empty">Активных задач нет 🎉</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ============ Просрочено / На контроле ============ #}
+<div class="dbw-cols">
+  <div class="dbw-card">
+    <h3>⏰ Просрочено <span class="sp"></span>
+      {% if overdue_list %}<span style="font-size:11px;font-weight:800;color:#dc2626">{{ overdue_list|length }} из {{ totals.overdue }}</span>{% endif %}</h3>
+    {% for it in overdue_list %}
+    <div class="tk-item">
+      <div style="min-width:0;flex:1">
+        <a href="/{{ it.module }}/?entity={{ it.uid }}">{{ it.title }}</a>
+        <div class="tk-sub">
+          <span class="tk-chip" style="background:{{ it.status_color }}18;color:{{ it.status_color }}"><i class="dot" style="background:{{ it.status_color }}"></i>{{ it.status_label }}</span>
+          <span class="tk-chip">{{ it.dept }}</span>
+          {% if it.resp %}<span class="tk-chip">👤 {{ it.resp }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="tk-due bad">просрочено<br>{{ it.due }}<br>({{ -it.days }} дн.)</div>
+    </div>
+    {% else %}
+      <div class="dbw-empty">Просроченных задач нет ✅</div>
+    {% endfor %}
+  </div>
+
+  <div class="dbw-card">
+    <h3>🎯 На контроле — ближайшие 7 дней</h3>
+    {% for it in due_soon_list %}
+    <div class="tk-item">
+      <div style="min-width:0;flex:1">
+        <a href="/{{ it.module }}/?entity={{ it.uid }}">{{ it.title }}</a>
+        <div class="tk-sub">
+          <span class="tk-chip" style="background:{{ it.status_color }}18;color:{{ it.status_color }}"><i class="dot" style="background:{{ it.status_color }}"></i>{{ it.status_label }}</span>
+          <span class="tk-chip">{{ it.dept }}</span>
+          {% if it.resp %}<span class="tk-chip">👤 {{ it.resp }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="tk-due {{ 'warn' if it.days is not none and it.days <= 2 else '' }}">
+        {% if it.days == 0 %}сегодня{% elif it.days == 1 %}завтра{% else %}через {{ it.days }} дн.{% endif %}<br>{{ it.due }}</div>
+    </div>
+    {% else %}
+      <div class="dbw-empty">На ближайшую неделю дедлайнов нет</div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ============ Активность / Загрузка / Состояние системы ============ #}
+<div class="dbw-cols">
+  <div class="dbw-card">
+    <h3>🕑 Последние изменения</h3>
+    {% for a in activity %}
+    <div class="ac-item">
+      <div class="ac-time">{{ a.at }}</div>
+      <div>{{ a.icon }} <b>{{ a.user }}</b> {{ a.action }}
+        <a href="/{{ a.module }}/?entity={{ a.uid }}">{{ a.title }}</a></div>
+    </div>
+    {% else %}
+      <div class="dbw-empty">Пока тихо — изменений не было</div>
+    {% endfor %}
+  </div>
+
+  {% if workload %}
+  <div class="dbw-card">
+    <h3>👥 Загрузка ответственных</h3>
+    {% for w in workload %}
+    <div class="wl-row">
+      <div class="wl-name" title="{{ w.name }}">{{ w.name }}</div>
+      <div class="wl-track"><div class="wl-fill" style="width:{{ w.pct }}%;background:{{ w.color }}"></div></div>
+      <div class="wl-num">{{ w.count }} акт.</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="dbw-card">
+    <h3>🛠 Состояние системы</h3>
+    <div class="hl-grid">
+      <div class="hl-cell {{ 'bad' if sync.errors else ('neutral' if sync.pending else 'good') }}">
+        <div class="v">{{ sync.pending }}</div><div class="l">Ждут синхронизации с календарём{% if sync.errors %} · ошибок: {{ sync.errors }}{% endif %}</div></div>
+      <div class="hl-cell {{ 'bad' if sync.queue_errors else ('neutral' if sync.queue_pending else 'good') }}">
+        <div class="v">{{ sync.queue_pending }}</div><div class="l">Уведомлений в очереди{% if sync.queue_errors %} · с ошибками: {{ sync.queue_errors }}{% endif %}</div></div>
+      <div class="hl-cell neutral">
+        <div class="v">{{ tg.bound }} / {{ tg.users_active }}</div><div class="l">Привязано Telegram / активных пользователей</div></div>
+      <div class="hl-cell good">
+        <div class="v">{{ broadcasts.sent_week }}</div><div class="l">Рассылок отправлено за неделю{% if broadcasts.scheduled %} · запланировано: {{ broadcasts.scheduled }}{% endif %}</div></div>
+    </div>
+    {% if broadcasts["items"] %}
+      <div style="margin-top:12px">
+      {% for b in broadcasts["items"] %}
+        <div class="bc-item">
+          <span class="st-pill st-{{ b.status }}">{{ 'Отправлено' if b.status=='sent' else ('Идёт отправка' if b.status=='sending' else 'Запланировано') }}</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{{ b.title }}</span>
+          <span style="color:var(--muted);font-size:11px;white-space:nowrap">{{ b.at }}</span>
+        </div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<p class="sub" style="margin-top:6px">Данные изолированы по вашим рабочим пространствам;
 координатор и администратор видят агрегированную сводку по всем.</p>
 {% endblock %}
