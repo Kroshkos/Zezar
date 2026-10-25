@@ -334,13 +334,33 @@ async def push_unregister(body: PushUnregisterIn,
 
 # ======================= Лента событий (long-poll) =======================
 
+def _iso(dt) -> Optional[str]:
+    """Безопасная сериализация datetime для клиента.
+
+    На legacy-БД (Amvera) колонки создавались ALTER TABLE с NULL-дефолтами, а
+    SQLite хранит даты строками без tzinfo — прямой .isoformat() давал клиенту
+    время без часового пояса (лента «События» считала «N дн назад» неверно).
+    Naive-значения трактуем как UTC (в БД пишет utcnow)."""
+    if dt is None:
+        return None
+    try:
+        if isinstance(dt, str):
+            return dt  # уже сериализовано — отдаём как есть
+        from datetime import timezone as _tz
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt.isoformat()
+    except Exception:  # noqa: BLE001 — лучше null, чем 500 на весь список
+        return None
+
+
 def _event_brief(ev: MobileEvent) -> dict:
     return {
         "id": ev.id, "type": ev.type, "title": ev.title, "body": ev.body or "",
         "entity_uid": ev.entity_uid, "module_key": ev.module_key,
         "payload": ev.payload_json or {},
-        "created_at": ev.created_at.isoformat() if ev.created_at else None,
-        "read_at": ev.read_at.isoformat() if ev.read_at else None,
+        "created_at": _iso(ev.created_at),
+        "read_at": _iso(ev.read_at),
     }
 
 
