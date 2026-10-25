@@ -108,16 +108,23 @@ async def bootstrap(user: User = Depends(get_current_user_from_token),
                 "entity_kind": (s.entity_kinds[0].lower() if s.entity_kinds else None)}
                for s in sorted(registry.all(), key=lambda x: x.order)
                if s.is_core or s.key in enabled_keys or ctx.is_global]
+    module_titles = {s.key: s.title for s in registry.all()}
 
     # Справочники: первый контекстный dept (или None для глобальных ролей)
+    module_statuses = {}
     dept_for_ref = await refdata.context_dept(session, user, None)
     enabled_mods = await refdata.enabled_modules(session, dept_for_ref)
     statuses = {}
     for kind in EntityKind:
         rows = await refdata.effective_statuses(session, kind, dept_for_ref, enabled_mods)
         if rows:
-            statuses[kind.value] = [{"key": s.key, "label": s.label, "color": s.color}
-                                    for s in rows]
+            entry = [{"key": s.key, "label": s.label, "color": s.color} for s in rows]
+            statuses[kind.value] = entry
+            # v1.6: тот же справочник под ключом модуля — клиент берёт статусы
+            # для карточек конкретного модуля (module_statuses[module_key])
+            mkeys = [s.key for s in registry.all() if kind.name in s.entity_kinds]
+            for mkey in mkeys:
+                module_statuses[mkey] = entry
     prios = await refdata.effective_priorities(session, dept_for_ref, enabled_mods)
 
     return {
@@ -130,6 +137,8 @@ async def bootstrap(user: User = Depends(get_current_user_from_token),
         "departments": departments,
         "modules": modules,
         "statuses": statuses,
+        "module_statuses": module_statuses,
+        "module_titles": module_titles,
         "priorities": [{"key": p.key, "label": p.label, "color": p.color} for p in prios],
     }
 
