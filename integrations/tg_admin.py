@@ -294,12 +294,43 @@ _REPLY_MENU_MAP = {
     "ℹ️ Помощь": "help",
     "🏠 Меню": "menu",
     "🚫 Отменить рассылку…": "cancelpick",
+    # кнопки машины рассылки / навигации (reply-клавиатура)
+    "✖️ Отмена": "cancel_step",
+    "📝 Написать текст": "ask_text",
 }
 
 
 def menu_action(text: str) -> str | None:
     """Текст сообщения -> действие главного меню (reply-кнопка). None — не кнопка."""
     return _REPLY_MENU_MAP.get((text or "").strip())
+
+
+async def _handle_cancel_step(session, user) -> tuple[str, object]:
+    """Reply-кнопка «✖️ Отмена»: отменить черновик рассылки или вернуться в меню."""
+    cid = int(user.telegram_chat_id)
+    if _bcast.pop(cid, None) is not None:
+        _media_lib.pop(cid, None)
+        return "Рассылка отменена, ничего не отправлено.", main_keyboard(True)
+    return await cmd_menu(session, user), main_keyboard(True)
+
+
+async def _handle_ask_text(session, user) -> tuple[str, object]:
+    """Reply-кнопка «📝 Написать текст» — шаг ввода текста новой рассылки."""
+    cid = int(user.telegram_chat_id)
+    _bcast_expire()
+    st = _bcast.get(cid)
+    if st is None:
+        st = {"step": "ask_text", "title": "", "body": "", "media": [],
+              "audience": None, "expires": time.time() + 900}
+        _bcast[cid] = st
+    else:
+        st["step"] = "ask_text"
+        st["expires"] = time.time() + 900
+    attach_pending_media(st, cid)
+    return ("✏️ Отправьте текст рассылки одним сообщением.\n\n"
+            "💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
+            "сообщением (до подтверждения)."), \
+        nav_reply(["📝 Написать текст"] + NAV_BACK)
 
 
 async def handle_reply_menu(session: AsyncSession, user: User, action: str,
@@ -332,21 +363,40 @@ async def handle_reply_menu(session: AsyncSession, user: User, action: str,
     if action == "find":
         t, kb = await cmd_find_kb(session, user)
         return t + _kb_note(kb), kb
+    if action == "cancel_step":
+        return await _handle_cancel_step(session, user)
+    if action == "ask_text":
+        return await _handle_ask_text(session, user)
     if action == "bcast":
         if text_in:   # /broadcast <текст> — сразу к выбору аудитории
             return await cmd_broadcast(session, user, text_in)
-        return ("Формат: /broadcast &lt;текст сообщения&gt;\n"
-                "Например: <code>/broadcast Завтра в 10:00 планёрка в переговорной</code>"
-                "\n\n💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
+        # reply-кнопки: «📝 Написать текст» перехватывается handle_broadcast_input
+        # (шаг ask_text), «🏠 Меню»/«✖️ Отмена» — generic-обработчики ниже.
+        cid = int(user.telegram_chat_id)
+        _bcast_expire()
+        st = _bcast.get(cid)
+        if st is None:
+            st = {"step": "ask_text", "title": "", "body": "", "media": [],
+                  "audience": None, "expires": time.time() + 900}
+            _bcast[cid] = st
+        attach_pending_media(st, cid)
+        if st["body"]:   # черновик уже есть — продолжаем с выбора аудитории
+            st["step"] = "confirm_audience"
+            st["expires"] = time.time() + 900
+            return await _show_audience(st)
+        return ("✏️ <b>Новая рассылка</b>\nОтправьте текст сообщения одним сообщением.\n\n"
+                "💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
                 "сообщением (до подтверждения)."), \
-            [[_btn("📝 Написать текст", "bc:text"), _btn("« Меню", "adm:menu")]]
+            nav_reply(["📝 Написать текст"] + NAV_BACK)
     return None, None
 
 
 # ---------------- обработчик нажатий кнопок ----------------
 
-async def handle_callback(session: AsyncSession, cbq: dict) -> str | None:
-    """Нажатие inline-кнопки. Возвращает НОВЫЙ текст сообщения (None — без изменений).
+async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str, object] | None":
+    """Нажатие inline-кнопки. Возвращает НОВЫЙ текст сообщения (None — без изменений),
+    либо кортеж (текст, клавиатура) — когда вместе с текстом нужно сменить
+    и закреплённую reply-клавиатуру (например, force_reply для шага ввода).
 
     Безопасность: права проверяются по автору callback_query (через его чат-id),
     а не по тому, кто видит сообщение, — подделать data нельзя, но даже с
@@ -407,21 +457,22 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> str | None:
     # ---- шаги машины рассылки (bc:* — только inline-кнопки ввода текста) ----
     if data == "bc:text":
         st = _bcast.get(int(cid))
+        draft_hint = ("Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка».")
         if st is None:
-            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка». " \
-                   + _kb_note(main_keyboard(True))
+            return draft_hint + _kb_note(main_keyboard(True))
         st["step"] = "ask_text"
         st["expires"] = time.time() + 900
-        return "✏️ Отправьте текст рассылки одним сообщением."
+        return ("✏️ Отправьте текст рассылки одним сообщением.", force_reply("текст рассылки"))
     if data == "bc:send":
         st = _bcast.get(int(cid))
         if st is None or st.get("step") != "confirm":
-            return "Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»."
+            return ("Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка».")
         return await _do_send(session, user, st)
     if data == "bc:cancel":
         st = _bcast.pop(int(cid), None)
         _media_lib.pop(int(cid), None)
-        return "Рассылка отменена, ничего не отправлено." + _kb_note(main_keyboard(True))
+        return ("Рассылка отменена, ничего не отправлено."
+                + _kb_note(main_keyboard(True)))
     return None
 
 
@@ -633,13 +684,13 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
     if text:
         st["body"] = text
         st["title"] = text.split("\n", 1)[0][:120]
-    hint = ("\n\n💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
-            "сообщением (до подтверждения).")
     if not st["body"]:
         return ("Формат: /broadcast &lt;текст сообщения&gt;\n"
                 "Например: <code>/broadcast Завтра в 10:00 планёрка в переговорной</code>"
-                + hint), [[_btn("📝 Написать текст", "bc:text"),
-                           _btn("✖️ Отмена", "bc:cancel")]]
+                "\n\n💡 Можно прикрепить фото/видео — просто отправьте медиа следующим "
+                "сообщением (до подтверждения).\n"
+                "Или напишите текст рассылки следующим сообщением."), \
+            nav_reply(["📝 Написать текст"] + NAV_BACK)
     if st["step"] == "audience":
         st["step"] = "confirm_audience"
         return await _show_audience(st)
@@ -661,21 +712,30 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
                                 for row in audience_keyboard()), audience_keyboard()
 
 
-async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -> tuple[str | None, list | None]:
+async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -> tuple[str | None, list | dict | None]:
     """Второй+ шаги машины /broadcast (текстовый ввод — совместимость с кнопками).
 
     Нажатия reply-клавиатуры приходят как обычный текст — здесь они и
     распознаются (по подписям кнопок, числа 1–4 работают как раньше).
+    Кнопки «✖️ Отмена»/«📝 Написать текст» вне шагов перехватывает menu_action
+    раньше, чем вызов придёт сюда.
 
-    Возвращает (ответ, клавиатура) или (None, None), если это не наша ветка."""
+    Возвращает (ответ, клавиатуру) или (None, None), если это не наша ветка."""
     cid = int(user.telegram_chat_id)
     st = _bcast.get(cid)
     if st is None:
         return None, None
     t = text.strip()
 
-    # шаг «написать текст» (кнопка 📝 Написать текст)
+    # шаг «написать текст» (reply-кнопка 📝 Написать текст)
     if st["step"] == "ask_text":
+        if t in ("0", "отмена", "cancel", "✖️ Отмена"):
+            _bcast.pop(cid, None)
+            _media_lib.pop(cid, None)
+            return "Рассылка отменена, ничего не отправлено.", main_keyboard(True)
+        if t == "📝 Написать текст":   # повторное нажатие — остаёмся на шаге
+            return ("✏️ Текст уже ждём — просто отправьте его сообщением."), \
+                nav_reply(["📝 Написать текст"] + NAV_BACK)
         st["body"] = t
         st["title"] = t.split("\n", 1)[0][:120]
         st["step"] = "confirm_audience"

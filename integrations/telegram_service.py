@@ -350,10 +350,23 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
                     # (только для админа/координатора)
                     return await tg_admin.cmd_menu(session, user), [mid], \
                         tg_admin.main_keyboard(is_adm)
-                # нажатие закреплённой reply-кнопки приходит как обычный текст
+                # нажатие закреплённой reply-кнопки приходит как обычный текст;
+                # «📢 Рассылка» с готовым текстом в args — кнопка из подсказки
+                # машины рассылки («отправить новый /broadcast …»).
                 action = tg_admin.menu_action(text)
                 if action is not None:
                     reply, kb = await tg_admin.handle_reply_menu(session, user, action)
+                    return out(reply, kb=kb)
+                if cmd == "/broadcast":
+                    if not is_adm:
+                        return out(None)
+                    # пустая команда = нажатие кнопки «📢 Рассылка»: тот же UX
+                    # (закреплённые reply-кнопки вместо inline/текстовых подсказок)
+                    if not args.strip():
+                        st_reply, st_kb = await tg_admin.handle_reply_menu(
+                            session, user, "bcast")
+                        return out(st_reply, kb=st_kb)
+                    reply, kb = await tg_admin.cmd_broadcast(session, user, args)
                     return out(reply, kb=kb)
                 if cmd in ("/cancel", "/pending", "/overdue", "/find", "/task",
                            "/broadcast", "/report", "/media"):
