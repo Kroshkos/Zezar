@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     telegram_notify_enabled: bool = True
     # Публичный адрес системы для ссылок в уведомлениях (кнопка «Открыть» в Telegram)
     public_base_url: str = "https://zezar-patfiz.waw0.amvera.tech"
+    # Deep link мобильного приложения Zezar-app (QR-шлюз /open/e/{uid}).
+    # Для продакшн-сборки (eas build) меняется на https://open.zezar.app —
+    # тогда iOS/Android откроют приложение напрямую, без промежуточной страницы.
+    deep_link_base: str = "zezar://"
+    # Открывать карточку на сайте сразу после входа (?next=/tasks?focus=...).
+    # False -> всегда на дашборд (консервативное поведение до внедрения deep-link
+    # в интерфейсы всех модулей; QR-шлюз при этом кладёт гостя на /login?next=…).
+    web_entity_fallback: bool = False
     # Напоминания «приближается срок»: за сколько дней и как часто проверять
     due_remind_days_ahead: int = 3
     due_reminder_interval_seconds: int = 3600

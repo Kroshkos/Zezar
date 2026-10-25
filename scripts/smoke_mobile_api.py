@@ -44,6 +44,13 @@ async def main() -> int:
                          status_key=None, priority_key="medium", tags=[],
                          extra_json={}, sync_state="none")
             s.add(ent)
+            d2 = Department(code="oth", name="Чужое подразделение", is_active=True)
+            s.add(d2)
+            await s.flush()
+            s.add(Entity(uid="foreign-card-1", kind="task", module_key="tasks",
+                         owner_department_id=d2.id, title="Чужая карточка",
+                         status_key=None, priority_key="medium", tags=[],
+                         extra_json={}, sync_state="none"))
         await s.commit()
         uid = u.id
 
@@ -144,6 +151,47 @@ async def main() -> int:
                          json={"expo_token": "ExponentPushToken[smoketest000000]"})
         assert r.status_code == 200, r.text
         print("OK  events/read + push/unregister")
+
+        # 9c. QR-шлюз «приложение или сайт» (v1.5, app/routers/entity_open.py)
+        from app.core.security import SESSION_COOKIE, create_session_token
+        cookie_h = {"Cookie": f"{SESSION_COOKIE}={create_session_token({'uid': uid})}"}
+
+        r = await c.get("/open/e/smoke-task-1")            # гость (без куки)
+        assert r.status_code == 200 and "text/html" in r.headers.get("content-type", ""), r.status_code
+        page = r.text
+        assert "zezar://entity/smoke-task-1" in page, "нет deep link в шлюзе"
+        assert "/login?next=" in page, "гость не редиректится на логин с next"
+        print("OK  /open/e/{uid} gateway for guest (deep link + login?next)")
+
+        r = await c.get("/open/e/no-such-uid-xyz")         # гость: ответ идентичен
+        assert r.status_code == 200 and "/login?next=" in r.text, r.status_code
+        assert "smoke-task" not in r.text, "ответ гостю различает существующие uid"
+        print("OK  /open/e unknown uid as guest -> same login page (no leak)")
+
+        # авторизованный владелец (session-cookie как в браузере) -> свой модуль
+        r = await c.get(f"/open/e/{new_uid}", headers=cookie_h)
+        assert r.status_code == 200, r.status_code
+        assert "/tasks?focus=" + new_uid in r.text.replace("&amp;", "&"), r.text[:400]
+        assert f"zezar://entity/{new_uid}" in r.text
+        print("OK  /open/e authorized owner -> module deep link")
+
+        # чужая карточка без доступа -> 404 (шлюз не канал разведки)
+        r = await c.get("/open/e/foreign-card-1", headers=cookie_h)
+        assert r.status_code == 404, (r.status_code, r.text[:200])
+        print("OK  /open/e foreign entity -> 404")
+
+        # malformed uid -> 404 без похода в БД
+        r = await c.get("/open/e/bad~uid!@", headers=cookie_h)
+        assert r.status_code == 404, r.status_code
+        print("OK  /open/e malformed uid -> 404")
+
+        r = await c.get(f"/api/core/entities/{new_uid}/share-link")
+        assert r.status_code == 200, r.text
+        share = r.json()
+        assert share["share_url"].endswith(f"/open/e/{new_uid}"), share
+        assert share["qr_data"] == share["share_url"], share
+        assert share["deep_link"] == f"zezar://entity/{new_uid}", share
+        print(f"OK  share-link -> {share['share_url']}")
 
         # 10. отзыв токена -> снова 401
         r = await c.post("/api/auth/token-revoke", headers=H)

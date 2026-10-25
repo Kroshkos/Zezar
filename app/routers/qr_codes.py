@@ -5,15 +5,12 @@ QR-коды для сущностей — интеграция мобильно�
   GET  /api/core/entities/{uid}/qr        QR-код для сущности (PNG)
   GET  /api/core/entities/{uid}/share-link  Share URL для сущности
 
-QR-код содержит deep link в формате:
-  zezar://entity/{uid}/{type}
-  
-Или HTTPS URL (fallback):
-  https://zezar.example.com/entity/{uid}/{type}
+QR-код содержит универсальную HTTPS-ссылку шлюза:
+  {PUBLIC_BASE_URL}/open/e/{uid}
 
-При сканировании:
-  - Если приложение установлено → открывается сущность в приложении
-  - Если нет → открывается веб-версия на URL
+При сканировании камерой (см. app/routers/entity_open.py):
+  - Если приложение Zezar установлено → сущность открывается в приложении
+  - Если нет → открывается веб-версия карточки на сайте
 """
 from __future__ import annotations
 
@@ -50,19 +47,37 @@ def _get_entity_kind_type(entity: Entity) -> str:
     return kind_map.get(entity.kind, str(entity.kind))
 
 
+def build_deep_link(uid: str) -> str:
+    """Deep link мобильного приложения из DEEP_LINK_BASE + '/entity/{uid}'.
+
+    Нормализует конфиг так, чтобы на выходе всегда была корректная схема:
+      'zezar' / 'zezar:' / 'zezar:/' / 'zezar://'  -> zezar://entity/{uid}
+      'https://open.zezar.app[/...]'               -> https://open.zezar.app/entity/{uid}
+    (битые 'zezar:/entity/…' и 'zezar:///entity/…' ОС не открывают).
+    """
+    base = (get_settings().deep_link_base or "zezar://").strip()
+    if ":" in base.split("/", 1)[0]:          # есть схема ('zezar:' / 'https:')
+        scheme, rest = base.split(":", 1)
+        rest = rest.strip("/")                 # host/path после схемы
+        return f"{scheme}://{rest}/entity/{uid}" if rest else f"{scheme}://entity/{uid}"
+    base = base.rstrip("/")                    # без схемы: трактует как host/path или схему
+    if "/" in base:
+        return f"{base}/entity/{uid}"
+    return f"{base}://entity/{uid}"
+
+
+def _gateway_url(uid: str) -> str:
+    """Универсальная HTTPS-ссылка шлюза: открывает приложение, если оно
+    установлено, иначе — карточку на сайте. Именно она кладётся в QR-код:
+    встроенные сканеры камер (iOS/Android) надёжно открывают HTTPS-ссылки,
+    а custom-scheme прямо из камеры часто блокируется."""
+    base = (get_settings().public_base_url or "").rstrip("/")
+    return f"{base}/open/e/{uid}"
+
+
 def _generate_qr_data(entity_uid: str, entity_type: str) -> str:
-    """Генерировать deep link для сущности."""
-    settings = get_settings()
-    
-    # Primary: deep link scheme for mobile app
-    deep_link = f"zezar://entity/{entity_uid}/{entity_type}"
-    
-    # Fallback: HTTPS URL for web
-    base_url = settings.base_url or "https://zezar.example.com"
-    web_url = f"{base_url}/entity/{entity_uid}/{entity_type}"
-    
-    # Return deep link (app will handle fallback)
-    return deep_link
+    """Данные для QR-кода сущности (HTTPS-шлюз app-or-web)."""
+    return _gateway_url(entity_uid)
 
 
 @router.get("/api/core/entities/{uid}/qr")
@@ -169,14 +184,15 @@ async def get_entity_share_link(
         )
     
     entity_type = _get_entity_kind_type(entity)
-    settings = get_settings()
-    base_url = settings.base_url or "https://zezar.example.com"
-    
+    gateway = _gateway_url(uid)
+
     return {
         "entity_uid": uid,
         "entity_type": entity_type,
         "entity_title": entity.title,
-        "deep_link": f"zezar://entity/{uid}/{entity_type}",
-        "web_url": f"{base_url}/entity/{uid}/{entity_type}",
-        "qr_data": f"zezar://entity/{uid}/{entity_type}",
+        # Универсальная ссылка для QR и шаринга: приложение или сайт
+        "share_url": gateway,
+        "qr_data": gateway,
+        "deep_link": build_deep_link(uid),
+        "web_url": gateway,
     }
