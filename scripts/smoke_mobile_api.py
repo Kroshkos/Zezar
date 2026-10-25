@@ -105,6 +105,21 @@ async def main() -> int:
         new_uid = r.json()["uid"]
         print(f"OK  create task uid={new_uid[:8]}…")
 
+        # 7b. v1.6: универсальное создание карточки другого модуля (docs)
+        r = await c.post("/api/mobile/entities", headers=H,
+                         json={"module_key": "docs", "title": "Документ из мобильного"})
+        assert r.status_code == 200, r.text
+        doc_uid = r.json()["uid"]
+        r = await c.get(f"/api/mobile/entities/{doc_uid}", headers=H)
+        assert r.status_code == 200 and r.json()["module_key"] == "docs", r.text
+        r = await c.get("/api/mobile/entities?module_key=docs", headers=H)
+        assert any(e["uid"] == doc_uid for e in r.json()), r.text
+        # немодульные ключи запрещены к созданию
+        r = await c.post("/api/mobile/entities", headers=H,
+                         json={"module_key": "dashboard", "title": "Не сущность"})
+        assert r.status_code == 422, r.status_code
+        print("OK  create entity via /entities (docs) + module validation")
+
         # 8. патч статуса
         r = await c.patch(f"/api/mobile/entities/{new_uid}", headers=H,
                           json={"status_key": "in_progress", "description": "обновлено из app"})
