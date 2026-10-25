@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Zezar — документация и новости проекта" />
+  <title>Zezar — Документация и новости</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- ===== Шапка ===== -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="#home" class="logo">
+        <span class="logo-mark">Z</span>
+        <span class="logo-text">Zezar</span>
+      </a>
+      <nav class="main-nav" id="mainNav">
+        <a href="#home" class="nav-link active">Главная</a>
+        <a href="#docs" class="nav-link">Документация</a>
+        <a href="#news" class="nav-link">Новости</a>
+      </nav>
+      <div class="header-actions">
+        <a class="btn btn-outline btn-sm" href="https://github.com/Kroshkos/Zezar" target="_blank" rel="noopener">
+          GitHub ↗
+        </a>
+        <button class="burger" id="burgerBtn" aria-label="Открыть меню">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ===== Главная страница ===== -->
+    <section id="home" class="page active">
+      <div class="hero container">
+        <h1 class="hero-title">Проект <span class="accent">Zezar</span></h1>
+        <p class="hero-subtitle">
+          Добро пожаловать на официальный сайт проекта Zezar! Здесь собрана полная
+          документация и все последние новости о развитии проекта.
+        </p>
+        <div class="hero-buttons">
+          <a href="#docs" class="btn btn-primary" data-nav>Читать документацию</a>
+          <a href="#news" class="btn btn-outline" data-nav>Последние новости</a>
+        </div>
+      </div>
+
+      <div class="container features">
+        <div class="feature-card">
+          <div class="feature-icon">📚</div>
+          <h3>Документация</h3>
+          <p>Пошаговые руководства по установке, конфигурации и использованию Zezar.</p>
+          <a href="#docs" class="feature-link" data-nav>Перейти к документации →</a>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📰</div>
+          <h3>Новости</h3>
+          <p>Релизы, изменения и планы развития проекта — всё в одном месте.</p>
+          <a href="#news" class="feature-link" data-nav>Смотреть новости →</a>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💻</div>
+          <h3>Исходный код</h3>
+          <p>Репозиторий проекта доступен открыто — изучайте, форкайте, участвуйте.</p>
+          <a href="https://github.com/Kroshkos/Zezar" class="feature-link" target="_blank" rel="noopener">Открыть на GitHub →</a>
+        </div>
+      </div>
+
+      <div class="container latest-preview">
+        <h2>Последние новости</h2>
+        <ul class="preview-list" id="homeNewsPreview"><!-- заполняется из JS --></ul>
+      </div>
+    </section>
+
+    <!-- ===== Страница документации ===== -->
+    <section id="docs" class="page">
+      <div class="container docs-layout">
+        <aside class="docs-sidebar">
+          <h4>Разделы</h4>
+          <nav id="docsToc"><!-- генерируется из JS --></nav>
+        </aside>
+
+        <article class="docs-content" id="docsContent">
+          <h1>Документация Zezar</h1>
+          <p class="muted">Загрузка…</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== Страница новостей ===== -->
+    <section id="news" class="page">
+      <div class="container news-layout">
+        <aside class="news-sidebar">
+          <h4>Все статьи</h4>
+          <ul id="newsList" class="news-list"><!-- генерируется из JS --></ul>
+        </aside>
+
+        <article class="news-content" id="newsContent">
+          <h1>Новости проекта</h1>
+          <p class="muted">Загрузка…</p>
+        </article>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== Подвал ===== -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p>© 2026 Проект <strong>Zezar</strong>. Все права защищены.</p>
+      <nav class="footer-nav">
+        <a href="#home" data-nav>Главная</a>
+        <a href="#docs" data-nav>Документация</a>
+        <a href="#news" data-nav>Новости</a>
+        <a href="https://github.com/Kroshkos/Zezar" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script src="js/content.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

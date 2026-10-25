@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect as sa_inspect, schema, text, types as sa_types
 
@@ -750,6 +750,17 @@ if STATIC_DIR.is_dir():
             return resp
 
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ── Сайт документации и новостей проекта («Zezar: Документация и новости») ───
+# Статический SPA из static/docs: GET /docs отдаёт index.html; активы (css/js)
+# раздаёт уже смонтированный выше /static по пути /static/docs/* — ссылки в
+# index.html ведут именно туда, CSP default-src 'self' их пропускает.
+# Разделы контента редактируются в static/docs/js/content.js.
+_DOCS_DIR = STATIC_DIR / "docs"
+if _DOCS_DIR.is_dir():
+    @app.get("/docs", include_in_schema=False)
+    async def docs_site():
+        return FileResponse(_DOCS_DIR / "index.html")
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, entity_open, links, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
