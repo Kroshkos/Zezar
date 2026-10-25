@@ -181,7 +181,7 @@ async def send_message(chat_id: int, text: str, keyboard: list | dict | None = N
 
 
 def _is_inline(kb: list) -> bool:
-    return any(b.get("callback_data") for row in kb for b in row)
+    return any(isinstance(b, dict) and b.get("callback_data") for row in kb for b in row)
 
 
 def _markup(keyboard: list | dict) -> dict:
@@ -190,6 +190,27 @@ def _markup(keyboard: list | dict) -> dict:
     if _is_inline(keyboard):
         return {"inline_keyboard": keyboard}
     return {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True}
+
+
+async def set_chat_reply_keyboard(chat_id: int, keyboard: list | dict | None) -> None:
+    """Обновить закреплённую reply-клавиатуру чата.
+
+    Telegram хранит одну persistent-клавиатуру на чат; editMessageText её не
+    меняет (она относится к сообщениям), поэтому ставим «сервисное» сообщение
+    с клавиатурой и сразу удаляем его — у пользователя кнопки обновляются
+    без видимого шума.
+    """
+    if keyboard is None:
+        return
+    mid = await call_bot("sendMessage", chat_id=chat_id, text="…",
+                        reply_markup=_markup(keyboard))
+    if isinstance(mid, dict):
+        mid = mid.get("message_id")
+    if mid:
+        try:
+            await call_bot("deleteMessage", chat_id=chat_id, message_id=mid)
+        except Exception as e:  # noqa: BLE001
+            log.debug("tg delete service kb msg: %s", e)
 
 
 async def edit_message_text(chat_id: int, message_id: int, text: str,
@@ -358,8 +379,15 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
                 # машины рассылки («отправить новый /broadcast …»).
                 action = tg_admin.menu_action(text)
                 if action is not None:
-                    reply, kb = await tg_admin.handle_reply_menu(session, user, action)
-                    return out(reply, kb=kb)
+                    # во время активной рассылки подписи кнопок подтверждения
+                    # обрабатывает машина состояний (свои ветки для этих текстов)
+                    st_active = (tg_admin._bcast.get(int(user.telegram_chat_id))
+                                 if user.telegram_chat_id else None)
+                    if not (action in ("bcast_send", "bcast_edit", "bcast_media")
+                            and st_active is not None
+                            and st_active.get("step") == "confirm"):
+                        reply, kb = await tg_admin.handle_reply_menu(session, user, action)
+                        return out(reply, kb=kb)
                 if cmd == "/broadcast":
                     if not is_adm:
                         return out(None)

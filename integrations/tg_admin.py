@@ -204,8 +204,7 @@ def force_reply(prompt: str) -> dict:
 
 def bcast_kb(step: str, rows: list) -> tuple[str, list]:
     """Единый формат шагов машины рассылки: текст + кнопки вместо ввода чисел."""
-    return step + "\n\n" + "\n".join(
-        " ".join(f"[{b.get('text', '')}]" for b in row) for row in rows), rows
+    return step + "\n\n" + _kb_note(rows), rows
 
 
 def audience_keyboard() -> list:
@@ -302,6 +301,10 @@ _REPLY_MENU_MAP = {
     # кнопки машины рассылки / навигации (reply-клавиатура)
     "✖️ Отмена": "cancel_step",
     "📝 Написать текст": "ask_text",
+    # кнопки подтверждения рассылки (reply-клавиатура confirm_keyboard)
+    "✅ Отправить": "bcast_send",
+    "✏️ Текст": "bcast_edit",
+    "➕ Медиа": "bcast_media",
 }
 
 
@@ -338,6 +341,31 @@ async def _handle_ask_text(session, user) -> tuple[str, object]:
         nav_reply(["📝 Написать текст"] + NAV_BACK)
 
 
+async def _handle_bcast_confirm_action(session, user, action: str) -> tuple[str | None, object]:
+    """Reply-кнопки шага подтверждения: «✅ Отправить», «✏️ Текст», «➕ Медиа».
+
+    Возвращает (None, None), если черновика нет или шаг не «confirm» — тогда
+    текст уйдёт дальше в handle_broadcast_input (например, имена подразделений).
+    """
+    cid = int(user.telegram_chat_id)
+    st = _bcast.get(cid)
+    if st is None or st.get("step") != "confirm":
+        return None, None
+    if action == "bcast_send":
+        text_ = await _do_send(session, user, st)
+        return text_, main_keyboard(True)
+    if action == "bcast_edit":
+        st["step"] = "edit_text"
+        st["expires"] = time.time() + 900
+        return ("✏️ Отправьте новый текст рассылки одним сообщением.",
+                force_reply("новый текст рассылки"))
+    if action == "bcast_media":
+        return (f"Отправьте фото/видео — добавлю к вложениям (сейчас: "
+                f"{len(st['media'])}). Кнопка «✅ Отправить» вернётся после "
+                "загрузки медиа."), remove_keyboard()
+    return None, None
+
+
 async def handle_reply_menu(session: AsyncSession, user: User, action: str,
                             text_in: str = "") -> tuple[str | None, object]:
     """Обработка нажатия закреплённой кнопки (для poller'а — обычный текст).
@@ -372,6 +400,13 @@ async def handle_reply_menu(session: AsyncSession, user: User, action: str,
         return await _handle_cancel_step(session, user)
     if action == "ask_text":
         return await _handle_ask_text(session, user)
+    if action in ("bcast_send", "bcast_edit", "bcast_media"):
+        reply, kb = await _handle_bcast_confirm_action(session, user, action)
+        if reply is not None:
+            return reply, kb
+        # нет активного черновика на шаге подтверждения — подсказка в меню
+        return ("Активной рассылки нет — начните заново: кнопка «📢 Рассылка»."), \
+            main_keyboard(True)
     if action == "bcast":
         if text_in:   # /broadcast <текст> — сразу к выбору аудитории
             return await cmd_broadcast(session, user, text_in)
@@ -425,39 +460,40 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str,
 
     # ---- главное меню ----
     if data == "adm:menu":
-        return await cmd_menu(session, user)
+        return await cmd_menu(session, user), main_keyboard(True)
     if data == "adm:report":
-        return await cmd_report(session, user, "")
+        return await cmd_report(session, user, ""), back_keyboard()
     if data == "adm:overdue":
-        return await cmd_overdue(session, user, "")
+        return await cmd_overdue(session, user, ""), back_keyboard()
     if data == "adm:help":
-        return HELP_ADMIN
+        return HELP_ADMIN, main_keyboard(True)
     if data == "adm:media":
         return ("🖼 <b>Медиа-библиотека</b>\nОтправьте фото или видео следующим "
-                "сообщением — оно будет автоматически прикреплено к следующей рассылке.")
+                "сообщением — оно будет автоматически прикреплено к следующей рассылке."), \
+            force_reply("Отправьте фото или видео")
     if data == "adm:find":
         text, kb = await cmd_find_kb(session, user)
-        return text + _kb_note(kb)
+        return text + _kb_note(kb), (kb, main_keyboard(True))
     if data == "adm:cancelpick":
         text, kb = await cmd_cancelpick(session, user)
-        return text + _kb_note(kb)
+        return text + _kb_note(kb), (kb, cancel_keyboard())
     if data.startswith("adm:task:"):
         ref = data.split(":", 2)[2]
         text = await cmd_task(session, user, ref)
-        return text + _kb_note(back_keyboard())
+        return text + _kb_note(back_keyboard()), main_keyboard(True)
     if data.startswith("adm:cancel:"):
         try:
             nid = int(data.split(":", 2)[2])
         except ValueError:
-            return "Некорректный id рассылки." + _kb_note(back_keyboard())
+            return "Некорректный id рассылки." + _kb_note(back_keyboard()), main_keyboard(True)
         text = await cmd_cancel(session, user, str(nid))
-        return text + _kb_note(back_keyboard())
+        return text + _kb_note(cancel_keyboard()), cancel_keyboard()
     if data == "adm:pending":
         text = await cmd_pending(session, user, "")
-        return text + _kb_note(cancel_keyboard())
+        return text + _kb_note(cancel_keyboard()), cancel_keyboard()
     if data == "adm:bcast":
         text, kb = await cmd_broadcast(session, user, "")
-        return text + _kb_note(kb)
+        return text + _kb_note(kb), kb
 
     # ---- шаги машины рассылки (bc:* — только inline-кнопки ввода текста) ----
     if data == "bc:text":
@@ -493,13 +529,23 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str,
     return None
 
 
-def _kb_note(kb: list | None) -> str:
+def _kb_note(kb) -> str:
     """Сноска с подписями кнопок — текст сообщения остаёт читаемым после edit
-    (Telegram хранит только последний reply_markup)."""
-    if not kb:
+    (Telegram хранит только последний reply_markup).
+
+    Принимает inline-клавиатуру (строки dict-кнопок), reply-клавиатуру
+    (строки списков подписей) либо служебной dict (remove/force) — для неё
+    сноски нет.
+    """
+    if not kb or isinstance(kb, dict):
         return ""
-    labels = " · ".join(b["text"] for row in kb for b in row)
-    return f"\n\n— {labels}"
+    labels: list[str] = []
+    for row in kb:
+        for b in row:
+            labels.append(b if isinstance(b, str) else b.get("text", ""))
+    if not labels:
+        return ""
+    return f"\n\n— {' · '.join(labels)}"
 
 
 async def cmd_help(session, user, args: str) -> str:
