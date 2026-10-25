@@ -103,19 +103,28 @@ async def bootstrap(user: User = Depends(get_current_user_from_token),
                 WorkspaceModule.is_enabled == True))).all()  # noqa: E712
         enabled_keys = {m.module_key for m in mods}
     from app.core.module_registry import registry
-    modules = [{"key": s.key, "title": s.title, "icon": s.icon}
+    modules = [{"key": s.key, "title": s.title, "icon": s.icon,
+                # v1.6: клиент показывает «+» только там, где есть создаваемый вид
+                "entity_kind": (s.entity_kinds[0].lower() if s.entity_kinds else None)}
                for s in sorted(registry.all(), key=lambda x: x.order)
                if s.is_core or s.key in enabled_keys or ctx.is_global]
+    module_titles = {s.key: s.title for s in registry.all()}
 
     # Справочники: первый контекстный dept (или None для глобальных ролей)
+    module_statuses = {}
     dept_for_ref = await refdata.context_dept(session, user, None)
     enabled_mods = await refdata.enabled_modules(session, dept_for_ref)
     statuses = {}
     for kind in EntityKind:
         rows = await refdata.effective_statuses(session, kind, dept_for_ref, enabled_mods)
         if rows:
-            statuses[kind.value] = [{"key": s.key, "label": s.label, "color": s.color}
-                                    for s in rows]
+            entry = [{"key": s.key, "label": s.label, "color": s.color} for s in rows]
+            statuses[kind.value] = entry
+            # v1.6: тот же справочник под ключом модуля — клиент берёт статусы
+            # для карточек конкретного модуля (module_statuses[module_key])
+            mkeys = [s.key for s in registry.all() if kind.name in s.entity_kinds]
+            for mkey in mkeys:
+                module_statuses[mkey] = entry
     prios = await refdata.effective_priorities(session, dept_for_ref, enabled_mods)
 
     return {
@@ -128,6 +137,8 @@ async def bootstrap(user: User = Depends(get_current_user_from_token),
         "departments": departments,
         "modules": modules,
         "statuses": statuses,
+        "module_statuses": module_statuses,
+        "module_titles": module_titles,
         "priorities": [{"key": p.key, "label": p.label, "color": p.color} for p in prios],
     }
 
@@ -206,11 +217,85 @@ class MobileTaskIn(BaseModel):
     department_id: int | None = None
 
 
+class MobileEntityIn(BaseModel):
+    """Универсальное создание карточки для мобильного клиента (v1.6).
+    module_key определяет вид сущности по реестру модулей; для 'tasks'
+    сохраняется прежняя логика (payload TaskPayload)."""
+    module_key: str = "tasks"
+    title: str = Field(min_length=3, max_length=500)
+    description: str | None = ""
+    priority_key: str | None = "medium"
+    due_date: str | None = None
+    responsible_user_id: int | None = None
+    executor_user_ids: list[int] = []
+    department_id: int | None = None
+
+
+def _kind_for_module(module_key: str) -> EntityKind:
+    from app.core.module_registry import registry
+    spec = registry.get(module_key)
+    if spec is None or not spec.entity_kinds:
+        raise HTTPException(422, f"Модуль не поддерживает создание карточек: {module_key}")
+    return EntityKind[spec.entity_kinds[0]]
+
+
+# payload-таблицы модулей: без записи в них веб-страница модуля считает карточку
+# «несуществующей» — при создании из приложения пишем пустой payload каждого вида.
+_PAYLOAD_BY_KIND = {
+    "task":        ("TaskPayload",   {"assignee_names": []}),
+    "doc":         ("DocPayload",    {}),
+    "soft":        ("SoftPayload",   {}),
+    "project":     ("ProjectPayload", {}),
+    "grant":       ("GrantPayload",  {}),
+    "scholarship": ("ScholarPayload", {}),
+    "priority":    ("PriorityPayload", {}),
+    "meeting":     ("MeetingPayload", {}),
+}
+
+
+async def _ensure_payload(session, kind: EntityKind, ent_id: int) -> None:
+    entry = _PAYLOAD_BY_KIND.get(kind.value)
+    if not entry:
+        return
+    from app.models import module_payloads as mp
+    cls = getattr(mp, entry[0])
+    session.add(cls(entity_id=ent_id, **entry[1]))
+
+
+@router.post("/entities")
+async def create_entity_ep(body: MobileEntityIn,
+                           user: User = Depends(get_current_user_from_token),
+                           session: AsyncSession = Depends(session_dep)):
+    """Создать карточку любого модуля (единый путь: entity_service + аудит + outbox)."""
+    kind = _kind_for_module(body.module_key)
+    ent = await _create_common(session, user, kind=kind, module_key=body.module_key, body=body)
+    await _ensure_payload(session, kind, ent.id)
+    await session.commit()
+    return {"uid": ent.uid, "ok": True}
+
+
+async def _default_status_key(session, user, kind: EntityKind, dept_id: int) -> str | None:
+    """Первый статус справочника вида для пространства (как дефолт в веб-формах)."""
+    try:
+        rows = await refdata.effective_statuses(session, kind, dept_id, None)
+        return rows[0].key if rows else None
+    except Exception:
+        return None
+
+
 @router.post("/tasks")
 async def create_task(body: MobileTaskIn,
                       user: User = Depends(get_current_user_from_token),
                       session: AsyncSession = Depends(session_dep)):
-    """Создать задачу (тот же путь, что и веб-модуль: entity_service + аудит + outbox)."""
+    """Создать задачу (обратная совместимость: тоже /entities c module_key=tasks)."""
+    ent = await _create_common(session, user, kind=EntityKind.TASK, module_key="tasks", body=body)
+    await _ensure_payload(session, EntityKind.TASK, ent.id)
+    await session.commit()
+    return {"uid": ent.uid, "ok": True}
+
+
+async def _create_common(session, user, *, kind, module_key, body):
+    """Общая часть создания: пространство-владелец + entity_service."""
     dept_ids = (await session.scalars(
         select(DepartmentMember.department_id)
         .where(DepartmentMember.user_id == user.id)
@@ -228,19 +313,17 @@ async def create_task(body: MobileTaskIn,
 
     try:
         ent = await entity_service.create_entity(
-            session, user, kind=EntityKind.TASK, module_key="tasks",
+            session, user, kind=kind, module_key=module_key,
             owner_department_id=dept_id, title=body.title.strip(),
-            description=body.description or None, status_key=None,
+            description=body.description or None,
+            status_key=await _default_status_key(session, user, kind, dept_id),
             priority_key=body.priority_key, due_date=body.due_date or None,
             tags=[], responsible_user_id=body.responsible_user_id or user.id,
             executor_user_ids=body.executor_user_ids,
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
-    from app.models.module_payloads import TaskPayload
-    session.add(TaskPayload(entity_id=ent.id, assignee_names=[]))
-    await session.commit()
-    return {"uid": ent.uid, "ok": True}
+    return ent
 
 
 # ======================= Изменение карточки =======================
