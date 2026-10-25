@@ -106,6 +106,14 @@ async def main() -> int:
         return reply, kb
 
     with_deliver = True
+    def flat_labels(kb):
+        """Подписи кнопок для list-клавиатуры (reply-строки — списки строк,
+        inline-строки — словари {'text':...}); None/dict -> []."""
+        if not kb or isinstance(kb, dict):
+            return []
+        return [b if isinstance(b, str) else b.get("text", "")
+                for row in kb for b in row]
+
     async with SessionLocal() as session:
         admin = await session.scalar(select(User).where(User.role == Role.ADMIN))
         # ВАЖНО: в демо-сиде несколько пользователей с роль MEMBER — брать
@@ -131,6 +139,7 @@ async def main() -> int:
         check("member /report отклонён", r is None or "только" in (r or ""), str(r))
         r, d, _kb = await ask(session, MID, "привет")
         check("member мусор молча удаляется", r is None and d == [1], f"r={r} d={d}")
+        # member уже привязан: /start —普通ное приветствие без админ-клавиатуры
         r, d, kb = await ask(session, MID, "/start")
         check("member /start — БЕЗ админ-клавиатуры", kb is None, str(kb)[:80])
         cbq = {"id": "cbhack", "chat_instance": "x",
@@ -149,11 +158,12 @@ async def main() -> int:
 
         # ---- /start — главное меню кнопками ----------------------------------
         r, _, kb = await ask(session, AID, "/start")
-        flat = [b["text"] for row in (kb or []) for b in row]
+        flat = flat_labels(kb)
         check("admin /start — админ-клавиатура",
               "📊 Сводка" in flat and "📢 Рассылка" in flat, str(flat)[:120])
-        check("меню без URL-кнопок (inline callback)",
-              all("callback_data" in b for row in (kb or []) for b in row))
+        check("меню — закреплённая reply-клавиатура (кнопки без callback_data)",
+              bool(kb) and not isinstance(kb, dict) and
+              all(isinstance(b, str) for row in kb for b in row), str(kb)[:120])
 
         # ---- /report ---------------------------------------------------------
         r, _, _kb = await ask(session, AID, "/report")
@@ -175,25 +185,27 @@ async def main() -> int:
         r, _, _kb = await ask(session, AID, f"/task {ent.id}")
         check("/task показывает карточку", r is not None and str(ent.id) in r, str(r)[:80])
 
-        # ---- /broadcast кнопками: меню -> 📢 -> аудитория -> медиа -> подтвердить
+        # ---- /broadcast кнопками: 📢 -> текст (reply) -> аудитория -> подтвердить
         r, kb = await press(session, AID, "adm:bcast")
         check("кнопка «📢 Рассылка» просит текст",
-              r is not None and "Формат" in r, str(r)[:80])
-        r, _, _kb = await ask(session, AID, "/broadcast Планёрка завтра в 10:00")
-        check("/broadcast просит аудиторию кнопками",
-              r is not None and "аудитори" in r.lower(), str(r)[:80])
-        r, _, kb = await ask(session, AID, "/broadcast Планёрка завтра в 10:00")
-        flat = [b["text"] for row in (kb or []) for b in row]
-        check("клавиатура выбора аудитории",
+              r is not None and ("Отправьте текст" in r or "Формат" in r), str(r)[:80])
+        # reply-кнопка «📝 Написать текст» приходит как обычный текст
+        r, _, _kb = await ask(session, AID, "📝 Написать текст")
+        check("reply-кнопка «📝 Написать текст» ждёт ввод",
+              r is not None and "текст" in r.lower(), str(r)[:80])
+        r, _, kb = await ask(session, AID, "Планёрка завтра в 10:00")
+        flat = flat_labels(kb)
+        check("после текста — клавиатура выбора аудитории (reply)",
               "👥 Всем" in flat and "✖️ Отмена" in flat, str(flat)[:120])
         r, _, _kb = await ask(session, AID, "фото без подписи", photo=True)
         check("медиа добавлено к черновику", r is not None and "Добавлено" in r, str(r)[:80])
-        r, kb = await press(session, AID, "bc:aud:all")
+        # нажатие reply-кнопки аудитории — тоже обычный текст
+        r, _, kb = await ask(session, AID, "👥 Всем")
         check("кнопка аудитории -> шаг подтверждения",
               r is not None and "Подтвердите" in r and kb is not None and
-              any(b["text"] == "✅ Отправить" for row in kb for b in row),
-              f"{str(r)[:60]} kb={[[b['text'] for b in row] for row in (kb or [])]}")
-        r, kb = await press(session, AID, "bc:send")
+              "✅ Отправить" in flat_labels(kb),
+              f"{str(r)[:60]} kb={flat_labels(kb)}")
+        r, _, _kb = await ask(session, AID, "✅ Отправить")
         check("кнопка «✅ Отправить» — рассылка принята",
               r is not None and "принята" in r, str(r)[:120])
 

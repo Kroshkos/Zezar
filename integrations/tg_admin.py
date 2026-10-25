@@ -240,6 +240,11 @@ def find_keyboard(items: list[tuple[str, str]]) -> list:
     return kb
 
 
+def task_keyboard() -> list:
+    """Карточка задачи — inline-кнопки «назад» (в поиск и в меню)."""
+    return [[_btn("🔎 К поиску", "adm:find"), _btn("🏠 Меню", "adm:menu")]]
+
+
 async def cmd_menu(session: AsyncSession, user: User) -> str:
     """Текст главного меню под клавиатуру main_keyboard()."""
     if not await _allow(session, user):
@@ -463,6 +468,18 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str,
         st["step"] = "ask_text"
         st["expires"] = time.time() + 900
         return ("✏️ Отправьте текст рассылки одним сообщением.", force_reply("текст рассылки"))
+    if data.startswith("bc:aud:"):
+        # совместимость со старыми inline-кнопками: сейчас аудитория выбирается
+        # закреплёнными reply-кнопками (handle_broadcast_input по подписи/числу)
+        st = _bcast.get(int(cid))
+        if st is None or st.get("step") != "confirm_audience":
+            return ("Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка»."
+                    + _kb_note(main_keyboard(True)))
+        label = dict(AUDIENCE_BUTTONS).get(data.split(":", 2)[2])
+        if label is None:
+            return "Неизвестная аудитория." + _kb_note(audience_keyboard())
+        reply, kb = await handle_broadcast_input(session, user, label)
+        return (reply or "") + _kb_note(kb), kb
     if data == "bc:send":
         st = _bcast.get(int(cid))
         if st is None or st.get("step") != "confirm":

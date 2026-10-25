@@ -308,7 +308,10 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
     cbq = upd.get("callback_query")
     if cbq:
         from integrations import tg_admin
-        return await tg_admin.handle_callback(session, cbq), [], None
+        res = await tg_admin.handle_callback(session, cbq)
+        if isinstance(res, tuple):
+            return res[0], [], res[1]
+        return res, [], None
 
     msg = upd.get("message") or upd.get("edited_message")
     if not msg:

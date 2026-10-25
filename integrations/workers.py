@@ -461,6 +461,12 @@ async def tg_poller(stop: asyncio.Event) -> None:
                     reply, delete_ids, keyboard = await tg.handle_update(session, upd)
                     cbq = upd.get("callback_query")
                     if cbq:
+                        # handle_callback может вернуть (текст, клавиатура) — когда
+                        # вместе с текстом нужно сменить закреплённую reply-клавиатуру
+                        if isinstance(reply, tuple):
+                            reply, keyboard = reply
+                        else:
+                            keyboard = None
                         # ответ на нажатие кнопки: редактируем сообщение бота или
                         # отправляем новое; часики на кнопке закрываем всегда
                         chat_id = (cbq.get("message") or {}).get("chat", {}).get("id")
