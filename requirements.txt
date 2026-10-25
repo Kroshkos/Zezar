@@ -19,3 +19,4 @@ cryptography==45.0.5
 # QR-коды для мобильного приложения
 qrcode==8.2
 Pillow==11.3.0
+markdown==3.7

@@ -1,6 +1,8 @@
 /* ============================================================
    Логика сайта Zezar: SPA-навигация, рендеринг документации
-   и новостей из content.js
+   и новостей. Контент подгружается из Markdown-папок репозитория
+   (docs/*.md и news/*.md) через эндпоинт /docs/content.json —
+   см. app/content_site.py.
    ============================================================ */
 
 (function () {
@@ -10,6 +12,9 @@
   const navLinks = document.querySelectorAll(".main-nav .nav-link");
   const burgerBtn = document.getElementById("burgerBtn");
   const mainNav = document.getElementById("mainNav");
+
+  let docs = [];
+  let news = [];
 
   /* ---------- Навигация между страницами ---------- */
   function showPage(pageId) {
@@ -25,19 +30,20 @@
     return location.hash.replace("#", "") || "home";
   }
 
-  window.addEventListener("hashchange", () => showPage(currentPageId()));
-
-  // Кнопки/ссылки с data-nav — плавно переключаем страницы
-  document.querySelectorAll("[data-nav]").forEach(el => {
-    el.addEventListener("click", () => {
-      const id = el.getAttribute("href").replace("#", "");
-      // hashchange сработает сам, но если hash тот же — обновим вручную
-      setTimeout(() => showPage(id), 0);
-    });
-  });
-
   // Бургер-меню (мобильная версия)
   burgerBtn.addEventListener("click", () => mainNav.classList.toggle("open"));
+
+  /* ---------- Экранирование (fallback для сырого markdown) ---------- */
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function bodyOf(item) {
+    // html приходит с сервера (python-markdown); если его нет — показываем
+    // исходный markdown как preformatted-текст, чтобы ничего не терялось.
+    if (item.html) return item.html;
+    return "<pre>" + esc(item.markdown || "") + "</pre>";
+  }
 
   /* ---------- Документация ---------- */
   const docsToc = document.getElementById("docsToc");
@@ -45,6 +51,13 @@
 
   function renderDocs(activeId) {
     docsToc.innerHTML = "";
+    if (!docs.length) {
+      docsToc.innerHTML = '<div class="empty-hint">Пока нет статей в <code>docs/</code></div>';
+      docsContent.innerHTML = "<h1>Документация</h1><p>Раздел заполняется автоматически из папки " +
+        "<code>docs/</code> вашего репозитория: добавьте туда файл <code>имя.md</code>, " +
+        "и он появится в этом списке после деплоя.</p>";
+      return;
+    }
     docs.forEach(d => {
       const a = document.createElement("a");
       a.href = "#docs/" + d.id;
@@ -54,7 +67,7 @@
       docsToc.appendChild(a);
     });
     const doc = docs.find(d => d.id === activeId) || docs[0];
-    docsContent.innerHTML = "<h1>" + doc.title + "</h1>" + doc.html;
+    docsContent.innerHTML = "<h1>" + esc(doc.title) + "</h1>" + bodyOf(doc);
     docsToc.querySelectorAll("a").forEach(a =>
       a.classList.toggle("active", a.dataset.docId === doc.id)
     );
@@ -78,13 +91,23 @@
     return d.getDate() + " " + months[d.getMonth()] + " " + d.getFullYear();
   }
 
+  function sortedNews() {
+    return [...news].sort((a, b) => b.date.localeCompare(a.date));
+  }
+
   function renderNews(activeId) {
-    const sorted = [...news].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = sortedNews();
     newsList.innerHTML = "";
+    if (!sorted.length) {
+      newsList.innerHTML = '<div class="empty-hint">Пока нет новостей в <code>news/</code></div>';
+      newsContent.innerHTML = "<h1>Новости</h1><p>Раздел наполняется автоматически из папки " +
+        "<code>news/</code> вашего репозитория: положите туда файл <code>год-месяц-заголовок.md</code>.</p>";
+      return;
+    }
     sorted.forEach(n => {
       const li = document.createElement("li");
       const btn = document.createElement("button");
-      btn.innerHTML = n.title +
+      btn.innerHTML = esc(n.title) +
         '<span class="item-date">' + formatDate(n.date) + "</span>";
       btn.dataset.newsId = n.id;
       if (n.id === activeId) btn.classList.add("active");
@@ -97,29 +120,29 @@
 
     const article = sorted.find(n => n.id === activeId) || sorted[0];
     newsContent.innerHTML =
-      "<h1>" + article.title + "</h1>" +
+      "<h1>" + esc(article.title) + "</h1>" +
       '<div class="article-meta">' +
-        '<span class="tag">' + article.tag + "</span>" +
+        '<span class="tag">' + esc(article.tag) + "</span>" +
         "<span>📅 " + formatDate(article.date) + "</span>" +
       "</div>" +
-      article.html;
+      bodyOf(article);
     newsList.querySelectorAll("button").forEach(b =>
       b.classList.toggle("active", b.dataset.newsId === article.id)
     );
   }
 
   /* ---------- Превью новостей на главной ---------- */
-  const preview = document.getElementById("homeNewsPreview");
-  [...news]
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 3)
-    .forEach(n => {
+  function renderHomePreview() {
+    const preview = document.getElementById("homeNewsPreview");
+    preview.innerHTML = "";
+    sortedNews().slice(0, 3).forEach(n => {
       const li = document.createElement("li");
       li.innerHTML =
-        '<a href="#news/' + n.id + '">' + n.title + "</a>" +
+        '<a href="#news/' + n.id + '">' + esc(n.title) + "</a>" +
         '<span class="preview-date">' + formatDate(n.date) + "</span>";
       preview.appendChild(li);
     });
+  }
 
   /* ---------- Маршрутизация по hash ----------
      Форматы: #home | #docs | #docs/<id> | #news | #news/<id> */
@@ -140,7 +163,22 @@
 
   window.addEventListener("hashchange", route);
 
-  // Инициализация
-  renderDocs(docs[0].id);
-  route();
+  /* ---------- Загрузка контента и старт ---------- */
+  async function loadContent() {
+    try {
+      const resp = await fetch("/docs/content.json", { cache: "no-store" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      docs = data.docs || [];
+      news = data.news || [];
+    } catch (e) {
+      docs = [];
+      news = [];
+      console.error("Не удалось загрузить контент сайта:", e);
+    }
+    renderHomePreview();
+    route();
+  }
+
+  loadContent();
 })();

@@ -755,12 +755,25 @@ if STATIC_DIR.is_dir():
 # Статический SPA из static/docs: GET /docs отдаёт index.html; активы (css/js)
 # раздаёт уже смонтированный выше /static по пути /static/docs/* — ссылки в
 # index.html ведут именно туда, CSP default-src 'self' их пропускает.
-# Разделы контента редактируются в static/docs/js/content.js.
+# Контент (новости и документация) подгружается из Markdown-папок репозитория:
+#   news/*.md → раздел «Новости»,  docs/*.md → раздел «Документация».
+# См. app/content_site.py (формат front-matter) — файл перечитывается при
+# каждом запросе, поэтому новые статьи появляются сразу после redeploy без
+# пересборки сайта.
 _DOCS_DIR = STATIC_DIR / "docs"
 if _DOCS_DIR.is_dir():
+    from app import content_site
+
     @app.get("/docs", include_in_schema=False)
     async def docs_site():
         return FileResponse(_DOCS_DIR / "index.html")
+
+    @app.get("/docs/content.json", include_in_schema=False)
+    async def docs_content():
+        return JSONResponse({
+            "docs": content_site.list_docs(),
+            "news": content_site.list_news(),
+        })
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, entity_open, links, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
