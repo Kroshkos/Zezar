@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -711,8 +712,10 @@ async def lifespan(app: FastAPI):
             await t
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan, docs_url="/api/docs-openapi",
-              redoc_url=None, openapi_url="/api/openapi.json")
+APP_VERSION = os.getenv("APP_VERSION", "1.6.0")
+
+app = FastAPI(title=settings.app_name, version=APP_VERSION, lifespan=lifespan,
+              docs_url="/api/docs-openapi", redoc_url=None, openapi_url="/api/openapi.json")
 
 
 @app.middleware("http")
@@ -750,6 +753,7 @@ if STATIC_DIR.is_dir():
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, entity_open, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app.app_links import router as app_links_router  # noqa: E402
 from app import mobile as mobile_api  # noqa: E402
 
 app.include_router(auth.router)                    # /auth/*
@@ -757,6 +761,7 @@ app.include_router(token_auth.router)              # /api/auth/* (mobile token a
 app.include_router(mobile_api.router)              # /api/mobile/* (Zezar-app REST)
 app.include_router(qr_codes.router)                # /api/core/entities/* (QR codes)
 app.include_router(entity_open.router)           # /open/e/{uid} (QR-шлюз app/web)
+app.include_router(app_links_router)               # /.well-known/assetlinks.json (Android App Links)
 app.include_router(pages.router)                   # /login, /, /api/profile/*
 app.include_router(departments.router, prefix="/api/core", tags=["core-departments"])
 app.include_router(sharing.router, prefix="/api/core", tags=["core-sharing"])
