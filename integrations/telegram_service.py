@@ -350,7 +350,10 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
         is_adm = await tg_admin._allow(session, user)   # клавиатура — только админу/координатору
 
         def out(reply: str | None, delete: bool = True, kb: list | dict | None = None):
-            return reply, ([mid] if delete and reply is not None else ([] if delete else [mid])), kb
+            # reply is None — «молчаливое удаление» входящего сообщения;
+            # при reply != None удаляем ввод пользователя, чтобы логин/пароль
+            # и служебные команды не оставались в истории диалога
+            return reply, ([mid] if delete else []), kb
 
         # медиа от администратора: вложение к рассылке / библиотеку.
         # ВАЖНО: проверяем до text-ветки — у фото/видео бывает caption

@@ -473,7 +473,8 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str,
             force_reply("Отправьте фото или видео")
     if data == "adm:find":
         text, kb = await cmd_find_kb(session, user)
-        return text + _kb_note(kb), (kb, main_keyboard(True))
+        # inline-список карточек — под сообщение; закреплённая клавиатура не меняется
+        return text + _kb_note(kb), kb
     if data == "adm:cancelpick":
         text, kb = await cmd_cancelpick(session, user)
         return text + _kb_note(kb), (kb, cancel_keyboard())
@@ -522,7 +523,13 @@ async def handle_callback(session: AsyncSession, cbq: dict) -> "str | tuple[str,
             return ("Черновик рассылки устарел — начните заново: кнопка «📢 Рассылка».")
         return await _do_send(session, user, st)
     if data == "bc:cancel":
-        st = _bcast.pop(int(cid), None)
+        st = _bcast.get(int(cid))
+        if st is not None and st.get("step") in ("ask_dept", "ask_users"):
+            # на этих шагах «✖️ Отмена» возвращает к выбору аудитории,
+            # а не уничтожает черновик — как reply-кнопка с той же подписью
+            reply, kb = await handle_broadcast_input(session, user, "✖️ Отмена")
+            return (reply or "") + _kb_note(kb), kb
+        _bcast.pop(int(cid), None)
         _media_lib.pop(int(cid), None)
         return ("Рассылка отменена, ничего не отправлено."
                 + _kb_note(main_keyboard(True)))

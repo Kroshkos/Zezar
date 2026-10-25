@@ -489,7 +489,16 @@ async def tg_poller(stop: asyncio.Event) -> None:
                     if chat_id is None:
                         continue
                     if reply:
-                        await tg.send_message(chat_id, reply, keyboard)
+                        # inline-клавиатура (dict или строки с callback_data) — под
+                        # сообщение; обычная reply-клавиатура закрепляется над полем
+                        # ввода отдельным «сервисным» сообщением, чтобы не дублировать
+                        # кнопки в истории чата.
+                        kb_inline = isinstance(keyboard, dict) or (
+                            isinstance(keyboard, list) and tg._is_inline(keyboard))
+                        await tg.send_message(chat_id, reply,
+                                              keyboard if kb_inline else None)
+                        if keyboard is not None and not kb_inline:
+                            await tg.set_chat_reply_keyboard(chat_id, keyboard)
                     for mid in delete_ids:
                         await tg.delete_message(chat_id, mid)
         except Exception as e:  # noqa: BLE001
