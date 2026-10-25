@@ -154,10 +154,45 @@ async def _prefs_map(session: AsyncSession, user_id: int) -> dict[int, bool]:
     return {r[0]: r[1] for r in rows}
 
 
+def scenario_applies(scn: NotifyScenario, kind: str, module_key: str) -> bool:
+    """Фильтр сценария по виду/модулю сущности. Пустые списки = «все».
+
+    Нормализация входов обязательна: часть кода ставит в payload `kind` как
+    EntityKind(str, Enum), а не строку (`ent.kind.value` опущено) — без `.value`
+    сравнение `kind not in scn.entity_kinds` молча давало True для ВСЕХ
+    сценариев с ограничением по видам, и такие события отбрасывались фильтром
+    воркера («отфильтровано по сценариям» — уведомления исчезали).
+    """
+    kind = getattr(kind, "value", kind) or ""
+    module_key = getattr(module_key, "value", module_key) or ""
+    if scn.entity_kinds and kind not in list(scn.entity_kinds):
+        return False
+    if scn.module_keys and module_key not in list(scn.module_keys):
+        return False
+    return True
+
+
+async def _scn_rows(session: AsyncSession, user: User):
+    """Сырые строки видимых сценариев (без ORM-объектов) — один запрос."""
+    from app.models.core import DepartmentMember
+    dept_ids = list((await session.scalars(
+        select(DepartmentMember.department_id).where(
+            DepartmentMember.user_id == user.id))).all())
+    conds = [NotifyScenario.is_base.is_(True), NotifyScenario.visibility == "global",
+             NotifyScenario.created_by == user.id]
+    if dept_ids:
+        conds.append(NotifyScenario.department_id.in_(dept_ids))
+    q = (select(NotifyScenario.id, NotifyScenario.event_key,
+                NotifyScenario.entity_kinds, NotifyScenario.module_keys,
+                NotifyScenario.is_base, NotifyScenario.is_active)
+         .where(or_(*conds)))
+    return (await session.execute(q)).all()
+
+
 async def visible_scenarios(session: AsyncSession, user: User) -> list[NotifyScenario]:
     """Все сценарии, видимые пользователю: базовые + global + его private +
     department-сценарии его подразделений."""
-    from app.models.core import DepartmentMember, Role
+    from app.models.core import DepartmentMember
     dept_ids = list((await session.scalars(
         select(DepartmentMember.department_id).where(
             DepartmentMember.user_id == user.id))).all())
@@ -176,16 +211,16 @@ async def enabled_event_keys(session: AsyncSession, user: User,
     конкретную сущность (kind/module). Базовые — всегда включены."""
     prefs = await _prefs_map(session, user.id)
     out: set[str] = set()
-    for scn in await visible_scenarios(session, user):
-        if not scn.is_active:
+    for r in await _scn_rows(session, user):
+        if not r.is_active:
             continue
-        if not scn.is_base and prefs.get(scn.id, True) is False:
+        if not r.is_base and prefs.get(r.id, True) is False:
             continue
-        if scn.entity_kinds and kind not in scn.entity_kinds:
+        scn = NotifyScenario(id=r.id, event_key=r.event_key,
+                             entity_kinds=r.entity_kinds, module_keys=r.module_keys)
+        if not scenario_applies(scn, kind, module_key):
             continue
-        if scn.module_keys and module_key not in scn.module_keys:
-            continue
-        out.add(scn.event_key)
+        out.add(r.event_key)
     return out
 
 

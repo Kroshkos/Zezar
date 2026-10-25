@@ -154,8 +154,13 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         return
     ctx = notify_core.build_ctx(p)
     event_keys = set(p.get("event_keys") or [p.get("action", "")])
-    kinds = p.get("kind", "")
-    module = p.get("module", "")
+    # kind/module нормализуем к строке: часть постановщиков пишет в payload
+    # EntityKind(str, Enum), а не .value; JSON-колонка после перезапуска может
+    # вернуть enum-совместимое значение — сравнения с entity_kinds тогда
+    # молча проваливаются и события отбрасываются фильтром («отфильтровано по
+    # сценариям», уведомления исчезают).
+    kinds = getattr(p.get("kind", ""), "value", None) or (ent.kind.value if ent else "")
+    module = getattr(p.get("module", ""), "value", None) or (ent.module_key if ent else "")
     scn_cache: dict[int, tuple[set, dict]] = {}
     delivered = 0
     eligible = 0          # получатели, которым сообщение положено по сценариям
@@ -165,8 +170,14 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         u = await session.get(User, uid)
         if not (u and u.is_active):
             continue
-        if not u.telegram_chat_id or u.telegram_optout == "all":
+        if not u.telegram_chat_id:
             skipped_no_chat.append(u.login or str(uid))
+            continue
+        if u.telegram_optout == "all":
+            # пользователь отключил уведомления (/mute) — это НЕ «нет chat_id»
+            # и НЕ «отфильтрован по сценариям»: учитываем отдельно, иначе в
+            # журнале появляется ложная формулировка про сценарии
+            skipped_muted.append(u.login or str(uid))
             continue
         if uid not in scn_cache:
             enabled = await notify_core.enabled_event_keys(session, u, kinds, module)
@@ -177,6 +188,9 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         keys_hit = event_keys & enabled
         if not keys_hit:
             skipped_filter += 1
+            log.info("tg notify (%s): %s не получил уведомление — ни один включённый "
+                     "сценарий не подходит (событие: %s; сущность: kind=%s module=%s)",
+                     p.get("action"), u.login or uid, sorted(event_keys), kinds, module)
             continue
         eligible += 1
         scn = None
