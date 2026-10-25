@@ -124,12 +124,24 @@ async def seed_base_scenarios(session: AsyncSession) -> None:
     базовые ключи добираются выборочно; если админ удалил все базовые — не
     воссоздаём пачку целиком (уважение к ручной чистке), но и новые ключи
     тогда тоже не добавляются.
+
+    ВАЖНО: «ручная чистка» определяется по ВСЕМ записям таблицы
+    notify_scenarios (в т.ч. пользовательским/подразделенческим), а не только
+    по is_base. Раньше условие `if not have: return` при пустом наборе базовых
+    молча пропускал сид даже на свежей БД — базовые сценарии не создавались
+    НИКОГДА, фильтр воркера «по включённым сценариям» отбрасывал 100% событий
+    («отфильтровано по сценариям: N», уведомления переставали приходить).
     """
-    have = set((await session.scalars(
-        select(NotifyScenario.event_key).where(
-            NotifyScenario.is_base.is_(True)))).all())
-    if not have:
-        return
+    total = await session.scalar(
+        select(func.count()).select_from(NotifyScenario))
+    if total:
+        # в таблице есть хоть какие-то записи — считаем, что сид уже
+        # выполнялся когда-то; добираем только недостающие базовые ключи
+        have = set((await session.scalars(
+            select(NotifyScenario.event_key).where(
+                NotifyScenario.is_base.is_(True)))).all())
+    else:
+        have = set()  # свежая БД — заводим полный набор базовых
     added = 0
     for key, name, descr, kinds, mods in BASE_SCENARIOS:
         if key in have:
@@ -154,10 +166,45 @@ async def _prefs_map(session: AsyncSession, user_id: int) -> dict[int, bool]:
     return {r[0]: r[1] for r in rows}
 
 
+def scenario_applies(scn: NotifyScenario, kind: str, module_key: str) -> bool:
+    """Фильтр сценария по виду/модулю сущности. Пустые списки = «все».
+
+    Нормализация входов обязательна: часть кода ставит в payload `kind` как
+    EntityKind(str, Enum), а не строку (`ent.kind.value` опущено) — без `.value`
+    сравнение `kind not in scn.entity_kinds` молча давало True для ВСЕХ
+    сценариев с ограничением по видам, и такие события отбрасывались фильтром
+    воркера («отфильтровано по сценариям» — уведомления исчезали).
+    """
+    kind = getattr(kind, "value", kind) or ""
+    module_key = getattr(module_key, "value", module_key) or ""
+    if scn.entity_kinds and kind not in list(scn.entity_kinds):
+        return False
+    if scn.module_keys and module_key not in list(scn.module_keys):
+        return False
+    return True
+
+
+async def _scn_rows(session: AsyncSession, user: User):
+    """Сырые строки видимых сценариев (без ORM-объектов) — один запрос."""
+    from app.models.core import DepartmentMember
+    dept_ids = list((await session.scalars(
+        select(DepartmentMember.department_id).where(
+            DepartmentMember.user_id == user.id))).all())
+    conds = [NotifyScenario.is_base.is_(True), NotifyScenario.visibility == "global",
+             NotifyScenario.created_by == user.id]
+    if dept_ids:
+        conds.append(NotifyScenario.department_id.in_(dept_ids))
+    q = (select(NotifyScenario.id, NotifyScenario.event_key,
+                NotifyScenario.entity_kinds, NotifyScenario.module_keys,
+                NotifyScenario.is_base, NotifyScenario.is_active)
+         .where(or_(*conds)))
+    return (await session.execute(q)).all()
+
+
 async def visible_scenarios(session: AsyncSession, user: User) -> list[NotifyScenario]:
     """Все сценарии, видимые пользователю: базовые + global + его private +
     department-сценарии его подразделений."""
-    from app.models.core import DepartmentMember, Role
+    from app.models.core import DepartmentMember
     dept_ids = list((await session.scalars(
         select(DepartmentMember.department_id).where(
             DepartmentMember.user_id == user.id))).all())
@@ -176,16 +223,16 @@ async def enabled_event_keys(session: AsyncSession, user: User,
     конкретную сущность (kind/module). Базовые — всегда включены."""
     prefs = await _prefs_map(session, user.id)
     out: set[str] = set()
-    for scn in await visible_scenarios(session, user):
-        if not scn.is_active:
+    for r in await _scn_rows(session, user):
+        if not r.is_active:
             continue
-        if not scn.is_base and prefs.get(scn.id, True) is False:
+        if not r.is_base and prefs.get(r.id, True) is False:
             continue
-        if scn.entity_kinds and kind not in scn.entity_kinds:
+        scn = NotifyScenario(id=r.id, event_key=r.event_key,
+                             entity_kinds=r.entity_kinds, module_keys=r.module_keys)
+        if not scenario_applies(scn, kind, module_key):
             continue
-        if scn.module_keys and module_key not in scn.module_keys:
-            continue
-        out.add(scn.event_key)
+        out.add(r.event_key)
     return out
 
 
@@ -326,9 +373,14 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "action": "due_soon", "event_keys": ["due_soon"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
-            # автор карточки: воркер исключает его из получателей напоминания
-            # (спам «сам себе»: resp/исполнитель часто = создатель задачи)
-            "actor_user_id": (ent.extra_json or {}).get("created_by"),
+            # NB: автор карточки НЕ исключается из получателей. Напоминание о
+            # сроке — системное событие («задача просрочится»), а не чьё-то
+            # действие: спамом «сам себе» оно не является даже когда автор =
+            # единственный ответственный (такое назначение штатно). Исключение
+            # автора здесь молча лишало уведомлений именно тех пользователей,
+            # кто ведёт задачи «на себе», и в журнале появлялось
+            # «отфильтровано по сценариям» после того, как соавтор-ответствен-
+            # ный становился единственным участником.
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     # просроченные (overdue): срок < сегодня, статус не «завершающий» — раз в window_days.
@@ -352,7 +404,9 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "action": "overdue", "event_keys": ["overdue"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
-            "actor_user_id": (ent.extra_json or {}).get("created_by"),
+            # автор НЕ исключается (см. комментарий в due-ветке): «срок истёк»
+            # — системное событие, ответственному (пусть и автору) о нём знать
+            # обязательно.
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     await session.commit()

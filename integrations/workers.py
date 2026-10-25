@@ -126,7 +126,15 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     # и уведомление «вам назначено исполнение» автору-исполнителю не является
     # спамом «сам себе».
     actor_uid = p.get("actor_user_id")
-    if actor_uid:
+    # Системные события планировщика (напоминания о сроке/просрочке): автор
+    # карточки НЕ исключается. Это не чьё-то действие, а сигнал «срок
+    # истекает/истёк» — его обязан получать ответственный, даже если он же
+    # автор (штатный случай «задача на себе»). Иначе единственный участник
+    # отсеивался анти-спам фильтром и напоминание молча не доставлялось
+    # («получателей: 1, отфильтровано по сценариям: 1»).
+    is_system_scheduled = p.get("topic") in ("telegram.due", "telegram.overdue") \
+        or p.get("actor") == "планировщик" or p.get("action") in ("due_soon", "overdue")
+    if actor_uid and not is_system_scheduled:
         if targets:
             # Для адресных событий фильтрация обычно сделана на этапе enqueue
             # (entity_service исключает актёра из target_user_ids), но payload
@@ -154,19 +162,31 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         return
     ctx = notify_core.build_ctx(p)
     event_keys = set(p.get("event_keys") or [p.get("action", "")])
-    kinds = p.get("kind", "")
-    module = p.get("module", "")
+    # kind/module нормализуем к строке: часть постановщиков пишет в payload
+    # EntityKind(str, Enum), а не .value; JSON-колонка после перезапуска может
+    # вернуть enum-совместимое значение — сравнения с entity_kinds тогда
+    # молча проваливаются и события отбрасываются фильтром («отфильтровано по
+    # сценариям», уведомления исчезают).
+    kinds = getattr(p.get("kind", ""), "value", None) or (ent.kind.value if ent else "")
+    module = getattr(p.get("module", ""), "value", None) or (ent.module_key if ent else "")
     scn_cache: dict[int, tuple[set, dict]] = {}
     delivered = 0
     eligible = 0          # получатели, которым сообщение положено по сценариям
     skipped_no_chat: list[str] = []
+    skipped_muted: list[str] = []
     skipped_filter = 0
     for uid, roles in recipients.items():
         u = await session.get(User, uid)
         if not (u and u.is_active):
             continue
-        if not u.telegram_chat_id or u.telegram_optout == "all":
+        if not u.telegram_chat_id:
             skipped_no_chat.append(u.login or str(uid))
+            continue
+        if u.telegram_optout == "all":
+            # пользователь отключил уведомления (/mute) — это НЕ «нет chat_id»
+            # и НЕ «отфильтрован по сценариям»: учитываем отдельно, иначе в
+            # журнале появляется ложная формулировка про сценарии
+            skipped_muted.append(u.login or str(uid))
             continue
         if uid not in scn_cache:
             enabled = await notify_core.enabled_event_keys(session, u, kinds, module)
@@ -177,6 +197,9 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
         keys_hit = event_keys & enabled
         if not keys_hit:
             skipped_filter += 1
+            log.info("tg notify (%s): %s не получил уведомление — ни один включённый "
+                     "сценарий не подходит (событие: %s; сущность: kind=%s module=%s)",
+                     p.get("action"), u.login or uid, sorted(event_keys), kinds, module)
             continue
         eligible += 1
         scn = None
@@ -195,15 +218,22 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
             f"уведомление не доставлено ни одному адресату из {eligible}: "
             f"ошибка Telegram API (send_message вернул False)")
     if delivered == 0:
-        # Никому не положено (все отфильтрованы по сценариям) или нет chat_id —
-        # это штатная ситуация «обработано в никуда», а не ошибка: иначе
-        # планировщик reminder-событий при каждом проходе ставит их заново и
-        # очередь забивается 8-кратными ретраями.
-        log.info("tg notify (%s): %s не доставлено — событие завершено без ошибки",
-                 p.get("action"),
-                 f"нет привязанных к Telegram адресатов {skipped_no_chat}"
-                 if skipped_no_chat else
-                 f"получателей: {len(recipients)}, отфильтровано по сценариям: {skipped_filter}")
+        # Никому не положено (все отфильтрованы по сценариям / отписались через
+        # /mute) или нет chat_id — это штатная ситуация «обработано в никуда»,
+        # а не ошибка: иначе планировщик reminder-событий при каждом проходе
+        # ставит их заново и очередь забивается 8-кратными ретраями.
+        # В журнале явно разделяем причины, чтобы «отписался» не выглядел как
+        # «отфильтровано по сценариям».
+        parts = [f"получателей: {len(recipients)}"]
+        if skipped_no_chat:
+            parts.append(f"без chat_id: {len(skipped_no_chat)} ({', '.join(skipped_no_chat)})")
+        if skipped_muted:
+            parts.append(f"отписались (/mute): {len(skipped_muted)} "
+                         f"({', '.join(skipped_muted)})")
+        if skipped_filter:
+            parts.append(f"отфильтровано по сценариям: {skipped_filter}")
+        log.info("tg notify (%s): не доставлено — %s — событие завершено без ошибки",
+                 p.get("action"), ", ".join(parts))
         return
 
 
@@ -431,6 +461,12 @@ async def tg_poller(stop: asyncio.Event) -> None:
                     reply, delete_ids, keyboard = await tg.handle_update(session, upd)
                     cbq = upd.get("callback_query")
                     if cbq:
+                        # handle_callback может вернуть (текст, клавиатура) — когда
+                        # вместе с текстом нужно сменить закреплённую reply-клавиатуру
+                        if isinstance(reply, tuple):
+                            reply, keyboard = reply
+                        else:
+                            keyboard = None
                         # ответ на нажатие кнопки: редактируем сообщение бота или
                         # отправляем новое; часики на кнопке закрываем всегда
                         chat_id = (cbq.get("message") or {}).get("chat", {}).get("id")
@@ -453,7 +489,16 @@ async def tg_poller(stop: asyncio.Event) -> None:
                     if chat_id is None:
                         continue
                     if reply:
-                        await tg.send_message(chat_id, reply, keyboard)
+                        # inline-клавиатура (dict или строки с callback_data) — под
+                        # сообщение; обычная reply-клавиатура закрепляется над полем
+                        # ввода отдельным «сервисным» сообщением, чтобы не дублировать
+                        # кнопки в истории чата.
+                        kb_inline = isinstance(keyboard, dict) or (
+                            isinstance(keyboard, list) and tg._is_inline(keyboard))
+                        await tg.send_message(chat_id, reply,
+                                              keyboard if kb_inline else None)
+                        if keyboard is not None and not kb_inline:
+                            await tg.set_chat_reply_keyboard(chat_id, keyboard)
                     for mid in delete_ids:
                         await tg.delete_message(chat_id, mid)
         except Exception as e:  # noqa: BLE001
