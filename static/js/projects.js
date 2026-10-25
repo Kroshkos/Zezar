@@ -154,7 +154,8 @@ function openProjectCard(uid){
     +(p.grant_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">💰 Грант: '+esc(p.grant_title)+'</div>':'')
     +(p.priority_indicator_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">🚀 Приоритет-2030: '+esc(p.priority_indicator_title)+'</div>':'')
     +(p.description?'<div style="margin-top:8px;font-size:13px">'+esc(p.description)+'</div>':'')
-    +wfCanvasHTML(p);
+    +wfCanvasHTML(p)
+    +(p.can_edit&&window.wfCanvasEditor?'<div style="margin-top:8px"><button type="button" class="btn sm" onclick="closeModal();openWfEditor(\\''+p.uid+'\\')">🖐 Редактировать маршрут на холсте</button></div>':'');
   openModal('Проект: '+esc(p.title),body,'Закрыть',()=>closeModal(),true);
 }
 
@@ -163,6 +164,31 @@ async function delProj(uid){
   askConfirm('Удалить проект «'+p.title+'»? Этапы, автозадачи и ссылки будут потеряны.',async()=>{
     await api('/api/projects/'+uid,{method:'DELETE'});
     PRJ.projects=PRJ.projects.filter(x=>x.uid!==uid);renderProjCards();toast('Удалено');});
+}
+
+/* ---------- Редактор маршрута на холсте (для существующего проекта) ----------
+   Открывает широкую модалку с wfCanvasEditor: свободное расположение этапов,
+   ＋→ новый этап, ⛓ ручные связи, ✕ удаление, двойной клик — переименование.
+   Сохранение — PATCH /api/projects/{uid} {stages:[...]} (сервер сливает этапы
+   по id/имени, сохраняет state/taskId/координаты и создаёт автозадачи новых). */
+function openWfEditor(uid){
+  const p=PRJ.projects.find(x=>x.uid===uid);if(!p)return;
+  if(!window.wfCanvasEditor){toast('Холст маршрута не загрузился (wf_canvas.js)');return;}
+  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'
+    +'Перетаскивайте узлы, связывайте этапы кнопкой ⛓, добавляйте через ＋→. '
+    +'Для каждого нового этапа сервер создаст автозадачу.</div>'
+    +'<div id="wfEditBox"></div>';
+  openModal('🧭 Маршрут проекта: '+esc(p.title),body,async()=>{
+    const stages=ed.getStages();
+    const pl={stages:stages};
+    await api('/api/projects/'+p.uid,{method:'PATCH',body:JSON.stringify(pl)});
+    p.stages=stages;p.stage_total=stages.length;
+    p.stage_done=stages.filter(s=>s.done||s.state==='done').length;
+    p.progress=p.stage_total?Math.round(p.stage_done/p.stage_total*100):0;
+    closeModal();renderProjCards();toast('Маршрут сохранён · новые этапы создали автозадачи');
+  },'💾 Сохранить маршрут',true);
+  const box=document.getElementById('wfEditBox');
+  const ed=window.wfCanvasEditor(box,(p.stages||[]).map(s=>({...s})));
 }
 
 function projFormModal(uid){

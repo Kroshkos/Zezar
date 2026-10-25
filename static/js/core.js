@@ -29,8 +29,11 @@ function openModal(title,bodyHtml,onSave,saveLabel='Сохранить'){
   // вставляем оверлей прямо в <body> — иначе модалка «не открывается».
   let root=document.getElementById('modalRoot');
   if(!root){ root=document.createElement('div'); root.id='modalRoot'; document.body.appendChild(root); }
+  // wide-режим (5-й аргумент или onSave===true): широкая модалка под холст маршрута
+  const wide=(saveLabel===true)||arguments[4]===true;
+  if(saveLabel===true)saveLabel='Сохранить';
   root.innerHTML='<div style="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)closeModal()">'
-   +'<div class="card" style="width:min(560px,94vw);max-height:88vh;overflow:auto;padding:20px"><h3 style="margin-bottom:12px">'+esc(title)+'</h3>'
+   +'<div class="card" style="width:min('+(wide?'1080px':'560px')+',94vw);max-height:88vh;overflow:auto;padding:20px"><h3 style="margin-bottom:12px">'+esc(title)+'</h3>'
    +'<form id="mform">'+bodyHtml
    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="button" class="btn ghost" onclick="closeModal()">Отмена</button>'
    +'<button type="submit" class="btn primary">'+esc(saveLabel)+'</button></div></form></div></div>';

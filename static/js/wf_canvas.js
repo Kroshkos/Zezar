@@ -114,7 +114,8 @@ function _wfShell(st, opts) {
       + '<div class="wf-head"><span class="wf-dot" style="background:' + w[1] + '"></span>'
       + '<span class="wf-name">' + _wfEsc(n.name || "") + '</span>' + tk + '</div>'
       + '<div class="wf-state" style="color:' + w[1] + '">' + w[0] + '</div>' + dl
-      + (opts.editable ? '<button type="button" class="wf-add" data-id="' + _wfEsc(n.id) + '" title="Добавить этап после этого">＋→</button>'
+      + (opts.editable ? '<button type="button" class="wf-link" data-id="' + _wfEsc(n.id) + '" title="Связать этот этап с другим">⛓</button>'
+        + '<button type="button" class="wf-add" data-id="' + _wfEsc(n.id) + '" title="Добавить этап после этого">＋→</button>'
         + '<button type="button" class="wf-del" data-id="' + _wfEsc(n.id) + '" title="Удалить этап">✕</button>' : "")
       + '</div>';
   });
@@ -138,9 +139,12 @@ function wfCanvasEditor(container, stages) {
   const render = () => {
     container.innerHTML = '<div style="overflow:auto;max-height:460px;border:1px solid #dbe3f0;border-radius:14px;background:#fbfcfe">'
       + _wfShell(st, {editable: true}) + '</div>'
-      + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center">'
+      + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">'
       + '<button type="button" class="btn sm wf-newroot">＋ корневой этап</button>'
-      + '<span style="font-size:11.5px;color:var(--muted)">Перетащите узлы мышью · ＋→ создаёт следующий этап · ✕ удаляет · двойной клик — переименовать</span></div>';
+      + (st.length ? '<select class="wf-linksel" style="max-width:220px"></select>'
+                   + '<button type="button" class="btn sm wf-dellink" title="Удалить выбранную связь">⛓✕</button>' : "")
+      + '<span style="font-size:11.5px;color:var(--muted)">Перетащите узлы мышью · ＋→ создаёт следующий этап · ✕ удаляет · двойной клик — переименовать'
+      + (st.length > 1 ? ' · «⛓» связывает выбранный этап с другим' : '') + '</span></div>';
     bind();
   };
 
@@ -165,6 +169,23 @@ function wfCanvasEditor(container, stages) {
       s.branches = (s.branches || []).map(br => ({...br, steps: (br.steps || []).filter(x => x.id !== id)}))
                     .filter(br => (br.steps || []).length);
     });
+    if (linkFrom === id) linkFrom = null;
+    dirty = true; render();
+  }
+
+  // ---------- ручное связывание этапов (⛓) ----------
+  let linkFrom = null;
+  function markLinkSrc(canvas) {
+    canvas.querySelectorAll(".wf-node").forEach(el =>
+      el.classList.toggle("wf-linksrc", el.dataset.id === linkFrom));
+  }
+  function linkTo(targetId) {
+    const src = findNode(linkFrom), tgt = findNode(targetId);
+    linkFrom = null;
+    if (!src || !tgt || src === tgt) { render(); return; }
+    src.links_out = src.links_out || [];
+    if (src.links_out.includes(tgt.id)) { alert("Связь уже существует"); render(); return; }
+    src.links_out.push(tgt.id);
     dirty = true; render();
   }
 
@@ -222,6 +243,50 @@ function wfCanvasEditor(container, stages) {
     });
     canvas.querySelectorAll(".wf-add").forEach(b => b.addEventListener("click", () => addAfter(b.dataset.id)));
     canvas.querySelectorAll(".wf-del").forEach(b => b.addEventListener("click", () => removeNode(b.dataset.id)));
+    // связывание этапов: ⛓ на узле -> клик по другому узлу
+    canvas.querySelectorAll(".wf-link").forEach(b => b.addEventListener("click", ev => {
+      ev.stopPropagation();
+      linkFrom = (linkFrom === b.dataset.id) ? null : b.dataset.id;
+      markLinkSrc(canvas);
+    }));
+    canvas.querySelectorAll(".wf-node").forEach(el => el.addEventListener("click", () => {
+      if (linkFrom && linkFrom !== el.dataset.id) linkTo(el.dataset.id);
+    }));
+    markLinkSrc(canvas);
+    // выпадающий список связей выбранного исходного этапа + удаление связи
+    const sel = container.querySelector(".wf-linksel");
+    const delBtn = container.querySelector(".wf-dellink");
+    if (sel) {
+      sel.innerHTML = '<option value="">— этап-источник связи —</option>'
+        + st.map(n => '<option value="' + _wfEsc(n.id) + '">' + _wfEsc(n.name || n.id) + '</option>').join('');
+      sel.value = linkFrom || "";
+      sel.addEventListener("change", () => {
+        const id = sel.value;
+        if (!id) { linkFrom = null; markLinkSrc(canvas); return; }
+        const others = st.filter(n => n.id !== id && !(findNode(id).links_out || []).includes(n.id));
+        if (!others.length) { alert("Все возможные связи этого этапа уже созданы"); return; }
+        const names = others.map((n, i) => (i + 1) + ". " + (n.name || n.id)).join("\n");
+        const ans = prompt("Связать «" + (findNode(id).name || "") + "» с этапом (введите номер):\n" + names, "1");
+        const idx = parseInt(ans, 10) - 1;
+        if (idx >= 0 && idx < others.length) { linkFrom = id; linkTo(others[idx].id); }
+      });
+    }
+    if (delBtn) delBtn.addEventListener("click", () => {
+      const id = (container.querySelector(".wf-linksel") || {}).value;
+      if (!id) { alert("Сначала выберите этап-источник"); return; }
+      const src = findNode(id);
+      const outs = src.links_out || [];
+      if (!outs.length) { alert("У этого этапа нет исходящих связей"); return; }
+      const byId = {}; st.forEach(n => byId[n.id] = n);
+      const names = outs.map((t, i) => (i + 1) + ". → " + ((byId[t] || {}).name || t)).join("\n");
+      const ans = prompt("Какую связь удалить?\n" + names, "1");
+      const idx = parseInt(ans, 10) - 1;
+      if (idx >= 0 && idx < outs.length) {
+        src.links_out = outs.filter((_, i) => i !== idx);
+        if (!src.links_out.length) delete src.links_out;
+        dirty = true; render();
+      }
+    });
     const rootBtn = container.querySelector(".wf-newroot");
     if (rootBtn) rootBtn.addEventListener("click", () => {
       const name = prompt("Название корневого этапа:", "Этап"); if (!name || !name.trim()) return;
