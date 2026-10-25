@@ -126,7 +126,15 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     # и уведомление «вам назначено исполнение» автору-исполнителю не является
     # спамом «сам себе».
     actor_uid = p.get("actor_user_id")
-    if actor_uid:
+    # Системные события планировщика (напоминания о сроке/просрочке): автор
+    # карточки НЕ исключается. Это не чьё-то действие, а сигнал «срок
+    # истекает/истёк» — его обязан получать ответственный, даже если он же
+    # автор (штатный случай «задача на себе»). Иначе единственный участник
+    # отсеивался анти-спам фильтром и напоминание молча не доставлялось
+    # («получателей: 1, отфильтровано по сценариям: 1»).
+    is_system_scheduled = p.get("topic") in ("telegram.due", "telegram.overdue") \
+        or p.get("actor") == "планировщик" or p.get("action") in ("due_soon", "overdue")
+    if actor_uid and not is_system_scheduled:
         if targets:
             # Для адресных событий фильтрация обычно сделана на этапе enqueue
             # (entity_service исключает актёра из target_user_ids), но payload

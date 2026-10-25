@@ -373,9 +373,14 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "action": "due_soon", "event_keys": ["due_soon"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
-            # автор карточки: воркер исключает его из получателей напоминания
-            # (спам «сам себе»: resp/исполнитель часто = создатель задачи)
-            "actor_user_id": (ent.extra_json or {}).get("created_by"),
+            # NB: автор карточки НЕ исключается из получателей. Напоминание о
+            # сроке — системное событие («задача просрочится»), а не чьё-то
+            # действие: спамом «сам себе» оно не является даже когда автор =
+            # единственный ответственный (такое назначение штатно). Исключение
+            # автора здесь молча лишало уведомлений именно тех пользователей,
+            # кто ведёт задачи «на себе», и в журнале появлялось
+            # «отфильтровано по сценариям» после того, как соавтор-ответствен-
+            # ный становился единственным участником.
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     # просроченные (overdue): срок < сегодня, статус не «завершающий» — раз в window_days.
@@ -399,7 +404,9 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
             "action": "overdue", "event_keys": ["overdue"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
-            "actor_user_id": (ent.extra_json or {}).get("created_by"),
+            # автор НЕ исключается (см. комментарий в due-ветке): «срок истёк»
+            # — системное событие, ответственному (пусть и автору) о нём знать
+            # обязательно.
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     await session.commit()
