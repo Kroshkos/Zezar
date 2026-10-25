@@ -4,6 +4,7 @@ E2E-проверка ядра + модуля «Задачи» через httpx A
 Использует временную БД и dev-вход (dev_login_enabled=True задаётся в env до импорта app).
 """
 import asyncio
+import json
 import os
 import tempfile
 
@@ -328,9 +329,92 @@ async def main() -> None:
                 r = await c.get(f"{api_path}/api-list", headers=m_cookie)
                 assert any(x["uid"] == e_uid for x in r.json()), f"{mk}: не видно участнику ws"
 
+            # 17. произвольные связи между сущностями (ядро /api/core/links*)
+            from sqlalchemy import select as _sel17
+            task_uid = None
+            proj_uid = None
+            async with SessionLocal() as _s:
+                _ents = (await _s.scalars(_sel17(Entity))).all()
+                for _e in _ents:
+                    if _e.kind.value == "task" and task_uid is None:
+                        task_uid = _e.uid
+                    if _e.kind.value == "project" and proj_uid is None:
+                        proj_uid = _e.uid
+            assert task_uid and proj_uid, "нет task/project для теста связей"
+            # поиск связываемых
+            r = await c.get("/api/core/links/search", params={"q": ""}, headers=cookie)
+            assert r.status_code == 200 and r.json(), "links/search пуст"
+            # создание связи задача ↔ проект
+            r = await c.post("/api/core/links", headers=cookie, json={
+                "source_uid": task_uid, "target_uid": proj_uid,
+                "link_type": "relates_to"})
+            assert r.status_code == 200, f"create link: {r.status_code} {r.text[:200]}"
+            link_id = r.json()["id"]
+            # дубликат (в т.ч. перевёрнутый — связь симметрична) -> 409
+            r = await c.post("/api/core/links", headers=cookie, json={
+                "source_uid": proj_uid, "target_uid": task_uid})
+            assert r.status_code == 409, "дубликат связи не отклонён"
+            # список связей виден с обеих сторон
+            r = await c.get(f"/api/core/entities/{task_uid}/links", headers=cookie)
+            assert r.status_code == 200 and any(
+                l["uid"] == proj_uid for l in r.json()), \
+                f"связь не видна у source: {r.text[:200]}"
+            r = await c.get(f"/api/core/entities/{proj_uid}/links", headers=cookie)
+            assert any(l["uid"] == task_uid for l in r.json()), \
+                "связь не видна у target (симметрия)"
+            # нельзя связать сущность саму с собой
+            r = await c.post("/api/core/links", headers=cookie, json={
+                "source_uid": task_uid, "target_uid": task_uid})
+            assert r.status_code == 422, "self-link не отклонён"
+            # удаление
+            r = await c.delete(f"/api/core/links/{link_id}", headers=cookie)
+            assert r.status_code == 200, f"delete link: {r.status_code}"
+            r = await c.get(f"/api/core/entities/{task_uid}/links", headers=cookie)
+            assert not any(l["uid"] == proj_uid for l in r.json()), \
+                "связь не удалилась"
+
+            # 18. холст workflow: координаты x/y и связи links_out сохраняются в payload
+            wf_json = json.dumps([
+                {"name": "Подготовка", "x": 40, "y": 60},
+                {"name": "Согласование", "x": 320, "y": 60},
+                {"name": "Утверждение", "x": 600, "y": 220},
+            ])
+            r = await c.post("/api/projects", headers=cookie, json={
+                "title": "E2E проект с холстом", "status_key": "new",
+                "department_id": depts["dep-it"], "stages_json": wf_json})
+            assert r.status_code == 200, f"project create: {r.text[:200]}"
+            wfp = r.json()["uid"]
+            from app.models.module_payloads import ProjectPayload as _PP
+            async with SessionLocal() as _s:
+                _ent = await _s.scalar(_sel17(Entity).where(Entity.uid == wfp))
+                _pp = await _s.scalar(_sel17(_PP).where(_PP.entity_id == _ent.id))
+                st = {x["name"]: x for x in _pp.stages}
+                assert st["Подготовка"].get("x") == 40 and st["Подготовка"].get("y") == 60, \
+                    f"координаты не сохранились: {_pp.stages}"
+                assert st["Утверждение"].get("y") == 220
+                # PATCH: перетаскивание узлов + links_out на несуществующий id
+                r = await c.patch(f"/api/projects/{wfp}", headers=cookie, json={
+                    "stages": [
+                        {"name": "Подготовка", "id": st["Подготовка"]["id"],
+                         "x": 10, "y": 10,
+                         "links_out": [st["Согласование"]["id"], "bogus-id"]},
+                        {"name": "Согласование", "id": st["Согласование"]["id"],
+                         "x": 200, "y": 10},
+                        {"name": "Утверждение", "id": st["Утверждение"]["id"],
+                         "x": 380, "y": 240},
+                    ]})
+                assert r.status_code == 200, f"project patch wf: {r.text[:200]}"
+                _pp = await _s.scalar(_sel17(_PP).where(_PP.entity_id == _ent.id))
+                await _s.refresh(_pp)
+                s0 = _pp.stages[0]
+                assert s0.get("links_out") == [st["Согласование"]["id"]], \
+                    f"links_out не почистились/не сохранились: {_pp.stages}"
+                assert s0.get("x") == 10 and _pp.stages[1].get("x") == 200
+
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
           "шеринг READ/изоляция, совещания(payload+ICS-время), docs/softs/grants/schols/"
-          "priority/projects (реестр+payload+изоляция)")
+          "priority/projects (реестр+payload+изоляция), entity links (создание/дубликат/"
+          "симметрия/self-link/удаление), wf-canvas (x/y + links_out)")
 
 
 async def notify_chain_test() -> None:

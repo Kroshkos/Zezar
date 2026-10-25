@@ -202,8 +202,13 @@ async def create_entity(
     #  - назначенный ответственный получает 'assigned';
     #  - каждый исполнитель получает 'executor_added';
     #  - остальные участники (слоты подразделений из share_with) — 'created'.
-    targets_resp = [r for r in {responsible_user_id} | set(exec_ids)
-                    if r and r != user.id]
+    # ВАЖНО: автор НЕ исключается, если он явно указан ответственным или
+    # исполнителем («задача на себе» — штатная ситуация: пользователю нужно
+    # уведомление о назначении в своей же карточке; молчаливый пропуск
+    # «сам себе» лишал таких пользователей всех уведомлений). Анти-спам
+    # фильтр воркера снимает широкие события от автора, но адресные
+    # назначения сохраняются.
+    targets_resp = [r for r in {responsible_user_id} | set(exec_ids) if r]
     if targets_resp:
         await _emit_assigned(session, user, ent, targets_resp)
         # мобильный контур: лента + push «на вас назначено» (см. app/core/mobile_notify)
@@ -290,6 +295,10 @@ async def set_executors(
         # исполнителям (кроме самого инициатора), чтобы они реально получили
         # уведомление о назначении.
         await _log_only(session, user, "update", ent, {"changed": {"executors": ids}})
+        # Автор может быть исполнителем своей же сущности («назначение на
+        # себя») — уведомление о назначении ему положено; из события
+        # исключается только пользователь, ЧЬЁ назначение обрабатывается
+        # (actor_user_id), чтобы не спамить самому себе при самомоназначении.
         new_ids = [e for e in ids if e not in prev_extra and e != actor_user_id]
         if new_ids:
             await _emit_assigned(session, user, ent, new_ids)
@@ -308,6 +317,41 @@ async def _recipients_ids(session: AsyncSession, ent: Entity) -> list[int]:
         if isinstance(e, dict) and e.get("id"):
             ids.add(int(e["id"]))
     return sorted(i for i in ids if i)
+
+
+async def notify_participants(
+    session: AsyncSession, actor: User, ent: Entity, event_key: str, note: str,
+) -> None:
+    """Адресное уведомление ВСЕМ участникам сущности (включая автора, если он
+    сам ответствен/исполнитель — «задача на себе»).
+
+    Используется модулями для событий вне CRUD ядра (например, продвижение
+    этапа маршрута): ранее такие изменения писались только в журнал и в
+    Яндекс.Календарь, а в Telegram участники не получали ничего.
+    """
+    from app.core.notify import link_for
+    targets = await _recipients_ids(session, ent)
+    if not targets:
+        return
+    session.add(OutboxEvent(topic="telegram.notify", payload_json={
+        "action": event_key, "event_keys": [event_key],
+        "entity_id": ent.id, "entity_uid": ent.uid,
+        "kind": ent.kind.value, "module": ent.module_key, "title": ent.title,
+        # author_uid — автор события; воркер исключает его из адресатов только
+        # если у него нет слота resp (анти-спам «сам себе» для широких
+        # событий). Для участников с слотом уведомление сохраняется.
+        "actor": actor.display_name, "actor_user_id": actor.id,
+        "details": {"note": note},
+        "link": link_for(ent.uid, ent.kind.value),
+        "target_user_ids": targets,
+    }))
+    from app.core.mobile_notify import emit_mobile_event
+    for t in targets:
+        await emit_mobile_event(
+            session, user_id=t, type_="entity_updated",
+            title=f"{ent.title}: {note}", body=None,
+            entity_uid=ent.uid, module_key=ent.module_key,
+            payload={"kind": ent.kind.value, "event": event_key})
 
 
 async def update_entity(
@@ -382,6 +426,11 @@ async def delete_entity(session: AsyncSession, user: User, ent: Entity) -> None:
                           SoftPayload, GrantPayload, ScholarPayload, PriorityPayload):
         await session.execute(_del(payload_model).where(payload_model.entity_id == ent.id))
     await session.execute(_del(EntityShare).where(EntityShare.entity_id == ent.id))
+    # произвольные связи (EntityLink) — с обеих сторон, иначе FK-ссылка
+    # останется на удаляемую сущность
+    from app.models.core import EntityLink as _EL
+    await session.execute(_del(_EL).where(
+        (_EL.entity_a_id == ent.id) | (_EL.entity_b_id == ent.id)))
     await session.delete(ent)
 
 

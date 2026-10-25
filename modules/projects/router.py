@@ -316,19 +316,46 @@ async def list_projects(user: User = Depends(get_current_user),
     return out
 
 
+def _stage_uid() -> str:
+    import uuid as _uuid
+    return _uuid.uuid4().hex[:10]
+
+
 def _build_stages(raw: list) -> list[dict]:
-    """Нормализация этапов маршрута (wf): каждый этап получает state/taskId/branches.
-    Для каждого этапа автозадача создаётся отдельно (см. _create_stage_tasks)."""
+    """Нормализация этапов маршрута (wf): каждый этап получает id/state/taskId/branches.
+    Для каждого этапа автозадача создаётся отдельно (см. _create_stage_tasks).
+
+    Поля холста (Obsidian-like): x/y — координаты узла, links_out — явные связи
+    «этот этап → следующий». Сохраняются прямо в payload.stages (JSON), поэтому
+    раскладка переживает перезагрузку без отдельной миграции."""
+    import uuid as _uuid
     out = []
     for i, s in enumerate(raw):
         if not isinstance(s, dict) or not str(s.get("name", "")).strip():
             continue
-        out.append({
+        st = {
+            "id": str(s.get("id") or _uuid.uuid4().hex[:10]),
             "name": str(s["name"]).strip(),
             "state": ("active" if i == 0 else "pending"),
             "date": "", "deadline": str(s.get("deadline") or ""),
             "comment": "", "taskId": "", "branches": s.get("branches") or [],
-        })
+        }
+        # координаты и связи холста сохраняем как есть (если заданы числами)
+        for pos in ("x", "y"):
+            v = s.get(pos)
+            if isinstance(v, (int, float)):
+                st[pos] = int(v)
+        lo = [t for t in (s.get("links_out") or []) if isinstance(t, str)]
+        if lo:
+            st["links_out"] = lo
+        out.append(st)
+    # ссылки links_out на несуществующие id (например, из старого JSON) — чистим
+    valid = {st["id"] for st in out}
+    for st in out:
+        if "links_out" in st:
+            st["links_out"] = [t for t in st["links_out"] if t in valid]
+            if not st["links_out"]:
+                del st["links_out"]
     return out
 
 
@@ -506,8 +533,61 @@ async def patch_project(uid: str, body: dict, user: User = Depends(get_current_u
             raise HTTPException(422, "Руководитель проекта должен быть участником подразделения")
         payload.leader_user_id = int(lid) if lid else None
     for f in (_PROJ_PAYLOAD - {"parent_uid", "grant_entity_uid",
-                               "priority_indicator_uid", "leader_user_id"}) & set(body):
+                               "priority_indicator_uid", "leader_user_id",
+                               "stages"}) & set(body):
         setattr(payload, f, body[f])
+    # этапы маршрута через PATCH — с сохранением state/taskId/id/координат холста
+    # (в отличие от POST, где маршрут строится заново и первый этап активен)
+    if "stages" in body:
+        old_by_key = {}
+        for s in ((payload.stages or []) if payload else []):
+            if isinstance(s, dict):
+                if s.get("id"):
+                    old_by_key[str(s["id"])] = s
+                old_by_key.setdefault("n:" + str(s.get("name", "")).strip().lower(), s)
+        merged = []
+        for i, raw in enumerate(body["stages"] or []):
+            if not isinstance(raw, dict) or not str(raw.get("name", "")).strip():
+                continue
+            prev = old_by_key.get(str(raw.get("id") or "")) \
+                or old_by_key.get("n:" + str(raw.get("name", "")).strip().lower())
+            st = {
+                "id": str(raw.get("id") or (prev or {}).get("id") or _stage_uid()),
+                "name": str(raw["name"]).strip(),
+                "state": (raw.get("state") or (prev or {}).get("state")
+                          or ("active" if i == 0 and not any(
+                              (r.get("state") if isinstance(r, dict) else None)
+                              in ("active", "done") for r in (body["stages"] or []))
+                              else "pending")),
+                "date": (prev or {}).get("date", ""),
+                "deadline": str(raw.get("deadline") or raw.get("due")
+                                or (prev or {}).get("deadline") or ""),
+                "comment": (prev or {}).get("comment", ""),
+                "taskId": raw.get("taskId") or (prev or {}).get("taskId") or "",
+                "branches": raw.get("branches") or (prev or {}).get("branches") or [],
+                "done": bool(raw.get("done")) or str(raw.get("state")) == "done"
+                        or str((prev or {}).get("state")) == "done",
+            }
+            if st["done"] and st["state"] != "rejected":
+                st["state"] = "done"
+            for pos in ("x", "y"):
+                v = raw.get(pos, (prev or {}).get(pos))
+                if isinstance(v, (int, float)):
+                    st[pos] = int(v)
+            lo = [t for t in (raw.get("links_out") or (prev or {}).get("links_out") or [])
+                  if isinstance(t, str)]
+            if lo:
+                st["links_out"] = lo
+            merged.append(st)
+        valid = {s["id"] for s in merged}
+        for s in merged:
+            if "links_out" in s:
+                s["links_out"] = [t for t in s["links_out"] if t in valid]
+                if not s["links_out"]:
+                    del s["links_out"]
+        payload.stages = merged
+        await _create_stage_tasks(session, user, ent, merged,
+                                  ent.owner_department_id, payload.leader_user_id)
     # «Дата окончания» проекта синхронизируется с календарной вехой due_date
     if body.get("end_date"):
         await entity_service.update_entity(
