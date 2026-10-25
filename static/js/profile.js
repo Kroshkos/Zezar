@@ -26,6 +26,7 @@ async function openProfile(uid){
     const btn=form.parentElement.querySelector('div[style*="justify-content:flex-end"]');
     if(btn)btn.innerHTML='<button type="button" class="btn ghost" onclick="closeModal()">Закрыть</button>';
   }
+  if(window.renderEntityLinks)renderEntityLinks('entLinksBox',P.kind,P.uid);
 }
 
 function profBadge(o){return o?'<span class="badge '+(o.color||'b-gray')+'">'+esc(o.label||'—')+'</span>':'<span class="badge b-gray">—</span>';}
@@ -59,6 +60,9 @@ function profileBodyHTML(P){
   if(lk.priority_indicator)chips.push('<span class="lchip">🚀 Приоритет-2030: <b>'+esc(lk.priority_indicator)+'</b></span>');
   if(lk.tasks)chips.push('<span class="lchip">🎯 задачи: '+esc(lk.tasks)+'</span>');
   if(chips.length)h+='<div class="link-chips" style="margin-top:12px">'+chips.join('')+'</div>';
+
+  // ---- произвольные связи между сущностями (EntityLink, /api/core/links) ----
+  h+='<div id="entLinksBox" style="margin-top:12px"></div>';
 
   // ---- ответственные и исполнители ----
   h+='<div style="margin-top:12px;font-size:12.5px"><b>Ответственные:</b> '

@@ -155,8 +155,12 @@ function openProjectCard(uid){
     +(p.priority_indicator_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">🚀 Приоритет-2030: '+esc(p.priority_indicator_title)+'</div>':'')
     +(p.description?'<div style="margin-top:8px;font-size:13px">'+esc(p.description)+'</div>':'')
     +wfCanvasHTML(p)
-    +(p.can_edit&&window.wfCanvasEditor?'<div style="margin-top:8px"><button type="button" class="btn sm" onclick="closeModal();openWfEditor(\\''+p.uid+'\\')">🖐 Редактировать маршрут на холсте</button></div>':'');
+    +'<div id="projLinksBox" style="margin-top:10px"></div>'
+    +(p.can_edit&&window.wfCanvasEditor?'<div style="margin-top:8px"><button type="button" class="btn sm" id="wfEditBtn">🖐 Редактировать маршрут на холсте</button></div>':'');
   openModal('Проект: '+esc(p.title),body,'Закрыть',()=>closeModal(),true);
+  const btn=document.getElementById('wfEditBtn');
+  if(btn)btn.onclick=()=>{closeModal();openWfEditor(uid);};
+  if(window.renderEntityLinks)renderEntityLinks('projLinksBox','project',uid);
 }
 
 async function delProj(uid){
@@ -189,6 +193,8 @@ function openWfEditor(uid){
   },'💾 Сохранить маршрут',true);
   const box=document.getElementById('wfEditBox');
   const ed=window.wfCanvasEditor(box,(p.stages||[]).map(s=>({...s})));
+  // wfCanvasEditor может быть асинхронным (инициализация холста) — ждём готовности
+  Promise.resolve(ed).then(h=>{ if(h&&typeof h.getStages==='function') ed=h; });
 }
 
 function projFormModal(uid){
