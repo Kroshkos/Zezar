@@ -752,7 +752,7 @@ if STATIC_DIR.is_dir():
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
-from app.routers import admin, auth, departments, entity_open, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app.routers import admin, auth, departments, entity_open, links, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
 from app.app_links import router as app_links_router  # noqa: E402
 from app import mobile as mobile_api  # noqa: E402
 
@@ -769,6 +769,7 @@ app.include_router(profile.router, prefix="/api/core", tags=["core-profile"])
 app.include_router(admin.router, prefix="/api/core", tags=["core-admin"])
 app.include_router(refdata.router, prefix="/api/core/refdata", tags=["core-refdata"])
 app.include_router(notify.router, prefix="/api/core", tags=["core-notify"])
+app.include_router(links.router, prefix="/api/core", tags=["core-links"])  # /api/core/links* (связи сущностей)
 
 
 @app.exception_handler(401)

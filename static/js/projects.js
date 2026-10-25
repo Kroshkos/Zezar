@@ -79,26 +79,30 @@ function stageRow(s){
 }
 function addStage(){document.getElementById('pstagebox').insertAdjacentHTML('beforeend',stageRow({}));}
 
-/* ---------- Холст маршрута (упрощённая версия wfCanvasHTML из прототипа) ----------
-   !important: в profile.js уже есть функция wfCanvasHTML — объявление через window.*,
-   чтобы не перекрывать её и не зависеть от порядка загрузки скриптов. */
-window.wfCanvasHTML = function(p){
-  const st=p.stages||[];
-  if(!st.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте этапы при редактировании.</div>';
-  const STEP={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Готово','b-green'],rejected:['Отклонён','b-red']};
-  let h='<label>🧭 Холст маршрута</label><div style="overflow-x:auto"><div style="display:flex;gap:8px;align-items:stretch;padding:6px 2px">';
-  st.forEach((s,i)=>{
-    const w=STEP[s.state]||['—','b-gray'];
-    h+='<div style="min-width:170px;max-width:210px;border:1px solid #cfd8e8;border-radius:12px;padding:9px;background:#fff">'
-      +'<div style="font-weight:600;font-size:12.5px">'+esc(s.name)+'</div>'
-      +'<div style="margin-top:5px"><span class="badge '+w[1]+'">'+w[0]+'</span></div>'
-      +(s.deadline?'<div style="font-size:11.5px;color:var(--muted);margin-top:5px">⏰ '+pfmt(s.deadline)+'</div>':'')
-      +(s.taskId?'<div style="font-size:11px;color:var(--muted);margin-top:3px">автозадача ✓</div>':'')
-      +'</div>';
-    if(i<st.length-1)h+='<div style="align-self:center;color:#94a3b8">→</div>';
-  });
-  h+='</div></div>';
-  return h;
+/* ---------- Холст маршрута ----------
+   Полноценный интерактивный холст (Obsidian-like) живёт в wf_canvas.js,
+   который подключается на странице ДО projects.js и задаёт window.wfCanvasHTML
+   (просмотр с координатами/связями) и window.wfCanvasEditor (редактор).
+   Здесь — только резервный рендерер на случай, если wf_canvas.js не загрузился. */
+if (!window.wfCanvasHTML) {
+  window.wfCanvasHTML = function(p){
+    const st=p.stages||[];
+    if(!st.length)return '<div style="font-size:13px;color:var(--muted);padding:14px;border:1px dashed #cfd8e8;border-radius:12px;margin-top:12px">Маршрут пуст — добавьте этапы при редактировании.</div>';
+    const STEP={pending:['Ожидает','b-gray'],active:['В работе','b-blue'],done:['Готово','b-green'],rejected:['Отклонён','b-red']};
+    let h='<label>🧭 Холст маршрута</label><div style="overflow-x:auto"><div style="display:flex;gap:8px;align-items:stretch;padding:6px 2px">';
+    st.forEach((s,i)=>{
+      const w=STEP[s.state]||['—','b-gray'];
+      h+='<div style="min-width:170px;max-width:210px;border:1px solid #cfd8e8;border-radius:12px;padding:9px;background:#fff">'
+        +'<div style="font-weight:600;font-size:12.5px">'+esc(s.name)+'</div>'
+        +'<div style="margin-top:5px"><span class="badge '+w[1]+'">'+w[0]+'</span></div>'
+        +(s.deadline?'<div style="font-size:11.5px;color:var(--muted);margin-top:5px">⏰ '+pfmt(s.deadline)+'</div>':'')
+        +(s.taskId?'<div style="font-size:11px;color:var(--muted);margin-top:3px">автозадача ✓</div>':'')
+        +'</div>';
+      if(i<st.length-1)h+='<div style="align-self:center;color:#94a3b8">→</div>';
+    });
+    h+='</div></div>';
+    return h;
+  };
 }
 
 function renderProjCards(){
@@ -150,8 +154,13 @@ function openProjectCard(uid){
     +(p.grant_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">💰 Грант: '+esc(p.grant_title)+'</div>':'')
     +(p.priority_indicator_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">🚀 Приоритет-2030: '+esc(p.priority_indicator_title)+'</div>':'')
     +(p.description?'<div style="margin-top:8px;font-size:13px">'+esc(p.description)+'</div>':'')
-    +wfCanvasHTML(p);
+    +wfCanvasHTML(p)
+    +'<div id="projLinksBox" style="margin-top:10px"></div>'
+    +(p.can_edit&&window.wfCanvasEditor?'<div style="margin-top:8px"><button type="button" class="btn sm" id="wfEditBtn">🖐 Редактировать маршрут на холсте</button></div>':'');
   openModal('Проект: '+esc(p.title),body,'Закрыть',()=>closeModal(),true);
+  const btn=document.getElementById('wfEditBtn');
+  if(btn)btn.onclick=()=>{closeModal();openWfEditor(uid);};
+  if(window.renderEntityLinks)renderEntityLinks('projLinksBox','project',uid);
 }
 
 async function delProj(uid){
@@ -159,6 +168,33 @@ async function delProj(uid){
   askConfirm('Удалить проект «'+p.title+'»? Этапы, автозадачи и ссылки будут потеряны.',async()=>{
     await api('/api/projects/'+uid,{method:'DELETE'});
     PRJ.projects=PRJ.projects.filter(x=>x.uid!==uid);renderProjCards();toast('Удалено');});
+}
+
+/* ---------- Редактор маршрута на холсте (для существующего проекта) ----------
+   Открывает широкую модалку с wfCanvasEditor: свободное расположение этапов,
+   ＋→ новый этап, ⛓ ручные связи, ✕ удаление, двойной клик — переименование.
+   Сохранение — PATCH /api/projects/{uid} {stages:[...]} (сервер сливает этапы
+   по id/имени, сохраняет state/taskId/координаты и создаёт автозадачи новых). */
+function openWfEditor(uid){
+  const p=PRJ.projects.find(x=>x.uid===uid);if(!p)return;
+  if(!window.wfCanvasEditor){toast('Холст маршрута не загрузился (wf_canvas.js)');return;}
+  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'
+    +'Перетаскивайте узлы, связывайте этапы кнопкой ⛓, добавляйте через ＋→. '
+    +'Для каждого нового этапа сервер создаст автозадачу.</div>'
+    +'<div id="wfEditBox"></div>';
+  openModal('🧭 Маршрут проекта: '+esc(p.title),body,async()=>{
+    const stages=ed.getStages();
+    const pl={stages:stages};
+    await api('/api/projects/'+p.uid,{method:'PATCH',body:JSON.stringify(pl)});
+    p.stages=stages;p.stage_total=stages.length;
+    p.stage_done=stages.filter(s=>s.done||s.state==='done').length;
+    p.progress=p.stage_total?Math.round(p.stage_done/p.stage_total*100):0;
+    closeModal();renderProjCards();toast('Маршрут сохранён · новые этапы создали автозадачи');
+  },'💾 Сохранить маршрут',true);
+  const box=document.getElementById('wfEditBox');
+  const ed=window.wfCanvasEditor(box,(p.stages||[]).map(s=>({...s})));
+  // wfCanvasEditor может быть асинхронным (инициализация холста) — ждём готовности
+  Promise.resolve(ed).then(h=>{ if(h&&typeof h.getStages==='function') ed=h; });
 }
 
 function projFormModal(uid){
