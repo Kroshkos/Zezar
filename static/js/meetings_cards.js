@@ -100,6 +100,7 @@ const PRINT_DATE = new Date().toLocaleDateString('ru-RU');
 function cardHTML(c) {
   const dcolor = deptColor(c.department_id);          // полоса — по подразделению
   const pcolor = ccolor(c.priority_color);            // плашка — приоритет (как раньше)
+  const scolor = ccolor((c.current_stage || {}).color); // плашка — текущий этап маршрута
   // QR ведёт на профиль сущности: полный URL текущего хоста (чтобы сканер
   // с телефона попал в ту же инсталляцию, что открыта в браузере).
   let qrBlock;
@@ -117,31 +118,38 @@ function cardHTML(c) {
   // содержание: чек-лист этапов (entity) либо зона заметок (task)
   let body;
   if (c.type === 'entity') {
-    const rows = (c.stages || []).map(s =>
-      `<div class="pk"><span class="bx"></span><span class="tx">`
+    const cur = c.current_stage || {};
+    const rows = (c.stages || []).map(s => {
+      const isCur = s.name && s.name === cur.name;   // подсветка текущего этапа
+      return `<div class="pk${isCur ? ' pk-cur' : ''}"><span class="bx"></span><span class="tx">`
       + `<span class="nm">${esc(s.name) || '—'}</span>`
       + `<span class="sm"> · ${cfmt(s.deadline)} · ${esc(s.responsible) || '—'}</span>`
-      + `</span></div>`).join('');
+      + `</span></div>`;
+    }).join('');
     body = `<div class="pchecklist">${rows || '<div class="sm">Нет этапов</div>'}</div>`;
   } else {
     body = `<div class="pnotes" title="Место для рукописных заметок"></div>`;
   }
 
   const dname = cdeptName(c.department_id);
-  // Обёртка-ячейка сетки: position:relative для чекбокса выбора; сама карточка
-  // min-height:0 + overflow:hidden — чтобы при переполнении контент не вылезал
-  // за нижнюю границу (QR/подразделение). Чекбокс и «рамка выбора» на печать
-  // не попадают (см. @media print в app.css).
+  const cs = c.current_stage;
+  // Обёртка-ячейка сетки: position:relative для чекбокса выбора. Адаптивная
+  // высота карточек: на экране grid-auto-rows:auto (см. .pcards-grid в app.css)
+  // и min-height:0 только как нижняя граница — контент не обрезается. При
+  // печати включается режим print-fit (.print-fit): фиксированные ряды листа,
+  // компактный шрифт чек-листа, чтобы многоэтапные карточки помещались на лист.
   return `<div class="pcardwrap" data-uid="${esc(c.uid)}">
     <input type="checkbox" class="csel no-print" style="position:absolute;top:6px;left:6px;z-index:2;margin:0"
            ${CSEL.has(c.uid) ? 'checked' : ''} onchange="tglCardSel('${esc(c.uid)}',this.checked)"
            title="Отметить для печати">
     <div class="pcard" style="height:100%;min-height:0;border-left:8px solid ${dcolor}">
-      <div style="min-height:0;overflow:hidden">
+      <div style="min-height:0">
         <div class="ptop">
           <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
           <span class="pid pdate">${PRINT_DATE}</span>
         </div>
+        ${cs ? `<div class="pstage-tag"><span class="ptag" style="background:${scolor}">🧭 ${esc(cs.name)}</span>`
+             + `<span class="pstage-pos">${cs.index + 1}/${cs.total} · ${esc(cs.label)}</span></div>` : ''}
         ${dname ? `<div class="pdept" style="color:${dcolor}">${esc(dname)}</div>` : ''}
         <div class="pdir" style="color:${dcolor}">${esc(c.tag)}${c.cross_dept ? ' · межпространственная' : ''}</div>
         <div class="ptitle">${esc(c.title)}</div>
@@ -231,6 +239,40 @@ function buildSheetsHtml(data, fmt) {
     + `</div>`).join('');
 }
 
+/* Подгонка карточек под лист при печати: если в каком-либо чек-листе больше
+   MAX_STAGES_PRINT этапов — включаем компактный режим .print-fit (меньше шрифт
+   и отступы), чтобы содержимое гарантированно помещалось в ячейку фиксированной
+   высоты и не обрезалось. Возвращает true, если режим применён. */
+const MAX_STAGES_PRINT = 7;
+function fitSheets(root) {
+  let maxStages = 0;
+  root.querySelectorAll('.pcardwrap').forEach(w => {
+    const n = w.querySelectorAll('.pchecklist .pk').length;
+    if (n > maxStages) maxStages = n;
+  });
+  if (!maxStages) return false;
+  const compact = maxStages > MAX_STAGES_PRINT;
+  root.querySelectorAll('.printpage').forEach(p => p.classList.toggle('print-fit', compact));
+  // Если даже в компактном режиме контент не влезает в ячейку листа —
+  // уменьшаем масштаб содержимого карточки (transform не ломает сетку).
+  root.querySelectorAll('.pcardwrap').forEach(w => {
+    const inner = w.querySelector('.pcard');
+    if (!inner) return;
+    inner.style.transform = '';
+    inner.style.transformOrigin = 'top left';
+    const cellH = w.clientHeight;
+    const contentH = inner.scrollHeight;
+    if (cellH > 40 && contentH > cellH + 2) {
+      const k = Math.max(0.72, (cellH - 2) / contentH);
+      inner.style.transform = 'scale(' + k.toFixed(3) + ')';
+      inner.style.width = (100 / k) + '%';
+    } else {
+      inner.style.width = '';
+    }
+  });
+  return compact;
+}
+
 function renderCardSheets() {
   if (!CD.loaded) return;
   const fmt = document.getElementById('c-format').value;
@@ -244,7 +286,9 @@ function renderCardSheets() {
   }
   updatePrintSrcInfo(data);
   document.getElementById('cempty').hidden = data.length > 0;
-  document.getElementById('cardPages').innerHTML = buildSheetsHtml(data, fmt);
+  const host = document.getElementById('cardPages');
+  host.classList.toggle('pcards-grid', CSEL.size === 0);   // экранные ряды авто-высоты
+  host.innerHTML = buildSheetsHtml(data, fmt);
 }
 
 /* ---------- печать ----------
@@ -276,6 +320,7 @@ async function printCards() {
     : new Promise(res => { i.onload = i.onerror = res; })));
   document.body.classList.add('printing-cards');
   ov.classList.add('on');
+  fitSheets(ov);                          // подгонка многоэтапных карточек под лист
   // Страховка на случай, если браузер не поддерживает событие afterprint
   let cleaned = false;
   const cleanup = () => {

@@ -59,8 +59,35 @@ async def _resp_names(session: AsyncSession, ent: Entity) -> list[str]:
     return out
 
 
+# Подписи и цвета состояний этапа маршрута (как STEP в wfCanvasHTML).
+_STAGE_STATE_LABEL = {
+    "pending": ("Ожидает", "b-gray"), "active": ("В работе", "b-blue"),
+    "done": ("Готово", "b-green"), "rejected": ("Отклонён", "b-red"),
+}
+
+
+def _current_stage_of(stages: list | None) -> dict | None:
+    """Текущий этап маршрута: первый «в работе», иначе первый незавершённый.
+    Если все этапы завершены — последний (маршрут закрыт)."""
+    rows = [s for s in (stages or []) if isinstance(s, dict) and (s.get("name") or "").strip()]
+    if not rows:
+        return None
+    cur = next((s for s in rows if s.get("state") == "active"), None)
+    if cur is None:
+        cur = next((s for s in rows
+                    if not s.get("done") and s.get("state") != "done"), None)
+    if cur is None:
+        cur = rows[-1]
+    state = "done" if (cur.get("done") or cur.get("state") == "done") \
+        else (cur.get("state") or "pending")
+    label, color = _STAGE_STATE_LABEL.get(state, ("—", "b-gray"))
+    return {"name": str(cur.get("name") or "").strip(),
+            "index": rows.index(cur), "total": len(rows),
+            "state": state, "label": label, "color": color}
+
+
 def _stage_rows(stages: list | None) -> list[dict]:
-    """Чек-лист этапов: наименование, дедлайн, ответственный."""
+    """Чек-лист этапов: наименование, дедлайн, ответственный, состояние."""
     rows = []
     for s in stages or []:
         if not isinstance(s, dict):
@@ -210,6 +237,9 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "responsibles": resp,
             "participants": sorted(set(executors + resp)),
             "stages": stages,
+            # текущий этап маршрута — плашка в карточке (как приоритет); None у
+            # карточек-задач и сущностей без этапов
+            "current_stage": _current_stage_of(stages) if card_type == "entity" else None,
             "department_id": ent.owner_department_id,
             "cross_dept": cross,
             "can_edit": access.can_write(perm),

@@ -255,6 +255,12 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 /* А3 альбомная: 8 карточек (4×2). Было 4×3 — при реальной высоте листа
    ячейки не помещались и карточки наслаивались друг на друга. */
 .printpage.fmt-a3{width:420mm;height:200mm;padding:10mm;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,87mm)}
+/* Экранный просмотр без отмеченных карточек: ряды авто-высоты (minmax auto) —
+   многоэтапные карточки растягиваются и весь чек-лист виден целиком. Листы с
+   фиксированной высотой используются только в оверлее печати (#printCardsOverlay),
+   куда попадает точно та разметка, что пойдёт на бумагу. */
+#cardPages.pcards-grid .printpage.fmt-a4{height:auto;min-height:210mm;grid-template-rows:repeat(auto-fill,minmax(94mm,auto))}
+#cardPages.pcards-grid .printpage.fmt-a3{height:auto;min-height:200mm;grid-template-rows:repeat(auto-fill,minmax(87mm,auto))}
 .pcardwrap{position:relative;min-height:0;overflow:hidden}
 .pcardwrap .pcard{width:100%}
 .pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
@@ -271,6 +277,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 /* наименование подразделения — над плашкой приоритета */
 .pcard .pdept{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pcard .pdir{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-bottom:3px}
+/* плашка текущего этапа маршрута (как плашка приоритета) + позиция в маршруте */
+.pcard .pstage-tag{display:flex;align-items:center;gap:6px;margin:-1px 0 5px;flex-wrap:wrap}
+.pcard .pstage-tag .ptag{max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .pstage-pos{font-size:10px;color:#666;white-space:nowrap}
 /* чек-лист этапов (карточка сущности с workflow) */
 .pchecklist{flex:1;min-height:0;overflow:hidden;font-size:11.5px;margin:2px 0 6px}
 .pchecklist .pk{display:flex;gap:6px;align-items:flex-start;margin-bottom:5px;line-height:1.3}
@@ -278,6 +288,9 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 .pchecklist .pk .tx{flex:1;min-width:0}
 .pchecklist .pk .nm{font-weight:700;word-break:break-word}
 .pchecklist .pk .sm{color:#555;font-size:10.5px}
+/* подсветка текущего этапа в чек-листе */
+.pchecklist .pk.pk-cur .nm{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:2px}
+.pchecklist .pk.pk-cur .bx{border-color:#000;border-width:2.4px;background:radial-gradient(circle at center,#000 38%,transparent 42%)}
 /* место для рукописных заметок (карточка автономной задачи) */
 .pnotes{flex:1;min-height:0;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 6px;background:repeating-linear-gradient(#fff,#fff 21px,#e8ecf3 22px)}
 /* Печать раздела «Карточки»: изолированный контейнер-оверлей, который
