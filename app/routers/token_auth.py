@@ -28,8 +28,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.core.config import get_settings
 from app.core.events import client_ip, log_event
@@ -103,10 +104,20 @@ async def get_current_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Обновляем last_used_at
-    api_token.last_used_at = datetime.now(timezone.utc)
+    # Обновляем last_used_at.
+    # ВАЖНО: flush делаем СРАЗУ и в собственной сессии (не в той, что ниже
+    # вернёт ORM-объект User). Иначе пользователь остаётся «грязным» в
+    # открытой транзакции, а любой rollback/commit в эндпоинте (long-poll
+    # /api/mobile/events делает session.rollback() в цикле ожидания)
+    # инвалидирует state объекта — последующее обращение к user.id вызывает
+    # ленивую перезагрузку вне greenlet-контекста: MissingGreenlet 500.
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    api_token.last_used_at = now
+    await session.flush()          # сбрасываем dirty-state токена...
+    await session.commit()         # ...и завершаем транзакцию авторизации
 
-    # Загружаем пользователя
+    # Загружаем пользователя заново — уже после commit, в новой транзакции.
     result = await session.execute(
         select(User).where(User.id == api_token.user_id)
     )
@@ -119,6 +130,10 @@ async def get_current_user_from_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Отсоединяем от identity map: любые rollback/commit внутри эндпоинта
+    # (long-poll) больше не могут сделать атрибуты «истёкшими» и вызвать
+    # ленивую перезагрузку вне greenlet-контекста.
+    session.expunge(user)
     return user
 
 
