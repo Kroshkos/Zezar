@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect as sa_inspect, schema, text, types as sa_types
 
@@ -750,6 +750,17 @@ if STATIC_DIR.is_dir():
             return resp
 
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ── Сайт документации и новостей проекта ─────────────────────────────────────
+# Вынесен в отдельный репозиторий https://github.com/Kroshkos/zezar.docs
+# (схема владельца: папки news/*.md и docs/*.md того репозитория подгружаются
+# на сайт как новости и документация; там же amvera.yaml для его деплоя).
+# Здесь оставлен только редирект со старого пути /docs на внешний сайт.
+_DOCS_SITE_URL = "https://github.com/Kroshkos/zezar.docs"  # замените на URL деплоя Amvera
+
+@app.get("/docs", include_in_schema=False)
+async def docs_site():
+    return RedirectResponse(_DOCS_SITE_URL)
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, entity_open, links, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
