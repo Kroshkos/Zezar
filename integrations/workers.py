@@ -421,18 +421,39 @@ async def tg_poller(stop: asyncio.Event) -> None:
             async with httpx.AsyncClient(timeout=35) as client:
                 r = await client.get(
                     f"https://api.telegram.org/bot{s.telegram_bot_token}/getUpdates",
-                    params={"offset": offset, "timeout": 30})
+                    params={"offset": offset, "timeout": 30,
+                            "allowed_updates": ["message", "edited_message",
+                                                "callback_query"]})
                 updates = r.json().get("result", [])
             async with SessionLocal() as session:
                 for upd in updates:
                     offset = max(offset, upd["update_id"] + 1)
-                    reply, delete_ids = await tg.handle_update(session, upd)
+                    reply, delete_ids, keyboard = await tg.handle_update(session, upd)
+                    cbq = upd.get("callback_query")
+                    if cbq:
+                        # ответ на нажатие кнопки: редактируем сообщение бота или
+                        # отправляем новое; часики на кнопке закрываем всегда
+                        chat_id = (cbq.get("message") or {}).get("chat", {}).get("id")
+                        if chat_id is None:
+                            continue
+                        msg_id = cbq["message"]["message_id"]
+                        if reply is not None:
+                            edited = await tg.edit_message_text(chat_id, msg_id, reply,
+                                                                keyboard)
+                            if not edited and keyboard is None:
+                                # «повторное нажатие» — текст не изменился, Telegram
+                                # вернёт error; молча пропускаем (часики закроем ниже)
+                                pass
+                            elif not edited and keyboard is not None:
+                                await tg.send_message(chat_id, reply, keyboard)
+                        await tg.answer_callback(cbq["id"])
+                        continue
                     chat = (upd.get("message") or upd.get("edited_message") or {}).get("chat", {})
                     chat_id = chat.get("id")
                     if chat_id is None:
                         continue
                     if reply:
-                        await tg.send_message(chat_id, reply)
+                        await tg.send_message(chat_id, reply, keyboard)
                     for mid in delete_ids:
                         await tg.delete_message(chat_id, mid)
         except Exception as e:  # noqa: BLE001

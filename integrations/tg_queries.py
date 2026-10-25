@@ -31,7 +31,9 @@ async def my_tasks_text(session: AsyncSession, chat_id: int) -> str:
 # запросов не тял Bot API и машину состояний рассылки.
 
 from integrations.tg_admin import (  # noqa: E402,F401
-    AUDIENCE_BUTTONS, HELP_ADMIN, attach_pending_media, cmd_broadcast, cmd_cancel,
-    cmd_find, cmd_help, cmd_overdue, cmd_pending, cmd_report, cmd_task,
-    download_and_rehost_file, handle_broadcast_input, handle_media, overdue_entities,
+    AUDIENCE_BUTTONS, HELP_ADMIN, attach_pending_media, audience_keyboard, back_keyboard,
+    bcast_kb, cancel_keyboard, cmd_broadcast, cmd_cancel, cmd_find, cmd_help,
+    cmd_menu, cmd_overdue, cmd_pending, cmd_report, cmd_task, confirm_keyboard,
+    dept_keyboard, download_and_rehost_file, find_keyboard, handle_broadcast_input,
+    handle_callback, handle_media, main_keyboard, overdue_entities, pending_keyboard,
 )
