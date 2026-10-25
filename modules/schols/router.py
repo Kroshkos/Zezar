@@ -203,7 +203,8 @@ async def schols_page(request: Request, user: User = Depends(get_current_user),
     # проекты для привязки стипендии (связанность категорий в рамках модулей)
     projects = [{"uid": e.uid, "title": e.title}
                 for e in await _visible_projects(session, ctx)]
-    schol_types = [{"key": t.key, "label": t.label}
+    # RefType не имеет атрибута key — идентификатором типа является label
+    schol_types = [{"label": t.label}
                    for t in await refdata.effective_types(
                        session, "schol_type", dept_ctx, mods)]
     return await render_page(

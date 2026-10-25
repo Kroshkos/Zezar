@@ -301,8 +301,19 @@ async def main() -> None:
                 "документ просочился подразделению вне шеринга"
 
             # 16. остальные модули: страница рендерится, CRUD работает через ядро (RBAC/шэры)
+            # регрессия бага RefType.key: страницы docs/softs/schols падали с 500,
+            # когда в справочнике ref_types есть хотя бы одна запись типа
+            from app.models.core import RefType as _RT
+            async with SessionLocal() as _s:
+                _s.add_all([
+                    _RT(kind="doc_type", label="Приказ", department_id=None),
+                    _RT(kind="soft_type", label="Веб-сервис", department_id=None),
+                    _RT(kind="schol_type", label="Академическая", department_id=None),
+                ])
+                await _s.commit()
             for mk, api_path, title in (
                     ("projects", "/api/projects", "Проект"),
+                    ("docs", "/api/docs", "Документ"),
                     ("softs", "/api/softs", "Программ"),
                     ("grants", "/api/grants", "Грант"),
                     ("schols", "/api/schols", "Стипенди"),

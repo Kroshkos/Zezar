@@ -204,7 +204,9 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
     # проекты для привязки единицы ПО (связанность категорий в рамках модулей)
     projects = [{"uid": e.uid, "title": e.title}
                 for e in await _visible_projects(session, ctx)]
-    soft_types = [{"key": t.key, "label": t.label}
+    # RefType — справочник без технического key (уникальна метка: kind+label),
+    # поэтому в шаблон передаём только label (JS-форма сопоставляет по нему)
+    soft_types = [{"label": t.label}
                   for t in await refdata.effective_types(
                       session, "soft_type", dept_ctx, mods)]
     return await render_page(
