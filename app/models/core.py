@@ -282,6 +282,32 @@ class EntityShare(TimestampMixin, Base):
     target_department: Mapped[Department] = relationship(foreign_keys=[target_department_id])
 
 
+class EntityLink(TimestampMixin, Base):
+    """Произвольная двусторонняя связь между двумя сущностями любого вида.
+
+    Единый механизм «связать что угодно с чем угодно» (задача ↔ этап проекта,
+    документ ↔ проект, совещание ↔ грант и т.п.). Одна запись = одна связь;
+    направление не имеет значения — при создании нормализуем пару
+    (min_id, max_id), поэтому дубликаты невозможны (UniqueConstraint).
+
+    stage_index — необязательный указатель на этап маршрута (индекс в
+    payload.stages той сущности, у которой есть маршрут: project/soft/doc),
+    если связывают с конкретным этапом.
+    """
+    __tablename__ = "entity_links"
+    __table_args__ = (UniqueConstraint("entity_a_id", "entity_b_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_a_id: Mapped[int] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), index=True)
+    entity_b_id: Mapped[int] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), index=True)
+    link_type: Mapped[str] = mapped_column(String(50), default="related")
+    note: Mapped[Optional[str]] = mapped_column(String(500))
+    stage_index: Mapped[Optional[int]] = mapped_column(Integer)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+
 # ======================= Справочники (как statusSets/prioSet в демо) =======================
 
 class StatusSet(TimestampMixin, Base):

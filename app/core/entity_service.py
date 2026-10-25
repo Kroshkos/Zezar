@@ -426,6 +426,11 @@ async def delete_entity(session: AsyncSession, user: User, ent: Entity) -> None:
                           SoftPayload, GrantPayload, ScholarPayload, PriorityPayload):
         await session.execute(_del(payload_model).where(payload_model.entity_id == ent.id))
     await session.execute(_del(EntityShare).where(EntityShare.entity_id == ent.id))
+    # произвольные связи (EntityLink) — с обеих сторон, иначе FK-ссылка
+    # останется на удаляемую сущность
+    from app.models.core import EntityLink as _EL
+    await session.execute(_del(_EL).where(
+        (_EL.entity_a_id == ent.id) | (_EL.entity_b_id == ent.id)))
     await session.delete(ent)
 
 

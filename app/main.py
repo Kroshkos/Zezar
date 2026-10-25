@@ -752,7 +752,7 @@ if STATIC_DIR.is_dir():
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
-from app.routers import admin, auth, departments, entity_open, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app.routers import admin, auth, departments, entity_open, links, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
 from app.app_links import router as app_links_router  # noqa: E402
 from app import mobile as mobile_api  # noqa: E402
 
