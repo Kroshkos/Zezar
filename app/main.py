@@ -36,6 +36,7 @@ def _import_all_models() -> None:
     """Ядро + payload-таблицы должны быть импортированы до create_all."""
     import app.models.core            # noqa: F401
     import app.models.module_payloads  # noqa: F401
+    import app.models.mobile           # noqa: F401  (push_subscriptions, mobile_events)
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +695,12 @@ async def lifespan(app: FastAPI):
                 tasks.append(asyncio.create_task(tg_poller(stop)))
         except Exception as e:  # noqa: BLE001
             log.warning("workers disabled: %s", e)
+        # push-воркер Zezar-app (Expo Push): независим от integrations/*
+        try:
+            from app.workers.push_worker import push_worker
+            tasks.append(asyncio.create_task(push_worker(stop)))
+        except Exception as e:  # noqa: BLE001
+            log.warning("push worker disabled: %s", e)
 
     yield
 
@@ -742,11 +749,14 @@ if STATIC_DIR.is_dir():
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Роутеры ядра
-from app.routers import admin, auth, departments, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app.routers import admin, auth, departments, entity_open, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app import mobile as mobile_api  # noqa: E402
 
 app.include_router(auth.router)                    # /auth/*
 app.include_router(token_auth.router)              # /api/auth/* (mobile token auth)
+app.include_router(mobile_api.router)              # /api/mobile/* (Zezar-app REST)
 app.include_router(qr_codes.router)                # /api/core/entities/* (QR codes)
+app.include_router(entity_open.router)           # /open/e/{uid} (QR-шлюз app/web)
 app.include_router(pages.router)                   # /login, /, /api/profile/*
 app.include_router(departments.router, prefix="/api/core", tags=["core-departments"])
 app.include_router(sharing.router, prefix="/api/core", tags=["core-sharing"])

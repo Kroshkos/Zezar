@@ -203,6 +203,14 @@ async def create_entity(
                     if r and r != user.id]
     if targets_resp:
         await _emit_assigned(session, user, ent, targets_resp)
+        # мобильный контур: лента + push «на вас назначено» (см. app/core/mobile_notify)
+        from app.core.mobile_notify import emit_mobile_event
+        for t in targets_resp:
+            await emit_mobile_event(
+                session, user_id=t, type_="assigned",
+                title=f"Вас назначили: {ent.title}", body=ent.description or None,
+                entity_uid=ent.uid, module_key=ent.module_key,
+                payload={"kind": ent.kind.value, "due_date": ent.due_date})
     others = [uid for uid in (await _recipients_ids(session, ent))
               if uid and uid != user.id and uid not in targets_resp]
     if others:
@@ -334,6 +342,19 @@ async def update_entity(
                 "link": link_for(ent.uid, ent.kind.value),
                 "target_user_ids": targets,
             }))
+            # мобильный контур: событие в ленту каждому участнику (кроме актора)
+            from app.core.mobile_notify import emit_mobile_event
+            _mtype = ("status_changed" if "status_key" in changed
+                      else "due_soon" if "due_date" in changed else "entity_updated")
+            _verb = ("статус изменён" if "status_key" in changed
+                     else "срок изменён" if "due_date" in changed else "карточка обновлена")
+            for t in targets:
+                await emit_mobile_event(
+                    session, user_id=t, type_=_mtype,
+                    title=f"{ent.title}: {_verb}",
+                    body=f"{user.display_name} → {ent.status_key or ''}".strip(),
+                    entity_uid=ent.uid, module_key=ent.module_key,
+                    payload={"changed": changed})
         # Календарь: любое изменение сущности (в т.ч. патч статуса/сроков из
         # модулей) требует re-sync события в календарях ответственных — sync_state
         # уже PENDING. Раньше calendar.sync ставился только при create/delete,
@@ -407,6 +428,13 @@ async def assign_responsible(
                     {"department_id": department_id, "user_id": user_id})
     if user_id is not None and user_id != user.id:
         await _emit_assigned(session, user, ent, [user_id])
+        from app.core.mobile_notify import emit_mobile_event
+        await emit_mobile_event(
+            session, user_id=user_id, type_="assigned",
+            title=f"Вас назначили ответственным: {ent.title}",
+            body=ent.description or None, entity_uid=ent.uid,
+            module_key=ent.module_key,
+            payload={"kind": ent.kind.value, "due_date": ent.due_date})
 
 
 async def share_entity(

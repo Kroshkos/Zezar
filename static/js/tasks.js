@@ -134,16 +134,21 @@ async function shareTask(uid){
 // мягкий автообнов счётчика в навигации
 function notifyChanged(){/* можно дернуть /api/tasks/api-list для синхронизации */}
 
-// QR-код для сущности
-function openQRCode(uid){
+// QR-код для сущности (HTTPS-шлюз: приложение или сайт)
+async function openQRCode(uid){
+  let shareUrl='';
+  try{const r=await api('/api/core/entities/'+uid+'/share-link');shareUrl=r.share_url||'';}catch(e){}
   const url='/api/core/entities/'+uid+'/qr';
-  const linkUrl='/api/core/entities/'+uid+'/share-link';
-  
-  // Показываем QR-код в модальном окне
-  const body='<div style="text-align:center"><img id="qrImage" src="'+url+'" style="max-width:300px;border:2px solid #e5e7eb;border-radius:8px" onload="document.getElementById(\'qrLink\').href=\''+linkUrl+'\''+'"><br><br>'
-    +'<a id="qrLink" href="'+linkUrl+'" target="_blank" style="color:#2563eb;font-size:13px">Ссылка для шаринга</a>'
-    +'<p style="font-size:12px;color:#6b7280;margin-top:12px">Сканируйте QR-код в мобильном приложении Zezar</p></div>';
+  const body='<div style="text-align:center"><img src="'+url+'" style="max-width:300px;border:2px solid #e5e7eb;border-radius:8px">'
+    +(shareUrl?'<br><br><input readonly value="'+esc(shareUrl)+'" onclick="this.select()" style="width:90%;text-align:center;font-size:12px;color:#374151;border:1px solid #d1d5db;border-radius:6px;padding:6px">':'')
+    +'<p style="font-size:12px;color:#6b7280;margin-top:12px">Сканируйте QR-код камерой: карточка откроется в приложении Zezar, а если оно не установлено — на сайте.</p></div>';
   openModal('QR-код задачи',body);
 }
 
-document.addEventListener('DOMContentLoaded',renderTaskTable);
+document.addEventListener('DOMContentLoaded',()=>{
+  renderTaskTable();
+  // Deep link вида /tasks?focus=<uid> (приходит с QR-шлюза /open/e/{uid}):
+  // открываем карточку сразу после загрузки страницы.
+  const focus=new URLSearchParams(location.search).get('focus');
+  if(focus && D.tasks.some(t=>t.uid===focus)) openProfile(focus);
+});
