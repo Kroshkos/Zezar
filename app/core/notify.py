@@ -124,12 +124,24 @@ async def seed_base_scenarios(session: AsyncSession) -> None:
     базовые ключи добираются выборочно; если админ удалил все базовые — не
     воссоздаём пачку целиком (уважение к ручной чистке), но и новые ключи
     тогда тоже не добавляются.
+
+    ВАЖНО: «ручная чистка» определяется по ВСЕМ записям таблицы
+    notify_scenarios (в т.ч. пользовательским/подразделенческим), а не только
+    по is_base. Раньше условие `if not have: return` при пустом наборе базовых
+    молча пропускал сид даже на свежей БД — базовые сценарии не создавались
+    НИКОГДА, фильтр воркера «по включённым сценариям» отбрасывал 100% событий
+    («отфильтровано по сценариям: N», уведомления переставали приходить).
     """
-    have = set((await session.scalars(
-        select(NotifyScenario.event_key).where(
-            NotifyScenario.is_base.is_(True)))).all())
-    if not have:
-        return
+    total = await session.scalar(
+        select(func.count()).select_from(NotifyScenario))
+    if total:
+        # в таблице есть хоть какие-то записи — считаем, что сид уже
+        # выполнялся когда-то; добираем только недостающие базовые ключи
+        have = set((await session.scalars(
+            select(NotifyScenario.event_key).where(
+                NotifyScenario.is_base.is_(True)))).all())
+    else:
+        have = set()  # свежая БД — заводим полный набор базовых
     added = 0
     for key, name, descr, kinds, mods in BASE_SCENARIOS:
         if key in have:

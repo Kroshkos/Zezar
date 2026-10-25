@@ -165,6 +165,7 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
     delivered = 0
     eligible = 0          # получатели, которым сообщение положено по сценариям
     skipped_no_chat: list[str] = []
+    skipped_muted: list[str] = []
     skipped_filter = 0
     for uid, roles in recipients.items():
         u = await session.get(User, uid)
@@ -209,15 +210,22 @@ async def _deliver_by_scenarios(session, p: dict, roles_default: list[str]) -> N
             f"уведомление не доставлено ни одному адресату из {eligible}: "
             f"ошибка Telegram API (send_message вернул False)")
     if delivered == 0:
-        # Никому не положено (все отфильтрованы по сценариям) или нет chat_id —
-        # это штатная ситуация «обработано в никуда», а не ошибка: иначе
-        # планировщик reminder-событий при каждом проходе ставит их заново и
-        # очередь забивается 8-кратными ретраями.
-        log.info("tg notify (%s): %s не доставлено — событие завершено без ошибки",
-                 p.get("action"),
-                 f"нет привязанных к Telegram адресатов {skipped_no_chat}"
-                 if skipped_no_chat else
-                 f"получателей: {len(recipients)}, отфильтровано по сценариям: {skipped_filter}")
+        # Никому не положено (все отфильтрованы по сценариям / отписались через
+        # /mute) или нет chat_id — это штатная ситуация «обработано в никуда»,
+        # а не ошибка: иначе планировщик reminder-событий при каждом проходе
+        # ставит их заново и очередь забивается 8-кратными ретраями.
+        # В журнале явно разделяем причины, чтобы «отписался» не выглядел как
+        # «отфильтровано по сценариям».
+        parts = [f"получателей: {len(recipients)}"]
+        if skipped_no_chat:
+            parts.append(f"без chat_id: {len(skipped_no_chat)} ({', '.join(skipped_no_chat)})")
+        if skipped_muted:
+            parts.append(f"отписались (/mute): {len(skipped_muted)} "
+                         f"({', '.join(skipped_muted)})")
+        if skipped_filter:
+            parts.append(f"отфильтровано по сценариям: {skipped_filter}")
+        log.info("tg notify (%s): не доставлено — %s — событие завершено без ошибки",
+                 p.get("action"), ", ".join(parts))
         return
 
 
