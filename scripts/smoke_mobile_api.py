@@ -104,6 +104,15 @@ async def main() -> int:
         assert r.status_code == 200, r.text
         print("OK  patch entity")
 
+        # 8b. одна карточка по uid (экран деталей приложения)
+        r = await c.get(f"/api/mobile/entities/{new_uid}", headers=H)
+        assert r.status_code == 200, r.text
+        one = r.json()
+        assert one["uid"] == new_uid and one["status_key"] == "in_progress", r.text
+        r = await c.get("/api/mobile/entities/no-such-uid", headers=H)
+        assert r.status_code == 404, r.status_code
+        print("OK  get single entity by uid (+404 for unknown)")
+
         # 9. существующие веб-API под Bearer (гибридная авторизация)
         r = await c.get("/api/tasks/api-list", headers=H)
         assert r.status_code == 200, (r.status_code, r.text[:200])

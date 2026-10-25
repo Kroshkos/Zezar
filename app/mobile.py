@@ -5,6 +5,7 @@
 
   GET  /api/mobile/bootstrap          профиль + подразделения + модули + справочники
   GET  /api/mobile/entities           карточки (filter: module_key, kind, dept_id, q)
+  GET  /api/mobile/entities/{uid}     одна карточка по uid
   POST /api/mobile/tasks              создать задачу
   PATCH /api/mobile/entities/{uid}    изменить карточку (статус/приоритет/сроки/описание)
 """
@@ -168,6 +169,21 @@ async def list_entities(
             continue  # инвариант изоляции пространств (как в modules/*/router.py)
         out.append(_entity_brief(ent, perm, await _resp_names(session, ent)))
     return out
+
+
+@router.get("/entities/{uid}")
+async def get_entity(uid: str,
+                     user: User = Depends(get_current_user_from_token),
+                     session: AsyncSession = Depends(session_dep)):
+    """Одна карточка по uid (для экрана деталей — без скачивания всего списка)."""
+    ent = await session.scalar(select(Entity).where(Entity.uid == uid))
+    if not ent:
+        raise HTTPException(404, "Сущность не найдена")
+    ctx = await access.build_context(session, user)
+    perm = await access.resolve_permission(session, ctx, ent)
+    if perm is None:
+        raise HTTPException(404, "Сущность не найдена")  # без утечки факта существования
+    return _entity_brief(ent, perm, await _resp_names(session, ent))
 
 
 # ======================= Создание задачи =======================
