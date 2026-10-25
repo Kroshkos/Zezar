@@ -28,16 +28,19 @@ async def dashboard(request: Request, user: User = Depends(get_current_user),
     term_task = await terminal_status_keys(session, "task")
     term_project = await terminal_status_keys(session, "project")
     today_iso = __import__("datetime").date.today().isoformat()
-    overdue_rows = (await session.scalars(
+    # session.execute, а не session.scalars: scalars при двух колонках возвращает
+    # первые значения строк (status_key), и распаковка «sk, k» падает с
+    # ValueError: too many values to unpack.
+    overdue_rows = (await session.execute(
         select(Entity.status_key, Entity.kind).where(
             access.entity_filter(ctx),
             Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
             Entity.due_date != None,  # noqa: E711
             Entity.due_date < today_iso))).all()
     overdue = sum(
-        1 for sk, k in overdue_rows
-        if (sk or "") not in (term_task if str(getattr(k, "value", k)) == "task"
-                              else term_project))
+        1 for row in overdue_rows
+        if (row[0] or "") not in (term_task if str(getattr(row[1], "value", row[1])) == "task"
+                                  else term_project))
     pending_sync = await session.scalar(
         select(func.count(Entity.id)).where(access.entity_filter(ctx),
                                             Entity.sync_state.in_([SyncState.PENDING, SyncState.ERROR]))) or 0
