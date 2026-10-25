@@ -122,6 +122,34 @@ async def get_current_user(request: Request):
     from app.db.engine import SessionLocal
     from app.models.core import DepartmentMember, User
 
+    # --- Мобильный контур: Authorization: Bearer <API-токен> ---
+    # Тот же пользователь и те же права, что и в веб-сессии; логика токена
+    # вынесена в app/routers/token_auth (кэш last_used_at не критичен).
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.startswith("Bearer "):
+        token_value = auth_header[7:].strip()
+        if token_value:
+            import hashlib as _hashlib
+            from sqlalchemy import select as _select
+            from app.models.core import ApiToken
+            token_hash = _hashlib.sha256(token_value.encode()).hexdigest()
+            async with SessionLocal() as session:
+                api_token = await session.scalar(
+                    _select(ApiToken).where(ApiToken.token_hash == token_hash,
+                                             ApiToken.is_active == True))  # noqa: E712
+                if api_token is not None:
+                    user = await session.scalar(
+                        _select(User).options(selectinload(User.memberships))
+                        .where(User.id == api_token.user_id))
+                    if user is None or not user.is_active:
+                        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                                            "Учётная запись заблокирована")
+                    request.state.auth_via_bearer = True
+                    return user
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                                "Недействительный или отозванный токен",
+                                headers={"WWW-Authenticate": "Bearer"})
+
     data = read_session_token(request.cookies.get(SESSION_COOKIE))
     if not data or "uid" not in data:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не авторизован")

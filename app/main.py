@@ -743,9 +743,11 @@ if STATIC_DIR.is_dir():
 
 # Роутеры ядра
 from app.routers import admin, auth, departments, notify, pages, profile, qr_codes, refdata, sharing, token_auth  # noqa: E402
+from app import mobile as mobile_api  # noqa: E402
 
 app.include_router(auth.router)                    # /auth/*
 app.include_router(token_auth.router)              # /api/auth/* (mobile token auth)
+app.include_router(mobile_api.router)              # /api/mobile/* (Zezar-app REST)
 app.include_router(qr_codes.router)                # /api/core/entities/* (QR codes)
 app.include_router(pages.router)                   # /login, /, /api/profile/*
 app.include_router(departments.router, prefix="/api/core", tags=["core-departments"])
