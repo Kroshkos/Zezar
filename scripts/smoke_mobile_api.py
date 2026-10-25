@@ -171,9 +171,46 @@ async def main() -> int:
         # авторизованный владелец (session-cookie как в браузере) -> свой модуль
         r = await c.get(f"/open/e/{new_uid}", headers=cookie_h)
         assert r.status_code == 200, r.status_code
-        assert "/tasks?focus=" + new_uid in r.text.replace("&amp;", "&"), r.text[:400]
-        assert f"zezar://entity/{new_uid}" in r.text
-        print("OK  /open/e authorized owner -> module deep link")
+        page = r.text.replace("&amp;", "&")
+        assert "/tasks?focus=" + new_uid in page, r.text[:400]
+        assert f"zezar://entity/{new_uid}?t=" in page, "нет гостевого токена в deep link"
+        import re as _re
+        m = _re.search(rf"zezar://entity/{new_uid}\?t=([\w.-]+)", page)
+        assert m, "не извлёкся гостевой токен"
+        guest_tok = m.group(1)
+        print("OK  /open/e authorized owner -> module deep link + guest token")
+
+        # обмен гостевого токена на Bearer access_token (вход в приложение без пароля)
+        r = await c.post("/api/mobile/guest-login", json={"token": guest_tok})
+        assert r.status_code == 200, r.text[:200]
+        gl = r.json()
+        assert gl.get("access_token") and gl.get("guest") is True, gl
+        GH = {"Authorization": f"Bearer {gl['access_token']}"}
+        r = await c.get(f"/api/mobile/entities/{new_uid}", headers=GH)
+        assert r.status_code == 200, r.text[:200]  # права того же пользователя
+        print("OK  guest-login -> bearer token opens the card")
+
+        # одноразовость: повторный обмен того же токена -> 401
+        r = await c.post("/api/mobile/guest-login", json={"token": guest_tok})
+        assert r.status_code == 401, (r.status_code, r.text[:200])
+        # подделка токена -> 401
+        r = await c.post("/api/mobile/guest-login", json={"token": "7.9999999999.deadbeef.cafe"})
+        assert r.status_code == 401, r.status_code
+        print("OK  guest token single-use + forged token rejected")
+
+        # прямой deep-эндпоинт для сканеров, открывающих zezar:// мигом:
+        # авторизованный кукой -> 302 в приложение с токеном
+        r = await c.get(f"/open/e/{new_uid}/deep", headers=cookie_h, follow_redirects=False)
+        assert r.status_code == 302, r.status_code
+        loc = r.headers.get("location", "")
+        assert loc.startswith(f"zezar://entity/{new_uid}?t="), loc
+        # гость -> информативная страница (идентичный ответ для любых uid)
+        r = await c.get(f"/open/e/no-such-uid-xyz/deep", follow_redirects=False)
+        assert r.status_code == 200 and "отсканируйте" in r.text, (r.status_code, r.text[:200])
+        # чужая карточка -> 404
+        r = await c.get("/open/e/foreign-card-1/deep", headers=cookie_h, follow_redirects=False)
+        assert r.status_code == 404, r.status_code
+        print("OK  /open/e/{uid}/deep redirect + auth checks")
 
         # чужая карточка без доступа -> 404 (шлюз не канал разведки)
         r = await c.get("/open/e/foreign-card-1", headers=cookie_h)
