@@ -563,8 +563,24 @@ class Notification(Base):
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     recipients_count: Mapped[int] = mapped_column(Integer, default=0)
     delivered_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Вложения рассылки: [{"file_id": "...", "type": "photo|video|document",
+    # "caption": "..."}] — file_id загружен ботом через uploadMediaFile
+    # (медиа, присланное администратором в чат бота).
+    media_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TgAdminLog(Base):
+    """Журнал действий администратора через Telegram-бота (команды/рассылки)."""
+    __tablename__ = "tg_admin_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    action: Mapped[str] = mapped_column(String(50))     # broadcast | cancel | report ...
+    details: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 # ======================= API Tokens (мобильное приложение) =======================

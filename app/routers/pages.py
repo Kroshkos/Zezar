@@ -47,9 +47,15 @@ async def index(request: Request, user: User = Depends(get_current_user),
     на страницу смены пароля (защита от прямого захода по URL после первого входа)."""
     if user.must_change_password:
         return RedirectResponse("/change-password?forced=1", status_code=302)
+    # Дашборд живёт в модуле-плагине (modules/dashboard): контекст агрегатов
+    # строит build_dashboard_data. Рендерить dashboard.html без него нельзя —
+    # шаблон обращается к totals/by_module/... и падает UndefinedError.
+    from modules.dashboard.queries import build_dashboard_data
+    data = await build_dashboard_data(session, user)
     return await render_page(request, "dashboard.html", module_key="dashboard",
-                             page_title="Дашборд", page_sub="",
-                             user=user, session=session)
+                             page_title="Дашборд",
+                             page_sub="Сводка по всем рабочим пространствам · данные обновляются при открытии",
+                             user=user, session=session, **data)
 
 
 # ---------------- Принудительная/добровольная смена пароля ----------------

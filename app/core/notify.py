@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
@@ -98,6 +98,10 @@ BASE_SCENARIOS = [
     ("due_soon", "Приближение срока (за 3 дня)",
      "Плановое напоминание ответственным и исполнителям проектов и задач. Не отключается.",
      ["task", "project"], []),
+    ("overdue", "Просроченный срок",
+     "Уведомление ответственных и исполнителей о том, что срок задачи/проекта истёк, "
+     "а статус не завершающий. Повторяется раз в сутки, пока задача не закрыта. Не отключается.",
+     ["task", "project"], []),
 ]
 
 
@@ -110,20 +114,35 @@ def scenario_is_base(scn: NotifyScenario) -> bool:
 
 
 async def seed_base_scenarios(session: AsyncSession) -> None:
-    """Идемпотентно создаёт базовые сценарии (если админ их удалил все — не воссоздаём:
-    сид вызывается только при отсутствии хоть одного is_base-сценария)."""
-    exists = await session.scalar(
-        select(NotifyScenario.id).where(NotifyScenario.is_base.is_(True)).limit(1))
-    if exists:
+    """Идемпотентно создаёт базовые сценарии.
+
+    Исторически сид выполнялся только при полном отсутствии is_base-сценариев,
+    из-за чего новые базовые ключи (например, 'overdue'), добавленные в
+    BASE_SCENARIOS позже первого запуска, никогда не появлялись на существующих
+    БД — уведомления об истёкшем сроке молча не доставлялись (фильтр по
+    включённым сценариям отбрасывал неизвестный event_key). Теперь недостающие
+    базовые ключи добираются выборочно; если админ удалил все базовые — не
+    воссоздаём пачку целиком (уважение к ручной чистке), но и новые ключи
+    тогда тоже не добавляются.
+    """
+    have = set((await session.scalars(
+        select(NotifyScenario.event_key).where(
+            NotifyScenario.is_base.is_(True)))).all())
+    if not have:
         return
+    added = 0
     for key, name, descr, kinds, mods in BASE_SCENARIOS:
+        if key in have:
+            continue
         session.add(NotifyScenario(
             name=name, description=descr, event_key=key,
             entity_kinds=kinds, module_keys=mods,
             template=DEFAULT_TEMPLATES[key],
             is_base=True, visibility="global", is_active=True))
-    await session.commit()
-    log.info("notify: созданы базовые сценарии уведомлений (%d)", len(BASE_SCENARIOS))
+        added += 1
+    if added:
+        await session.commit()
+        log.info("notify: добавлены недостающие базовые сценарии: +%d", added)
 
 
 # ---------------- effective scenarios per user ----------------
@@ -274,19 +293,42 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
                              Entity.due_date.is_not(None),
                              Entity.due_date >= lo, Entity.due_date <= hi))).all()
     horizon = utcnow_naive() - timedelta(days=window_days)
+    # Дедуп по payload_json['entity_uid']: generic sqlalchemy.JSON на SQLite не
+    # поддерживает оператор ->> (сравнение молча даёт NULL, дубликаты никогда
+    # не находятся и напоминания ставятся заново при каждом проходе). На PG
+    # используем json_extract_path_text, на прочих диалектах — множество uid
+    # свежих событий, загруженное на стороне Python.
+    is_pg = bool(session.bind and session.bind.dialect.name == "postgresql")
     cnt = 0
-    for ent in rows:
+    recent_uids: set[tuple[str, str]] | None = None
+    if not is_pg:
+        seen_rows = (await session.execute(
+            select(OutboxEvent.topic, OutboxEvent.payload_json).where(
+                OutboxEvent.topic.in_(["telegram.due", "telegram.overdue"]),
+                OutboxEvent.at > horizon))).all()
+        recent_uids = {(r[0], (r[1] or {}).get("entity_uid")) for r in seen_rows}
+
+    async def _already_sent(topic: str, uid: str) -> bool:
+        if recent_uids is not None:
+            return (topic, uid) in recent_uids
         dup = await session.scalar(
             select(OutboxEvent.id).where(
-                OutboxEvent.topic == "telegram.due",
+                OutboxEvent.topic == topic,
                 OutboxEvent.at > horizon,
-                OutboxEvent.payload_json["entity_uid"] == ent.uid).limit(1))
-        if dup:
+                func.json_extract_path_text(
+                    OutboxEvent.payload_json, "entity_uid") == uid).limit(1))
+        return bool(dup)
+
+    for ent in rows:
+        if await _already_sent("telegram.due", ent.uid):
             continue
         session.add(OutboxEvent(topic="telegram.due", payload_json={
             "action": "due_soon", "event_keys": ["due_soon"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
+            # автор карточки: воркер исключает его из получателей напоминания
+            # (спам «сам себе»: resp/исполнитель часто = создатель задачи)
+            "actor_user_id": (ent.extra_json or {}).get("created_by"),
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     # просроченные (overdue): срок < сегодня, статус не «завершающий» — раз в window_days.
@@ -304,17 +346,13 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
                      else terminal_project)]
     ohorizon = utcnow_naive() - timedelta(days=window_days)
     for ent in overdue_rows:
-        dup = await session.scalar(
-            select(OutboxEvent.id).where(
-                OutboxEvent.topic == "telegram.overdue",
-                OutboxEvent.at > ohorizon,
-                OutboxEvent.payload_json["entity_uid"] == ent.uid).limit(1))
-        if dup:
+        if await _already_sent("telegram.overdue", ent.uid):
             continue
         session.add(OutboxEvent(topic="telegram.overdue", payload_json={
             "action": "overdue", "event_keys": ["overdue"],
             "entity_id": ent.id, "entity_uid": ent.uid, "kind": ent.kind.value,
             "module": ent.module_key, "title": ent.title, "actor": "планировщик",
+            "actor_user_id": (ent.extra_json or {}).get("created_by"),
             "details": {"due_date": ent.due_date}, "link": link_for(ent.uid, ent.kind.value)}))
         cnt += 1
     await session.commit()
