@@ -166,9 +166,32 @@ async def send_media(chat_id: int, m: dict, caption: str = "") -> bool:
     return res is not None
 
 
-async def send_message(chat_id: int, text: str) -> bool:
-    result = await call_bot("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
+async def send_message(chat_id: int, text: str, keyboard: list | None = None) -> bool:
+    """Отправить текст; keyboard — список строк inline-кнопок (см. tg_admin.build_keyboard)."""
+    kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        kwargs["reply_markup"] = {"inline_keyboard": keyboard}
+    result = await call_bot("sendMessage", **kwargs)
     return result is not None
+
+
+async def edit_message_text(chat_id: int, message_id: int, text: str,
+                            keyboard: list | None = None) -> bool:
+    """Редактировать текст/клавиатуру сообщения бота (ответ на нажатие кнопки)."""
+    kwargs = {"chat_id": chat_id, "message_id": message_id,
+              "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        kwargs["reply_markup"] = {"inline_keyboard": keyboard}
+    result = await call_bot("editMessageText", **kwargs)
+    return result is not None
+
+
+async def answer_callback(callback_query_id: str, text: str = "") -> None:
+    """Закрыть «часики» на нажатой кнопке."""
+    try:
+        await call_bot("answerCallbackQuery", callback_query_id=callback_query_id, text=text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("tg answer_callback_query: %s", e)
 
 
 async def notify_user(session: AsyncSession, user_id: int | None, text: str) -> None:
@@ -248,37 +271,50 @@ class _LastAsk:
 _last_ask = _LastAsk()
 
 
-async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, list[int]]:
+async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, list[int], list | None]:
     """Обработка входящего апдейта Bot API.
 
-    Возвращает (текст_ответа, [message_id для удаления]).
+    Возвращает (текст_ответа, [message_id для удаления], inline-клавиатура или None).
     Правила ТЗ: после успешной регистрации бот только отправляет уведомления;
     посторонние сообщения обычного пользователя удаляются из чата.
-    Администратор/координатор: полноценный помощник — команды /report,
-    /broadcast (с фото/видео), /find и т.д. см. integrations/tg_admin.py.
+    Администратор/координатор: полноценный помощник — кнопки админ-меню
+    (integrations/tg_admin.py :: handle_callback) и текстовые команды /report,
+    /broadcast (с фото/видео), /find и т.д. Клавиатура с админ-кнопками
+    прикладывается только если роль пользователя проходит tg_admin._allow,
+    поэтому обычным пользователям админские функции недоступны и не видны.
     Сценарий привязки: «логин → пароль», код привязки не используется.
     """
+    cbq = upd.get("callback_query")
+    if cbq:
+        from integrations import tg_admin
+        return await tg_admin.handle_callback(session, cbq), [], None
+
     msg = upd.get("message") or upd.get("edited_message")
     if not msg:
-        return None, []
+        return None, [], None
     _gc_pending()
     chat_id = msg["chat"]["id"]
     mid = msg["message_id"]
     text = (msg.get("text") or "").strip()
     user = await session.scalar(select(User).where(User.telegram_chat_id == str(chat_id)))
 
-    # --- пользователь уже привязан: команды обрабатываем, остальное удаляем молча ---
+    # --- пользователь уже привязан: команды/кнопки обрабатываем, остальное удаляем молча ---
     if user is not None:
         from integrations import tg_admin
+
+        is_adm = await tg_admin._allow(session, user)   # клавиатура — только админу/координатору
+
+        def out(reply: str | None, delete: bool = True, kb: list | None = None):
+            return reply, ([mid] if delete and reply is not None else ([] if delete else [mid])), kb
 
         # медиа от администратора: вложение к рассылке / библиотеку.
         # ВАЖНО: проверяем до text-ветки — у фото/видео бывает caption
         # (подпись к файлу), это всё равно медиа-сообщение.
         if ("photo" in msg or "video" in msg or "document" in msg):
-            if await tg_admin._allow(session, user):
-                reply = await tg_admin.handle_media(session, user, msg)
-                return reply, ([mid] if reply else [])
-            return None, [mid]   # обычный пользователь прислал мусор — удаляем
+            if is_adm:
+                reply, kb = await tg_admin.handle_media(session, user, msg)
+                return out(reply, kb=kb)
+            return out(None)   # обычный пользователь прислал мусор — удаляем
 
         if text:
             cmd, _, args = text.partition(" ")
@@ -286,35 +322,45 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
             # команды привязки/общие — всегда через startswith (обработка ниже)
             if not cmd.startswith(("/unbind", "/mute", "/unmute")):
                 if cmd == "/help":
-                    return await tg_admin.cmd_help(session, user, args), [mid]
+                    return await tg_admin.cmd_help(session, user, args), [mid], \
+                        tg_admin.main_keyboard(is_adm)
                 if cmd == "/start":
-                    return await tg_admin.cmd_help(session, user, ""), [mid]
+                    # главное меню: кнопки админ-функций (только для админа/координатора)
+                    return await tg_admin.cmd_menu(session, user), [mid], \
+                        tg_admin.main_keyboard(is_adm)
                 if cmd in ("/cancel", "/pending", "/overdue", "/find", "/task",
                            "/broadcast", "/report", "/media"):
                     # все эти команды — административные; внутри каждой стоит _allow,
                     # но для обычного пользователя корректный ответ — «удалить молча»,
                     # а не служебное сообщение про права (иначе тест member-поведения
                     # и UX ломаются: бот не должен светить существование команд).
-                    if not await tg_admin._allow(session, user):
-                        return None, [mid]
+                    if not is_adm:
+                        return out(None)
                     if cmd == "/broadcast":
-                        return await tg_admin.cmd_broadcast(session, user, args), [mid]
+                        reply, kb = await tg_admin.cmd_broadcast(session, user, args)
+                        return out(reply, kb=kb)
                     if cmd == "/report":
-                        return await tg_admin.cmd_report(session, user, args), [mid]
+                        return await tg_admin.cmd_report(session, user, args), [mid], \
+                            tg_admin.back_keyboard()
                     if cmd == "/media":
                         return ("Отправьте фото или видео следующим сообщением — "
-                                "прикреплю его к следующей /broadcast."), [mid]
+                                "прикреплю его к следующей рассылке."), [mid], \
+                            tg_admin.back_keyboard()
                     fn = {"/cancel": tg_admin.cmd_cancel, "/pending": tg_admin.cmd_pending,
                           "/overdue": tg_admin.cmd_overdue, "/find": tg_admin.cmd_find,
                           "/task": tg_admin.cmd_task}[cmd]
-                    return await fn(session, user, args), [mid]
+                    reply = await fn(session, user, args)
+                    kb = (tg_admin.cancel_keyboard() if cmd == "/pending" and is_adm
+                          else tg_admin.back_keyboard())
+                    return reply, [mid], kb
                 # текст без слэша: может быть шагом машины /broadcast
-                reply = await tg_admin.handle_broadcast_input(session, user, text)
+                reply, kb = await tg_admin.handle_broadcast_input(session, user, text)
                 if reply is not None:
-                    return reply, [mid]
-                if await tg_admin._allow(session, user):
-                    return "Неизвестная команда. Список — /help", [mid]
-                return None, [mid]   # «просто удаляет» сообщения пользователя
+                    return out(reply, kb=kb)
+                if is_adm:
+                    return ("Неизвестная команда. Кнопки меню — /start, список — /help",
+                            [mid], tg_admin.main_keyboard(True))
+                return out(None)   # «просто удаляет» сообщения пользователя
 
         if text.startswith("/unbind"):
             user.telegram_chat_id = None
@@ -325,27 +371,27 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
             await session.commit()
             log.info("tg: chat %s отвязан от пользователя '%s'", chat_id, user.login)
             return ("Telegram отвязан от учётной записи <b>{name}</b>. Чтобы привязать "
-                    "заново — отправьте свой логин.").format(name=_esc(user.display_name)), [mid]
+                    "заново — отправьте свой логин.").format(name=_esc(user.display_name)), [mid], None
         if text.startswith("/mute"):
             user.telegram_optout = "all"
             await session.commit()
-            return "Уведомления отключены. /unmute — включить.", [mid]
+            return "Уведомления отключены. /unmute — включить.", [mid], None
         if text.startswith("/unmute"):
             user.telegram_optout = None
             await session.commit()
-            return "Уведомления включены.", [mid]
+            return "Уведомления включены.", [mid], None
         if text.startswith("/help"):
             return ("Бот работает только на отправку уведомлений. "
                     "Команды: /mute — отключить, /unmute — включить, "
-                    "/unbind — отвязать Telegram от аккаунта."), [mid]
-        return None, [mid]   # «просто удаляет» сообщения пользователя
+                    "/unbind — отвязать Telegram от аккаунта."), [mid], None
+        return out(None)   # «просто удаляет» сообщения пользователя
 
     # --- шаг 2: ожидаем пароль — состояние закрывается ровно одной попыткой ---
     if chat_id in _pending:
         pending = _pending.pop(chat_id)
         ask_id = _last_ask.map.pop(chat_id, None)
         if pending.expires < time.time():
-            return RESET_HINT, [m for m in (ask_id, mid) if m]
+            return RESET_HINT, [m for m in (ask_id, mid) if m], None
         u = await session.scalar(select(User).where(User.login == pending.login))
         ok = bool(u and u.is_active and u.password_hash
                   and verify_password(text, u.password_hash))
@@ -354,15 +400,17 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
         if not ok:
             now = time.time()
             if now - _throttle.get(chat_id, 0) < 3:
-                return None, deletes       # анти-брутфорс: молчаливый пропуск
+                return None, deletes, None       # анти-брутфорс: молчаливый пропуск
             _throttle[chat_id] = now
-            return BAD_CREDENTIALS, deletes
+            return BAD_CREDENTIALS, deletes, None
         u.telegram_chat_id = str(chat_id)
         u.telegram_bind_code = None
         u.telegram_optout = None
         await session.commit()
         log.info("tg: chat %s привязан к пользователю '%s'", chat_id, u.login)
-        return WELCOME.format(name=_esc(u.display_name)), deletes
+        from integrations import tg_admin
+        is_adm = await tg_admin._allow(session, u)
+        return WELCOME.format(name=_esc(u.display_name)), deletes, tg_admin.main_keyboard(is_adm)
 
     # --- шаг 1: пользователь присылает логин (или /start [<логин>]) ---
     reply = await _try_login_step(session, chat_id, text)
@@ -372,9 +420,9 @@ async def handle_update(session: AsyncSession, upd: dict) -> tuple[str | None, l
         sent = await call_bot("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML")
         if sent:
             _last_ask.map[chat_id] = sent["message_id"]
-        return None, [mid]
+        return None, [mid], None
     if reply:
         # подсказка без открытия окна (пустой /start)
-        return reply, [mid]
+        return reply, [mid], None
     # неизвестный логин / чужой логин / пустой ввод — молча удаляем
-    return None, [mid]
+    return None, [mid], None
