@@ -204,7 +204,7 @@ async def docs_page(request: Request, user: User = Depends(get_current_user),
         counts={MODULE_KEY: len(cards)},
         docs=cards,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
-        doc_types=[{"key": t.key, "label": t.label} for t in doc_types],
+        doc_types=[{"label": t.label} for t in doc_types],
         departments=depts, people=people, projects=projects,
     )
 
