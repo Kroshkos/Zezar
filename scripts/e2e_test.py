@@ -411,10 +411,27 @@ async def main() -> None:
                     f"links_out не почистились/не сохранились: {_pp.stages}"
                 assert s0.get("x") == 10 and _pp.stages[1].get("x") == 200
 
+            # 19. карточки совещаний: чек-лист этапов убран из содержания,
+            #     текущий этап — отдельная плашка current_stage
+            r = await c.get("/api/meetings/cards/api-list", headers=cookie)
+            assert r.status_code == 200, f"cards api-list: {r.text[:200]}"
+            cards = r.json()["cards"]
+            wf_card = next((x for x in cards if x["uid"] == wfp), None)
+            assert wf_card is not None, "карточка проекта с холстом не найдена"
+            assert wf_card["type"] == "entity"
+            assert wf_card["stages"] == [], \
+                f"чек-лист этапов должен быть пустым: {wf_card['stages']}"
+            cs = wf_card["current_stage"]
+            # total включает автозадачи проекта (stages_by_project), поэтому
+            # проверяем только имя/позицию текущего этапа, а не точное число.
+            assert cs and cs["name"] == "Подготовка" and cs["index"] == 0 \
+                and cs["total"] >= 3, f"плашка текущего этапа неверна: {cs}"
+
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
           "шеринг READ/изоляция, совещания(payload+ICS-время), docs/softs/grants/schols/"
           "priority/projects (реестр+payload+изоляция), entity links (создание/дубликат/"
-          "симметрия/self-link/удаление), wf-canvas (x/y + links_out)")
+          "симметрия/self-link/удаление), wf-canvas (x/y + links_out), "
+          "cards (пустой чек-лист + плашка текущего этапа)")
 
 
 async def notify_chain_test() -> None:
