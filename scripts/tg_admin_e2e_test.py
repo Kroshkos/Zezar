@@ -84,6 +84,7 @@ async def main() -> int:
     tg_admin.download_and_rehost_file = fake_download
 
     async def ask(session, chat_id, text=None, photo=False):
+        """Возвращает (ответ, удаляемые id, inline-клавиатура)."""
         msg = {"chat": {"id": chat_id}, "message_id": 1}
         if text is not None:
             msg["text"] = text
@@ -91,8 +92,18 @@ async def main() -> int:
             msg["photo"] = [{"file_id": "FID1", "file_size": 123456}]
             msg.setdefault("caption", "")   # реальное фото может идти без caption
         upd = {"message": msg}
-        reply, delete_ids = await tg.handle_update(session, upd)
-        return reply, delete_ids
+        return await tg.handle_update(session, upd)
+
+    async def press(session, chat_id, data):
+        """Нажатие inline-кнопки администратором."""
+        cbq = {"id": f"cb{data}{chat_id}", "chat_instance": "x",
+               "from": {"id": chat_id, "is_bot": False, "first_name": "Admin"},
+               "message": {"message_id": 50, "date": 1,
+                           "chat": {"id": chat_id, "type": "private"}},
+               "data": data}
+        reply, del_ids, kb = await tg.handle_update(
+            session, {"callback_query": cbq})
+        return reply, kb
 
     with_deliver = True
     async with SessionLocal() as session:
@@ -115,23 +126,41 @@ async def main() -> int:
         await session.commit()
         AID, MID = 111, int(free_chat)
 
-        # ---- обычный пользователь: команды недоступны ------------------------
-        r, d = await ask(session, MID, "/report")
+        # ---- обычный пользователь: команды недоступны, кнопок нет ----------
+        r, d, _kb = await ask(session, MID, "/report")
         check("member /report отклонён", r is None or "только" in (r or ""), str(r))
-        r, d = await ask(session, MID, "привет")
-        check("member мусор молча удаляется", r is None and d == [1])
+        r, d, _kb = await ask(session, MID, "привет")
+        check("member мусор молча удаляется", r is None and d == [1], f"r={r} d={d}")
+        r, d, kb = await ask(session, MID, "/start")
+        check("member /start — БЕЗ админ-клавиатуры", kb is None, str(kb)[:80])
+        cbq = {"id": "cbhack", "chat_instance": "x",
+               "from": {"id": MID, "is_bot": False, "first_name": "Member"},
+               "message": {"message_id": 50, "date": 1,
+                           "chat": {"id": MID, "type": "private"}},
+               "data": "adm:report"}
+        rh, dh, kbh = await tg.handle_update(session, {"callback_query": cbq})
+        check("member нажатие админ-кнопки отклонено",
+              rh is not None and "только администраторам" in rh and kbh is None, str(rh)[:80])
 
         # ---- /help -----------------------------------------------------------
-        r, _ = await ask(session, AID, "/help")
+        r, _, _kb = await ask(session, AID, "/help")
         check("admin /help содержит /broadcast", r is not None and "/broadcast" in r)
         check("/help удаляет входящее сообщение", True)
 
+        # ---- /start — главное меню кнопками ----------------------------------
+        r, _, kb = await ask(session, AID, "/start")
+        flat = [b["text"] for row in (kb or []) for b in row]
+        check("admin /start — админ-клавиатура",
+              "📊 Сводка" in flat and "📢 Рассылка" in flat, str(flat)[:120])
+        check("меню без URL-кнопок (inline callback)",
+              all("callback_data" in b for row in (kb or []) for b in row))
+
         # ---- /report ---------------------------------------------------------
-        r, _ = await ask(session, AID, "/report")
+        r, _, _kb = await ask(session, AID, "/report")
         check("admin /report — сводка", r is not None and "Сводка" in r, str(r)[:80])
 
         # ---- /overdue /pending /find ----------------------------------------
-        r, _ = await ask(session, AID, "/overdue")
+        r, _, _kb = await ask(session, AID, "/overdue")
         check("/overdue отвечает", r is not None and len(r) > 0)
         ent = await session.scalar(select(Entity).limit(1))
         if ent is None:   # демо-сид без карточек — создадим свою
@@ -141,20 +170,32 @@ async def main() -> int:
                          status_key="new", priority_key="normal")
             session.add(ent)
             await session.commit()
-        r, _ = await ask(session, AID, f"/find {ent.title[:4]}")
+        r, _, _kb = await ask(session, AID, f"/find {ent.title[:4]}")
         check("/find находит карточку", r is not None and (ent.title[:4].lower() in r.lower()), str(r)[:80])
-        r, _ = await ask(session, AID, f"/task {ent.id}")
+        r, _, _kb = await ask(session, AID, f"/task {ent.id}")
         check("/task показывает карточку", r is not None and str(ent.id) in r, str(r)[:80])
 
-        # ---- /broadcast машина: текст -> аудитория -> подтверждение ---------
-        r, _ = await ask(session, AID, "/broadcast Планёрка завтра в 10:00")
-        check("/broadcast просит аудиторию", r is not None and "аудитори" in r.lower(), str(r)[:80])
-        r, _ = await ask(session, AID, "фото без подписи", photo=True)
+        # ---- /broadcast кнопками: меню -> 📢 -> аудитория -> медиа -> подтвердить
+        r, kb = await press(session, AID, "adm:bcast")
+        check("кнопка «📢 Рассылка» просит текст",
+              r is not None and "Формат" in r, str(r)[:80])
+        r, _, _kb = await ask(session, AID, "/broadcast Планёрка завтра в 10:00")
+        check("/broadcast просит аудиторию кнопками",
+              r is not None and "аудитори" in r.lower(), str(r)[:80])
+        r, _, kb = await ask(session, AID, "/broadcast Планёрка завтра в 10:00")
+        flat = [b["text"] for row in (kb or []) for b in row]
+        check("клавиатура выбора аудитории",
+              "👥 Всем" in flat and "✖️ Отмена" in flat, str(flat)[:120])
+        r, _, _kb = await ask(session, AID, "фото без подписи", photo=True)
         check("медиа добавлено к черновику", r is not None and "Добавлено" in r, str(r)[:80])
-        r, _ = await ask(session, AID, "1")   # всем активным
-        check("шаг подтверждения", r is not None and "да" in r.lower(), str(r)[:120])
-        r, _ = await ask(session, AID, "да")
-        check("рассылка принята", r is not None and "принята" in r, str(r)[:120])
+        r, kb = await press(session, AID, "bc:aud:all")
+        check("кнопка аудитории -> шаг подтверждения",
+              r is not None and "Подтвердите" in r and kb is not None and
+              any(b["text"] == "✅ Отправить" for row in kb for b in row),
+              f"{str(r)[:60]} kb={[[b['text'] for b in row] for row in (kb or [])]}")
+        r, kb = await press(session, AID, "bc:send")
+        check("кнопка «✅ Отправить» — рассылка принята",
+              r is not None and "принята" in r, str(r)[:120])
 
         n = await session.scalar(
             select(Notification).where(Notification.status.in_(["sending", "scheduled"]))
@@ -178,27 +219,46 @@ async def main() -> int:
         nn = await session.get(Notification, n.id)
         check("рассылка помечена sent", nn.status == "sent" and nn.delivered_count >= 1)
 
-        # ---- /cancel запланированной рассылки --------------------------------
-        r, _ = await ask(session, AID, "/broadcast Тест отмены")
-        r, _ = await ask(session, AID, "2")   # руководителям
-        r, _ = await ask(session, AID, "нет")
-        check("отмена по «нет»", r is not None and "отменена" in r.lower(), str(r)[:80])
+        # ---- отмена рассылки кнопкой ✖️ ---------------------------------------
+        r, _, _kb = await ask(session, AID, "/broadcast Тест отмены")
+        r, _, _kb = await ask(session, AID, "2")   # руководителям (текст работает)
+        r, kb = await press(session, AID, "bc:cancel")
+        check("кнопка «✖️ Отмена» отменяет рассылку",
+              r is not None and "отменена" in r.lower(), str(r)[:80])
 
-        # вторая — создаём и отменяем по id через /pending + /cancel
-        r, _ = await ask(session, AID, "/broadcast Вторая рассылка")
-        r, _ = await ask(session, AID, "1")
-        r, _ = await ask(session, AID, "да")
+        # вторая — создаём и отменяем по id через /pending + кнопку 🚫
+        r, _, _kb = await ask(session, AID, "/broadcast Вторая рассылка")
+        r, _, _kb = await ask(session, AID, "1")
+        r, _, _kb = await ask(session, AID, "да")
         n2 = await session.scalar(
             select(Notification).order_by(Notification.id.desc()))
-        r, _ = await ask(session, AID, "/pending")
+        r, _, _kb = await ask(session, AID, "/pending")
         check("/pending показывает id рассылки", r is not None and str(n2.id) in r, str(r)[:120])
-        # вернём статус в scheduled, чтобы /cancel сработал
+        # вернём статус в scheduled, чтобы отмена сработала
         n2.status = "scheduled"
         await session.commit()
-        r, _ = await ask(session, AID, f"/cancel {n2.id}")
-        check("/cancel отменил рассылку", r is not None and "отмен" in r.lower(), str(r)[:120])
+        r, kb = await press(session, AID, "adm:cancelpick")
+        check("кнопка «🚫 Отменить рассылку…» даёт список",
+              r is not None and f"#{n2.id}" in r, str(r)[:120])
+        r, kb = await press(session, AID, f"adm:cancel:{n2.id}")
+        check("кнопка отмены отменила рассылку", r is not None and "отмен" in r.lower(), str(r)[:120])
         nn2 = await session.get(Notification, n2.id)
         check("статус canceled в БД", nn2.status == "canceled")
+
+        # ---- прочие кнопки меню ------------------------------------------------
+        r, kb = await press(session, AID, "adm:report")
+        check("кнопка «📊 Сводка»", r is not None and "Сводка" in r, str(r)[:80])
+        r, _kb = await press(session, AID, "adm:overdue")
+        check("кнопка «⚠️ Просрочки»", r is not None)
+        r, _kb = await press(session, AID, "adm:help")
+        check("кнопка «ℹ️ Помощь»", r is not None and "/broadcast" in r)
+        r, _kb = await press(session, AID, "adm:menu")
+        check("кнопка «« Меню» возвращает в меню", r is not None and "меню администратора" in r)
+        r, kb = await press(session, AID, "adm:find")
+        flatf = [b.get("callback_data", "") for row in (kb or []) for b in row]
+        check("кнопка «🔎 Поиск» даёт список карточек",
+              r is not None and any(d.startswith("adm:task:") for d in flatf),
+              str(flatf)[:120])
 
         # ---- журнал tg_admin_log ---------------------------------------------
         from app.models.core import TgAdminLog
