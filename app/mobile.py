@@ -255,4 +255,5 @@ async def patch_entity(uid: str, body: MobileEntityPatch,
         except PermissionError as e:
             raise HTTPException(400, str(e))
     await session.commit()
-    return {"ok": True}
+    await session.refresh(ent)
+    return _entity_brief(ent, perm, await _resp_names(session, ent))
