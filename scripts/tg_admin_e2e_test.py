@@ -13,9 +13,13 @@ import asyncio
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + os.path.join(
-    tempfile.mkdtemp(), "tg_admin_test.db")
+# ВАЖНО: Settings использует pydantic BaseSettings с полем database_path —
+# переменная окружения DATABASE_URL игнорировалась, и тест писал в реальный
+# /data/caesar.db (демо-сид не запускался на непустой БД). Задаём путь через
+# DATABASE_PATH — тогда временная чистая БД создаётся гарантированно.
+os.environ["DATABASE_PATH"] = os.path.join(tempfile.mkdtemp(), "tg_admin_test.db")
 os.environ["WORKERS_ENABLED"] = "false"
 os.environ["SEED_DEMO_DATA"] = "true"
 os.environ["DEV_LOGIN_ENABLED"] = "true"
@@ -23,6 +27,10 @@ os.environ["ENVIRONMENT"] = "development"
 os.environ["TELEGRAM_NOTIFY_ENABLED"] = "true"
 os.environ["TELEGRAM_BOT_TOKEN"] = "test-token"
 os.environ["PUBLIC_BASE_URL"] = "https://example.test"
+# env-администратор: sync_admin_logins «повышает» демо-учётку ivanov до ADMIN
+# (иначе в БД нет ни одного пользователя с ролью ADMIN — тест нечего проверять)
+os.environ["ADMIN_USERNAME"] = "ivanov"
+os.environ["ADMIN_PASSWORD"] = "demo12345"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -230,6 +238,67 @@ async def main() -> int:
               f"{before_s}->{len(sent_msgs)}")
         nn = await session.get(Notification, n.id)
         check("рассылка помечена sent", nn.status == "sent" and nn.delivered_count >= 1)
+
+        # ---- формат текста рассылки (v1.10): без ссылки на платформу и
+        #      без дублирования заголовка, если он уже первой строкой тела ----
+        texts_ = [t for _c, t in sent_msgs[before_s:]]
+        check("в тексте нет ссылки на платформу",
+              all("🔗" not in t and "example.test" not in t for t in texts_),
+              str(texts_)[:160])
+        r, _, _kb = await ask(session, AID, "/broadcast Планёрка завтра\nПланёрка завтра в 10:00, каб. 301")
+        r, _, _kb = await ask(session, AID, "👥 Всем")
+        r, _, _kb = await ask(session, AID, "✅ Отправить")
+        n3 = await session.scalar(
+            select(Notification).order_by(Notification.id.desc()))
+        before3 = len(sent_msgs)
+        await _handle_tg_manual(session, {"notification_id": n3.id})
+        await session.commit()
+        t3 = [t for _c, t in sent_msgs[before3:]]
+        check("заголовок не дублируется, если он = первая строка тела",
+              t3 and all(not x.startswith("<b>📢") for x in t3), str(t3)[:160])
+        # обычный случай (рассылка с сайта): заголовок != тело — печатается один раз.
+        # Через /broadcast однострочный ввод кладётся и в заголовок, и в тело —
+        # воркер такой дубликат убирает, поэтому здесь создаём Notification напрямую.
+        session.add(Notification(
+            title="Сводка за неделю", body="За неделю закрыто 5 карточек.",
+            send_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            audience_json={"mode": "all"}, status="sending",
+            created_by=admin.id, recipients_count=1))
+        await session.flush()
+        n4 = await session.scalar(
+            select(Notification).order_by(Notification.id.desc()))
+        await session.commit()
+        before4 = len(sent_msgs)
+        await _handle_tg_manual(session, {"notification_id": n4.id})
+        await session.commit()
+        t4 = [t for _c, t in sent_msgs[before4:]]
+        check("уникальный заголовок печатается ровно один раз",
+              t4 and all(x.count("Сводка") == 1 and x.startswith("<b>📢 Сводка") for x in t4),
+              str(t4)[:160])
+
+        # ---- медиа из библиотеки /media подхватывается в черновик (v1.10) ----
+        tg_admin._media_lib.pop(AID, None)
+        tg_admin._bcast.pop(AID, None)
+        from app.models.core import User as _U
+        u_a = await session.get(_U, admin.id)
+        m_ok, _k = await tg_admin.handle_media(
+            session, u_a, {"photo": [{"file_id": "LIB1", "file_size": 10}]})
+        check("/media кладёт файл в библиотеку", m_ok is not None and "библиотеку" in m_ok, str(m_ok)[:80])
+        r, _, _kb = await ask(session, AID, "/broadcast Рассылка с библиотечным медиа")
+        r, _, kb = await ask(session, AID, "👥 Всем")
+        check("медиа из библиотеки попало в подтверждение",
+              r is not None and "photo" in r, str(r)[:120])
+        r, _, _kb = await ask(session, AID, "✅ Отправить")
+        n5 = await session.scalar(
+            select(Notification).order_by(Notification.id.desc()))
+        check("Notification сохранил file_id из библиотеки",
+              n5.media_json and n5.media_json[0]["file_id"] == "LIB1",
+              str(n5.media_json)[:120])
+        before5m = len(sent_media)
+        await _handle_tg_manual(session, {"notification_id": n5.id})
+        await session.commit()
+        check("воркер отправил библиотечное медиа", len(sent_media) > before5m,
+              f"{before5m}->{len(sent_media)}")
 
         # ---- отмена рассылки кнопкой ✖️ ---------------------------------------
         r, _, _kb = await ask(session, AID, "/broadcast Тест отмены")
