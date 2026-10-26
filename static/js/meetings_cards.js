@@ -115,17 +115,27 @@ function cardHTML(c) {
   const others = (c.participants || []).filter(p => p !== c.responsible);
   if (others.length) parts.push(`<b>Участники:</b> ${esc(others.join(', '))}`);
 
-  // Содержание карточки: чек-лист этапов из содержания убран (текущий этап
-  // показывается отдельной плашкой над заголовком). Сущность (entity) —
-  // компактная информационная сводка; автономная задача (task) — как раньше,
-  // зона для рукописных заметок.
+  // Содержание карточки: чек-лист/количество этапов из содержания убраны
+  // (текущий этап показывается отдельной плашкой над заголовком). Сущность
+  // (entity) — компактная сводка + ТЕКУЩАЯ НЕВЫПОЛНЕННАЯ ЗАДАЧА маршрута;
+  // автономная задача (task) — как раньше, зона для рукописных заметок.
   let body;
   if (c.type === 'entity') {
     const info = [];
     if (c.status_label) info.push(`<b>Статус:</b> ${esc(c.status_label)}`);
-    info.push(`<b>Этапов в маршруте:</b> ${(c.stages || []).length
-      || ((c.current_stage || {}).total || 0)}`);
-    body = `<div class="pinfo">${info.map(i => `<div class="pmeta">${i}</div>`).join('')}</div>`;
+    const ct = c.current_task;
+    if (ct && ct.name) {
+      const meta = [];
+      if (ct.deadline) meta.push(`срок ${cfmt(ct.deadline)}`);
+      if (ct.responsible) meta.push(`отв. ${esc(ct.responsible)}`);
+      info.push(`<div class="pcur-task"><span class="ptag" style="background:${ccolor(ct.state_color)}">${esc(ct.state_label || 'Не выполнено')}</span>`
+        + ` <b>Текущая задача:</b> ${esc(ct.name)}`
+        + (meta.length ? `<div class="pcur-meta">${meta.join(' · ')}</div>` : '')
+        + `</div>`);
+    } else {
+      info.push('<b>Текущая задача:</b> —');
+    }
+    body = `<div class="pinfo">${info.map(i => `<div class="${i.startsWith('<div') ? '' : 'pmeta'}">${i}</div>`).join('')}</div>`;
   } else {
     body = `<div class="pnotes" title="Место для рукописных заметок"></div>`;
   }

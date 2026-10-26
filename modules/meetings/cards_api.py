@@ -87,16 +87,26 @@ def _current_stage_of(stages: list | None) -> dict | None:
 
 
 def _stage_rows(stages: list | None) -> list[dict]:
-    """Чек-лист этапов: наименование, дедлайн, ответственный, состояние."""
+    """Чек-лист этапов: наименование, дедлайн, ответственный, состояние.
+
+    Используется только для вычисления текущего этапа (current_stage);
+    в содержании карточки список этапов не печатается. Ответвления холста
+    (branches[].steps) сюда не попадают — они живут отдельными автозадачами.
+    """
     rows = []
     for s in stages or []:
         if not isinstance(s, dict):
             continue
+        name = str(s.get("name") or "").strip()
+        if not name:  # пустые узлы холста (черновики без названия) не считаются
+            continue
         rows.append({
-            "name": s.get("name") or "",
+            "name": name,
             "deadline": s.get("deadline") or s.get("date") or "",
             "responsible": s.get("responsible") or s.get("who") or "",
             "state": s.get("state") or "",
+            "taskId": s.get("taskId") or "",
+            "done": bool(s.get("done")) or s.get("state") == "done",
         })
     return rows
 
@@ -189,23 +199,14 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
                 continue
             card_type, tag = "task", "Задача"
             stages: list[dict] = []
+            child_ids: list[str] = []
         else:
             stages = _stage_rows(getattr(payload, "stages", None)) if payload else []
-            # Задачи-этапы, привязанные к сущности, тоже попадают в чек-лист
-            for child_id in stages_by_project.get(ent.uid, []):
-                cent = task_ids.get(child_id)
-                if cent is None:
-                    continue  # задача недоступна пользователю — не в чек-листе
-                cresp = [r.user_id for r in cent.responsibles if r.user_id]
-                cname = ""
-                if cresp:
-                    u = await session.get(User, cresp[0])
-                    cname = u.display_name if u else ""
-                stages.append({"name": cent.title,
-                               "deadline": cent.due_date or "",
-                               "responsible": cname,
-                               "state": cent.status_key or ""})
-            if not stages:
+            # Задачи-этапы, привязанные к сущности: в содержание карточки не
+            # попадают (текущий этап — отдельная плашка), но нужны, чтобы найти
+            # текущую невыполненную задачу маршрута.
+            child_ids = list(stages_by_project.get(ent.uid, []))
+            if not stages and not child_ids:
                 # Сущность без workflow и без этапов — карточка-чек-лист не формируется.
                 continue
             card_type = "entity"
@@ -221,6 +222,40 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "medium": "b-amber", "normal": "b-blue", "low": "b-green",
         }
         prio_color = (pref.color if pref else None) or _PRIORITY_COLORS.get(pk, "b-gray")
+
+        # Текущая невыполненная задача в рамках сущности с workflow: этап
+        # маршрута, ещё не закрытый (первый «в работе», иначе первый
+        # незавершённый). Задача берётся по taskId этапа; если автозадачи нет —
+        # показываем сам этап. Если весь маршрут закрыт — последняя задача.
+        current_task: dict | None = None
+        if card_type == "entity":
+            csched = _current_stage_of(stages)
+            cand = next((s for s in stages if not s["done"]),
+                        stages[-1] if stages else None)
+            if cand is not None:
+                cent = task_ids.get(cand["taskId"]) if cand["taskId"] else None
+                cname = cent.title if cent is not None else cand["name"]
+                # Формат как в прототипе createStepTask: «<сущность> — этап: N»
+                if cent is not None and "—" in cname:
+                    cname = cname.split("—", 1)[1].strip()
+                cstate = (cent.status_key if cent is not None
+                          else cand["state"]) or ""
+                clabel, ccolor_ = _STAGE_STATE_LABEL.get(
+                    cstate, ("Не выполнено", "b-amber"))
+                current_task = {
+                    "name": cname,
+                    "deadline": ((cent.due_date if cent is not None
+                                  else cand["deadline"]) or ""),
+                    "responsible": "",
+                    "state_label": clabel, "state_color": ccolor_,
+                    "stage_index": (csched or {}).get("index", -1),
+                    "stage_total": (csched or {}).get("total", len(stages)),
+                }
+                if cent is not None:
+                    cresp = [r.user_id for r in cent.responsibles if r.user_id]
+                    if cresp:
+                        u = await session.get(User, cresp[0])
+                        current_task["responsible"] = u.display_name if u else ""
         out.append({
             "uid": ent.uid, "type": card_type, "kind": ent.kind.value,
             "module_key": ent.module_key, "tag": tag,
@@ -243,6 +278,9 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             # текущий этап маршрута — плашка в карточке (как приоритет); None у
             # карточек-задач и сущностей без этапов
             "current_stage": _current_stage_of(stages) if card_type == "entity" else None,
+            # текущая невыполненная задача сущности с workflow — в содержании
+            # карточки вместо списка/количества этапов (см. task 4 ручного теста)
+            "current_task": current_task,
             "department_id": ent.owner_department_id,
             "cross_dept": cross,
             "can_edit": access.can_write(perm),
