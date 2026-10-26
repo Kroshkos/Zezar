@@ -427,11 +427,33 @@ async def main() -> None:
             assert cs and cs["name"] == "Подготовка" and cs["index"] == 0 \
                 and cs["total"] >= 3, f"плашка текущего этапа неверна: {cs}"
 
+            # 20. в содержании карточки — текущая невыполненная задача
+            #     маршрута (вместо количества этапов)
+            ct = wf_card.get("current_task") or {}
+            assert ct.get("name"), \
+                f"текущая задача не найдена: {wf_card.get('current_task')}"
+            assert "Подготовка" in ct["name"], f"неверная текущая задача: {ct}"
+            assert ct.get("state_label") and ct.get("state_color"), f"нет статуса задачи: {ct}"
+            # завершённый этап не считается текущим задачей: закроем первый этап
+            r = await c.patch(f"/api/projects/{wfp}", headers=cookie, json={
+                "stages": [
+                    {"name": "Подготовка", "id": st["Подготовка"]["id"], "done": True},
+                    {"name": "Согласование", "id": st["Согласование"]["id"]},
+                    {"name": "Утверждение", "id": st["Утверждение"]["id"]},
+                ]})
+            assert r.status_code == 200, f"project patch done: {r.text[:200]}"
+            r = await c.get("/api/meetings/cards/api-list", headers=cookie)
+            wf_card = next((x for x in r.json()["cards"] if x["uid"] == wfp), None)
+            ct = wf_card.get("current_task") or {}
+            assert "Подготовка" not in ct.get("name", ""), \
+                f"после закрытия этапа задача не сдвинулась: {ct}"
+            assert "Согласование" in ct.get("name", ""), f"текущая задача неверна: {ct}"
+
     print("E2E OK: auth(RBAC+закрытый вход), страницы(Jinja), CRUD задач, outbox-воркер, "
           "шеринг READ/изоляция, совещания(payload+ICS-время), docs/softs/grants/schols/"
           "priority/projects (реестр+payload+изоляция), entity links (создание/дубликат/"
           "симметрия/self-link/удаление), wf-canvas (x/y + links_out), "
-          "cards (пустой чек-лист + плашка текущего этапа)")
+          "cards (пустой чек-лист + плашка текущего этапа + текущая невыполненная задача)")
 
 
 async def notify_chain_test() -> None:
