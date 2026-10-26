@@ -76,8 +76,13 @@ def _gateway_url(uid: str) -> str:
 
 
 def _generate_qr_data(entity_uid: str, entity_type: str) -> str:
-    """Данные для QR-кода сущности (HTTPS-шлюз app-or-web)."""
-    return _gateway_url(entity_uid)
+    """Данные для QR-кода сущности (HTTPS-шлюз app-or-web).
+
+    Ссылка подбирается так, чтобы код оставался компактным (QR версии 2):
+    /open/e/{uid}, а при длинном домене/uid — короткий алиас /o/{uid}
+    (см. app.routers.entity_open.gateway_url_from_base)."""
+    from app.routers.entity_open import gateway_url_from_base
+    return gateway_url_from_base(get_settings().public_base_url or "", entity_uid)
 
 
 @router.get("/api/core/entities/{uid}/qr")
@@ -108,18 +113,22 @@ async def get_entity_qr(
     entity_type = _get_entity_kind_type(entity)
     qr_data = _generate_qr_data(entity.uid, entity_type)
     
-    # Generate QR code
+    # Генерируем компактный читаемый QR: фиксированная версия 2 (25x25),
+    # средний уровень коррекции, крупный модуль — такие коды надёжно
+    # распознаются камерой телефона с печатной карточки.
     try:
         from qrcode import QRCode
-        from qrcode.image.pil import PilImage
-        
+        from qrcode.constants import ERROR_CORRECT_M
+
         qr = QRCode(
-            version=1,
-            error_correction=2,  # QRCode.ERROR_CORRECT_Q
-            box_size=10,
+            version=2,
+            error_correction=ERROR_CORRECT_M,
+            box_size=12,
             border=4,
         )
         qr.add_data(qr_data)
+        # fit=True: версия 2 как минимум; если ссылка не влезает — код
+        # автоматически станет больше, но останется читаемым (не упадёт).
         qr.make(fit=True)
         
         img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
@@ -184,7 +193,7 @@ async def get_entity_share_link(
         )
     
     entity_type = _get_entity_kind_type(entity)
-    gateway = _gateway_url(uid)
+    gateway = _generate_qr_data(uid, entity_type)
 
     return {
         "entity_uid": uid,
