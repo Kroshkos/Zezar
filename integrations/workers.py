@@ -503,6 +503,10 @@ async def tg_poller(stop: asyncio.Event) -> None:
                                               keyboard if kb_inline else None)
                         if keyboard is not None and not kb_inline:
                             await tg.set_chat_reply_keyboard(chat_id, keyboard)
+                    elif keyboard is not None:
+                        # ответа нет, но клавиатуру надо сменить (например, молча
+                        # удаляем ввод и снимаем кнопки) — обновляем persistent-kb
+                        await tg.set_chat_reply_keyboard(chat_id, keyboard)
                     for mid in delete_ids:
                         await tg.delete_message(chat_id, mid)
         except Exception as e:  # noqa: BLE001
