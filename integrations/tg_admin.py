@@ -753,7 +753,7 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
     attach_pending_media(st, cid)
     if text:
         st["body"] = text
-        st["title"] = text.split("\n", 1)[0][:120]
+        st["title"] = _derive_title(text)
     if not st["body"]:
         return ("Формат: /broadcast &lt;текст сообщения&gt;\n"
                 "Например: <code>/broadcast Завтра в 10:00 планёрка в переговорной</code>"
@@ -771,7 +771,7 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
                 "напишите 0 — отмена."), [[_btn("✖️ Отмена", "bc:cancel")]]
     if st["step"] == "edit_text":
         st["body"] = text
-        st["title"] = text.split("\n", 1)[0][:120]
+        st["title"] = _derive_title(text)
         st["step"] = "confirm_audience"
         return await _show_audience(st)
     if st["step"] == "confirm":
@@ -780,6 +780,19 @@ async def cmd_broadcast(session: AsyncSession, user: User, args: str) -> tuple[s
     return "Рассылка уже оформляется — выберите аудиторию кнопкой." \
            + "\n\n" + "\n".join(" ".join(f"[{b['text']}]" for b in row)
                                 for row in audience_keyboard()), audience_keyboard()
+
+
+def _derive_title(text: str) -> str:
+    """Заголовок рассылки из введённого текста (v1.10).
+
+    Берём только первую строку ОДНОСТРОЧНОГО ввода: для многострочного текста
+    заголовок остаётся пустым, иначе воркер печатал бы первую строку дважды —
+    как <b>заголовок</b> и как начало тела.
+    """
+    t = (text or "").strip()
+    if not t or "\n" in t:
+        return ""
+    return t.split("\n", 1)[0][:120]
 
 
 async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -> tuple[str | None, list | dict | None]:
@@ -807,7 +820,7 @@ async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -
             return ("✏️ Текст уже ждём — просто отправьте его сообщением."), \
                 nav_reply(["📝 Написать текст"] + NAV_BACK)
         st["body"] = t
-        st["title"] = t.split("\n", 1)[0][:120]
+        st["title"] = _derive_title(t)
         st["step"] = "confirm_audience"
         st["expires"] = time.time() + 900
         return await _show_audience(st)
@@ -915,7 +928,7 @@ async def handle_broadcast_input(session: AsyncSession, user: User, text: str) -
 
     if st["step"] == "edit_text":
         st["body"] = t
-        st["title"] = t.split("\n", 1)[0][:120]
+        st["title"] = _derive_title(t)
         st["step"] = "confirm"
         st["expires"] = time.time() + 900
         return bcast_kb(await _confirm_text(session, st), confirm_keyboard())
@@ -962,7 +975,7 @@ async def _audience_count(session, aud: dict) -> int:
 async def _do_send(session: AsyncSession, user: User, st: dict) -> str:
     cid = int(user.telegram_chat_id)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    n = Notification(title=st["title"] or "Сообщение", body=st["body"],
+    n = Notification(title=st["title"] or "", body=st["body"],
                      send_at=now, audience_json=st["audience"],
                      status="sending", created_by=user.id,
                      recipients_count=await _audience_count(session, st["audience"]),
@@ -982,11 +995,14 @@ async def _do_send(session: AsyncSession, user: User, st: dict) -> str:
 
 # ---------------- медиа ----------------
 
-async def download_and_rehost_file(file_unique_id_or_path: str, caption: str = "") -> dict | None:
-    """Скачать файл из чата бота (getFile) — вернуть описание вложения.
+async def download_and_rehost_file(file_id: str, caption: str = "") -> dict | None:
+    """Проверить принятый ботом file_id (getFile) — вернуть описание вложения.
 
     Храним file_id бота: он повторно используется в sendPhoto/sendVideo для
     любых чатов (один bot — один file_id namespace), отдельное хранилище не нужно.
+    getFile возвращает file_unique_id (непереводимый идентификатор) и file_path —
+    для последующей отправки нужен именно исходный file_id; unique_id используем
+    только как запасной размер, если file_size недоступен.
     """
     s = get_settings()
     if not s.telegram_bot_token:
@@ -994,13 +1010,13 @@ async def download_and_rehost_file(file_unique_id_or_path: str, caption: str = "
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             tg.BOT_API.format(token=s.telegram_bot_token, method="getFile"),
-            json={"file_id": file_unique_id_or_path})
+            json={"file_id": file_id})
         info = (r.json().get("result") or {})
         path = info.get("file_path")
         if not path:
             return None
         size = int(info.get("file_size") or 0)
-    return {"file_id": file_unique_id_or_path, "path": path, "size": size,
+    return {"file_id": file_id, "path": path, "size": size,
             "caption": caption[:300]}
 
 
@@ -1050,9 +1066,25 @@ async def handle_media(session: AsyncSession, user: User, msg: dict) -> tuple[st
 
 
 def attach_pending_media(st: dict, cid: int) -> None:
-    lib = _media_lib.pop(cid, None)
-    if lib and not st["media"]:
-        st["media"] = list(lib)
+    """Подхватить медиа из библиотеки (/media) в текущий черновик рассылки.
+
+    Библиотека не очищается, если у черновика уже есть вложения (например,
+    отправленные прямо в диалог) — иначе загруженные через /media файлы
+    терялись и в рассылку не попадали. Дубли по file_id не добавляем.
+    """
+    lib = _media_lib.get(cid)
+    if not lib:
+        return
+    have = {m.get("file_id") for m in st["media"]}
+    added = False
+    for m in lib:
+        if m.get("file_id") in have:
+            continue
+        st["media"].append(m)
+        have.add(m.get("file_id"))
+        added = True
+    if added:
+        _media_lib.pop(cid, None)
 
 
 def _fmt_size(b: int) -> str:

@@ -282,15 +282,31 @@ async def _handle_tg_manual(session, p: dict) -> None:
     users = list((await session.scalars(select(User).where(
         User.id.in_(ids), User.is_active.is_(True)))).all()) if ids else []
     sent = 0
-    base = (_gs().public_base_url or "").rstrip("/")
     media = n.media_json or []
     for u in users:
         body = (n.body or "").replace("{name}", u.display_name).replace("{login}", u.login or "")
-        text_ = f"<b>📢 {tg._esc(n.title)}</b>\n\n{tg._esc(body)}\n\n🔗 {base}"
+        # v1.10: ссылка на платформу в рассылках не добавляется; заголовок не
+        # дублируется, если он уже присутствует в тексте (первая строка или
+        # внутри тела — например, /broadcast берёт заголовком первую строку).
+        title = (n.title or "").strip()
+        body_stripped = body.strip()
+        # /broadcast при однострочном вводе кладёт тот же текст и в заголовок,
+        # и в тело — дубликат убираем (иначе «Сводка» печаталась дважды).
+        if title and body_stripped.lower() == title.lower():
+            title, body_stripped = "", body_stripped
+        elif title and body_stripped.split("\n", 1)[0].strip().lower() == title.lower():
+            title = ""
+        if not body_stripped or not title:
+            # без заголовка — только тело; пустое тело с заголовком — заголовок
+            text_ = tg._esc(body_stripped) if body_stripped else f"<b>📢 {tg._esc(n.title)}</b>"
+        else:
+            text_ = f"<b>📢 {tg._esc(title)}</b>\n\n{tg._esc(body_stripped)}"
         if u.telegram_chat_id and u.telegram_optout != "all":
             # сначала медиа (фото/видео), затем текст — как в мессенджерах;
             # сбой вложения не отменяет доставку текста
             for m in media:
+                if not (m.get("file_id") or "").strip():
+                    continue
                 try:
                     await tg.send_media(int(u.telegram_chat_id), m)
                 except Exception as e:  # noqa: BLE001
