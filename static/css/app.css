@@ -307,6 +307,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 /* информационная сводка в содержании карточки сущности (чек-лист этапов убран —
    текущий этап показывается плашкой pstage-tag над заголовком) */
 .pinfo{flex:1;min-height:0;overflow:hidden;font-size:12px;margin:2px 0 6px}
+/* текущая невыполненная задача маршрута — в содержании карточки вместо
+   количества этапов */
+.pcur-task{margin-top:4px;padding:5px 7px;border:1.3px solid #d3dae6;border-radius:4px;background:#f7f9fc;line-height:1.3}
+.pcur-meta{font-size:11px;color:#555;margin-top:2px}
 /* место для рукописных заметок (карточка автономной задачи) */
 .pnotes{flex:1;min-height:0;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 6px;background:repeating-linear-gradient(#fff,#fff 21px,#e8ecf3 22px)}
 /* Печать раздела «Карточки»: изолированный контейнер-оверлей, который
