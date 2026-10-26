@@ -43,6 +43,23 @@ router = APIRouter()
 
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+# Ссылка шлюза должна быть как можно короче: размер QR-кода растёт с длиной
+# данных, а компактные коды (версия 2–3, 25–29 модулей) надёжно распознаются
+# камерой телефона с печатной карточки даже при плохом освещении.
+# Для боевого домена zezar-patfiz.waw0.amvera.tech + uid(12) короткая форма
+# /o/{uid} занимает 50 символов (QR версии 2) — короче уже не сделать.
+MAX_GATEWAY_LEN = 50
+
+
+def gateway_url_from_base(base: str, uid: str) -> str:
+    """Ссылка для QR-кода: /open/e/{uid}, а если не помещается — короткий
+    вариант /o/{uid}. Обе формы понимают шлюз и мобильный клиент."""
+    b = base.rstrip("/")
+    full = f"{b}/open/e/{uid}"
+    if len(full) <= MAX_GATEWAY_LEN:
+        return full
+    return f"{b}/o/{uid}"
+
 # ---------------------------------------------------------------------------
 # Гостевые токены для deep link из QR-шлюза.
 #
@@ -210,13 +227,7 @@ _GATEWAY_HTML = """<!doctype html>
 """
 
 
-@router.get("/open/e/{uid}", response_class=HTMLResponse, include_in_schema=False)
-async def entity_open_gateway(
-    uid: str,
-    request: Request,
-    user: User | None = Depends(get_optional_user),
-    session: AsyncSession = Depends(session_dep),
-):
+async def _render_gateway(uid: str, request: Request, user, session):
     """Шлюз для QR/share-ссылок: deep link в приложение, иначе — карточка сайта."""
     if not UID_RE.match(uid or ""):
         return HTMLResponse("<h1>Некорректный адрес карточки</h1>", status_code=404)
@@ -257,6 +268,29 @@ async def entity_open_gateway(
     )
     # Шлюз не кешируем: решение зависит от устройства пользователя и хоста.
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/open/e/{uid}", response_class=HTMLResponse, include_in_schema=False)
+async def entity_open_gateway(
+    uid: str,
+    request: Request,
+    user: User | None = Depends(get_optional_user),
+    session: AsyncSession = Depends(session_dep),
+):
+    return await _render_gateway(uid, request, user, session)
+
+
+# Короткий алиас для QR-кодов: /o/{uid} вместо /open/e/{uid}. Нужен, когда
+# полный путь с доменом не влезает в компактный QR (см. gateway_url_from_base) —
+# маленький код лучше распознаётся камерой с печатной карточки.
+@router.get("/o/{uid}", response_class=HTMLResponse, include_in_schema=False)
+async def entity_open_gateway_short(
+    uid: str,
+    request: Request,
+    user: User | None = Depends(get_optional_user),
+    session: AsyncSession = Depends(session_dep),
+):
+    return await _render_gateway(uid, request, user, session)
 
 
 # ---------------------------------------------------------------------------

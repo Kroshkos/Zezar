@@ -240,10 +240,16 @@ async def main() -> int:
         r = await c.get(f"/api/core/entities/{new_uid}/share-link")
         assert r.status_code == 200, r.text
         share = r.json()
-        assert share["share_url"].endswith(f"/open/e/{new_uid}"), share
+        # компактный QR: /open/e/{uid}, либо короткий алиас /o/{uid} если не влезает
+        assert (share["share_url"].endswith(f"/open/e/{new_uid}")
+                or share["share_url"].endswith(f"/o/{new_uid}")), share
+        assert len(share["qr_data"]) <= 52, ("QR-ссылка слишком длинная", share["qr_data"])
         assert share["qr_data"] == share["share_url"], share
         assert share["deep_link"] == f"zezar://entity/{new_uid}", share
-        print(f"OK  share-link -> {share['share_url']}")
+        # короткая форма должна работать как шлюз (тот же переключатель)
+        r = await c.get(f"/o/{new_uid}")
+        assert r.status_code == 200 and "zezar://entity/" in r.text, r.status_code
+        print(f"OK  share-link -> {share['share_url']} (len={len(share['qr_data'])}), /o/ gateway works")
 
         # 10. отзыв токена -> снова 401
         r = await c.post("/api/auth/token-revoke", headers=H)
