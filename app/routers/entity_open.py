@@ -227,13 +227,24 @@ _GATEWAY_HTML = """<!doctype html>
 """
 
 
-async def _render_gateway(uid: str, request: Request, user, session):
-    """Шлюз для QR/share-ссылок: deep link в приложение, иначе — карточка сайта."""
+async def _render_gateway(uid: str, request: Request, user, session, go: str = ""):
+    """Шлюз для QR/share-ссылок: deep link в приложение, иначе — карточка сайта.
+
+    go — необязательный «веб-адрес по умолчанию» из ссылки (например /okr/
+    для печатных карточек модулей): если задан и это внутренний путь,
+    браузер после скана попадёт туда вместо дефолтного фокуса на /tasks.
+    """
     if not UID_RE.match(uid or ""):
         return HTMLResponse("<h1>Некорректный адрес карточки</h1>", status_code=404)
 
     from app.routers.qr_codes import build_deep_link
     deep_link = build_deep_link(uid)
+
+    # Разрешаем только относительные пути нашего сайта (?entity=<uid> шлюз
+    # добавит сам); всё остальное (внешние URL, //host, схемы) игнорируем.
+    go_path = ""
+    if go and go.startswith("/") and not go.startswith("//"):
+        go_path = go.split("?")[0].split("#")[0]
 
     title = ""
     if user is None:
@@ -241,7 +252,7 @@ async def _render_gateway(uid: str, request: Request, user, session):
         # после которого попадёт прямо на карточку (?next — внутренний путь).
         # Ответ идентичен для любых uid, включая несуществующие: сканирование QR
         # не должно быть способом разведки «есть ли такая карточка».
-        web_path = f"/tasks?focus={quote(uid)}"
+        web_path = f"{go_path}?entity={quote(uid)}" if go_path else f"/tasks?focus={quote(uid)}"
         web = _web_url(request, f"/login?next={quote(web_path, safe='')}")
     else:
         ent = await session.scalar(select(Entity).where(Entity.uid == uid))
@@ -253,7 +264,12 @@ async def _render_gateway(uid: str, request: Request, user, session):
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
             return HTMLResponse("<h1>Карточка не найдена</h1>", status_code=404)
-        web_path = f"/{ent.module_key or 'tasks'}?focus={quote(uid)}"
+        if go_path:
+            web_path = f"{go_path}?entity={quote(uid)}"
+        elif ent.module_key == "tasks":
+            web_path = f"/tasks?focus={quote(uid)}"
+        else:
+            web_path = f"/{ent.module_key}/?entity={quote(uid)}"
         web = _web_url(request, web_path)
         title = (ent.title or "")[:80]
         # Авторизованный сканер: передаём в приложение одноразовый гостевой
@@ -274,10 +290,11 @@ async def _render_gateway(uid: str, request: Request, user, session):
 async def entity_open_gateway(
     uid: str,
     request: Request,
+    go: str = "",
     user: User | None = Depends(get_optional_user),
     session: AsyncSession = Depends(session_dep),
 ):
-    return await _render_gateway(uid, request, user, session)
+    return await _render_gateway(uid, request, user, session, go)
 
 
 # Короткий алиас для QR-кодов: /o/{uid} вместо /open/e/{uid}. Нужен, когда
@@ -287,10 +304,11 @@ async def entity_open_gateway(
 async def entity_open_gateway_short(
     uid: str,
     request: Request,
+    go: str = "",
     user: User | None = Depends(get_optional_user),
     session: AsyncSession = Depends(session_dep),
 ):
-    return await _render_gateway(uid, request, user, session)
+    return await _render_gateway(uid, request, user, session, go)
 
 
 # ---------------------------------------------------------------------------

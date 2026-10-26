@@ -289,9 +289,13 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             "updated_at": _iso(ent.updated_at),
             "printed_at": _iso(printed_map.get(ent.id)),
             "url_path": f"/{ent.module_key}/",
-            # QR ведёт на страницу модуля и открывает профиль сущности
-            # (общий механизм ?entity=<uid> из static/js/profile.js)
-            "profile_url": f"/{ent.module_key}/?entity={ent.uid}",
+            # v1.9: QR печатной карточки ведёт на шлюз app-or-web /o/{uid}
+            # (компактный код версии 2 — надёжно сканируется с бумаги):
+            # приложение открывает карточку, браузер — страницу модуля
+            # (?entity=<uid>, общий механизм из static/js/profile.js).
+            # Старые ссылки /{module}/?entity={uid} мобильный сканер не
+            # распознавал — выдавал «QR не распознан».
+            "profile_url": f"/o/{ent.uid}?go=/{ent.module_key}/",
         })
 
     if ctx.is_global:
