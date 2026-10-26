@@ -192,25 +192,34 @@ def _markup(keyboard: list | dict) -> dict:
     return {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": True}
 
 
+# message_id последнего сервисного сообщения с клавиатурой (чтобы удалить его
+# ПОСЛЕ отправки нового, а не до — иначе окно без кнопок видно пользователю)
+_kb_service_msg: dict[int, int] = {}
+
+
 async def set_chat_reply_keyboard(chat_id: int, keyboard: list | dict | None) -> None:
     """Обновить закреплённую reply-клавиатуру чата.
 
     Telegram хранит одну persistent-клавиатуру на чат; editMessageText её не
-    меняет (она относится к сообщениям), поэтому ставим «сервисное» сообщение
-    с клавиатурой и сразу удаляем его — у пользователя кнопки обновляются
-    без видимого шума.
+    меняет (она относится к сообщениям). Ставим «сервисное» сообщение с новой
+    клавиатурой и удаляем ПРЕДЫДУЩЕЕ сервисное сообщение только после этого —
+    так кнопки обновляются бесшовно: между операциями в чате всегда есть
+    актуальная persistent-клавиатура, и пользователь не видит мигания
+    «появились и пропали».
     """
     if keyboard is None:
         return
-    mid = await call_bot("sendMessage", chat_id=chat_id, text="…",
-                        reply_markup=_markup(keyboard))
-    if isinstance(mid, dict):
-        mid = mid.get("message_id")
-    if mid:
+    prev_mid = _kb_service_msg.pop(chat_id, None)
+    res = await call_bot("sendMessage", chat_id=chat_id, text="…",
+                         reply_markup=_markup(keyboard))
+    new_mid = res.get("message_id") if isinstance(res, dict) else None
+    if new_mid:
+        _kb_service_msg[chat_id] = new_mid
+    if prev_mid and prev_mid != new_mid:
         try:
-            await call_bot("deleteMessage", chat_id=chat_id, message_id=mid)
+            await call_bot("deleteMessage", chat_id=chat_id, message_id=prev_mid)
         except Exception as e:  # noqa: BLE001
-            log.debug("tg delete service kb msg: %s", e)
+            log.debug("tg delete old kb msg: %s", e)
 
 
 async def edit_message_text(chat_id: int, message_id: int, text: str,
