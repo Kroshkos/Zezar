@@ -234,6 +234,10 @@ async def admin_dept_page(request: Request, department_id: int | None = None,
         "global_role": m.user.role.value if m.user else "",
         "dept_role": m.role_in_dept.value,
         "tg_bound": bool(m.user and m.user.telegram_chat_id),
+        # Состояние Telegram-интеграции: none | active | muted (см. GET /admin/users)
+        "tg_state": ("none" if not (m.user and m.user.telegram_chat_id) else
+                     ("muted" if ((getattr(m.user, "telegram_optout", None) == "all")
+                                  or not m.user.telegram_notify) else "active")),
     } for m in members]
 
     # --- модули рабочего пространства ---------------------------------------

@@ -57,11 +57,11 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--muted);transition:.16s}
 .chip:hover{border-color:#c3cee0}
 .chip.on{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 6px 14px -7px rgba(79,70,229,.55)}
-table.tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:#94a3b8;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:800}
+table.tbl{width:max-content;min-width:100%;border-collapse:collapse;table-layout:auto}
+.tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:#94a3b8;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:800;white-space:nowrap}
 .tbl th.srt{cursor:pointer;user-select:none;white-space:nowrap}
 .tbl th.srt:hover{color:#4f46e5}
-.tbl td{padding:12px 14px;border-bottom:1px solid #eef2f8;vertical-align:middle}
+.tbl td{padding:12px 14px;border-bottom:1px solid #eef2f8;vertical-align:middle;white-space:nowrap}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tr:hover td{background:#f8faff}
 .tbl .nm{font-weight:700}
