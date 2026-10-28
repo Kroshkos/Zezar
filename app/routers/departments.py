@@ -4,6 +4,7 @@
   GET    /api/core/departments                 — список + мои пространства
   POST   /api/core/departments                 — создать подразделение (+workspace+базовые модули)
   PATCH  /api/core/departments/{id}            — имя/описание/активность
+  DELETE /api/core/departments/{id}            — удалить подразделение (только админ; только пустое)
   GET    /api/core/departments/{id}/members    — состав
   POST   /api/core/departments/{id}/members    — добавить пользователя с ролью в пространстве
   DELETE /api/core/departments/{id}/members/{user_id}
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import build_context, count_heads, set_department_role
@@ -23,7 +24,8 @@ from app.core.events import log_event
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, ModuleRegistry, Role, User, Workspace, WorkspaceModule,
+    Department, DepartmentMember, Entity, EntityResponsible, EntityShare,
+    ModuleRegistry, Role, User, Workspace, WorkspaceModule,
 )
 
 router = APIRouter()
@@ -113,6 +115,70 @@ async def patch_department(dept_id: int, body: dict, user: User = Depends(get_cu
         await log_event(session, "update_department", category="dept", user=user,
                         object=dept.name, level="warning",
                         message=f"Изменено подразделение '{dept.name}': {', '.join(changed)}")
+    await session.commit()
+    return {"ok": True}
+
+
+@router.delete("/departments/{dept_id}")
+async def delete_department(dept_id: int, user: User = Depends(get_current_user),
+                            session: AsyncSession = Depends(session_dep)):
+    """Удаление подразделения (только администратор/координатор).
+
+    Безопасность данных: удаление разрешено только для пустого пространства —
+    без бизнес-сущностей (Entity), шерингов на это подразделение и назначенных
+    ответственных. Состав участников и рабочие модули каскадно удаляются
+    (ondelete=CASCADE в схеме); сущности других подразделений не затрагиваются.
+    Для «архива» без удаления данных используйте PATCH {is_active:false}.
+    """
+    ctx = await build_context(session, user)
+    if not ctx.can_admin_system:
+        raise HTTPException(403, "Удаление доступно только администратору/координатору")
+    dept = await session.get(Department, dept_id)
+    if not dept:
+        raise HTTPException(404, "Подразделение не найдено")
+
+    # 1) Сущности, принадлежащие подразделению (owner)
+    owned = await session.scalar(
+        select(func.count(Entity.id)).where(Entity.owner_department_id == dept_id))
+    if owned:
+        raise HTTPException(409, f"В подразделении '{dept.name}' есть сущности ({owned}). "
+                                 "Сначала перенесите или удалите их — либо деактивируйте "
+                                 "подразделение (🚫) вместо удаления.")
+    # 2) Ответственные, закреплённые за этим подразделением по чужим сущностям
+    resp = await session.scalar(
+        select(func.count(EntityResponsible.id)).where(
+            EntityResponsible.department_id == dept_id))
+    if resp:
+        raise HTTPException(409, f"За подразделением '{dept.name}' закреплены роли "
+                                 "ответственного. Снимите их и повторите удаление.")
+    # 3) Шеринги сущностей НА это подразделение
+    shared = await session.scalar(
+        select(func.count(EntityShare.id)).where(
+            EntityShare.target_department_id == dept_id))
+    if shared:
+        raise HTTPException(409, f"Подразделение '{dept.name}' участвует в шерингах "
+                                 "(ему открыты сущности). Отзовите доступы и повторите.")
+
+    dept_name = dept.name          # читаем ДО delete — после lazy-load бросит MissingGreenlet
+    actor_user_id, actor_disp = user.id, user.display_name
+    # Каскад: department_members / workspaces -> workspace_modules / status_sets /
+    # priority_levels / ref_types / task_groups / wf_templates / notify_scenarios
+    # и т.п. — всё с ondelete=CASCADE по departments.id (см. app/models/core.py).
+    await session.execute(delete(DepartmentMember).where(
+        DepartmentMember.department_id == dept_id))
+    # Workspace связан relationship'ом one-to-one; при ORM-удалении Department
+    # SQLAlchemy попытался бы обнулить workspaces.department_id (NOT NULL) вместо
+    # каскада — удаляем строки таблиц напрямую (workspace_modules чистятся FK-каскадом).
+    await session.execute(delete(Workspace).where(Workspace.department_id == dept_id))
+    session.expunge(dept)         # дальше только raw-DML, autoflush не тронет dept
+                                  # (expunge — синхронный метод, не await!)
+    await session.execute(delete(Department).where(Department.id == dept_id))
+    await log_event(session, "delete_department", category="dept",
+                    user_id=actor_user_id, actor_name=actor_disp,
+                    object=dept_name, level="warning",
+                    message=f"Удалено подразделение '{dept_name}'")
+    from app.core.permcache import bump_epoch
+    await bump_epoch(session)      # инвалидация кэша прав: пространство исчезло
     await session.commit()
     return {"ok": True}
 

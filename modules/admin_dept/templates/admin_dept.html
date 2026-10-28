@@ -131,6 +131,8 @@
             {% else %}
             <button class="btn sm ghost" onclick="setDeptActive({{ d.id }}, true)" title="Активировать">✅</button>
             {% endif %}
+            <button class="btn sm ghost" data-name="{{ d.name }}" data-cnt="{{ d.member_count }}"
+                    onclick="deleteDept({{ d.id }}, this)" title="Удалить подразделение навсегда (только пустое)">🗑</button>
           </td>
         </tr>
       {% endfor %}
@@ -320,9 +322,9 @@
   <option value="admin">Администратор</option>
 </select>
     <table class="tbl">
-      <thead><tr><th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Подразделения</th>
+      <thead><tr><th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Telegram</th><th>Подразделения</th>
         <th style="text-align:right">Действия</th></tr></thead>
-      <tbody id="usersBody"><tr><td colspan="7" class="muted">Загрузка…</td></tr></tbody>
+      <tbody id="usersBody"><tr><td colspan="8" class="muted">Загрузка…</td></tr></tbody>
     </table>
   </div>
 </section>
@@ -682,6 +684,23 @@ async function setDeptActive(id,active){
   askConfirm('Деактивировать подразделение? Его участники потеряют вход в пространство.',async()=>{
     await api('/api/core/departments/'+id,'PATCH',{is_active:false});toast('Деактивировано');setTimeout(()=>location.reload(),400);});
 }
+async function deleteDept(id,btn){
+  const name=btn.dataset.name||'', cnt=parseInt(btn.dataset.cnt||'0',10);
+  const warn=cnt>0
+    ? 'Удалить подразделение «'+name+'»? В нём '+cnt+' участник(ов) — они будут исключены. '
+      +'Удаление недоступно, если в пространстве есть сущности или шеринги (сначала деактивируйте его).'
+    : 'Удалить подразделение «'+name+'» безвозвратно? Действие необратимо.';
+  askConfirm(warn,async()=>{
+    try{
+      await api('/api/core/departments/'+id,'DELETE');
+      toast('Подразделение удалено');
+      // Если открыто именно это пространство — выходим из него, иначе редирект на битый department_id
+      const url=new URL(location.href);
+      if(url.searchParams.get('department_id')==String(id)){url.searchParams.delete('department_id');location.href=url.toString();}
+      else setTimeout(()=>location.reload(),400);
+    }catch(e){/* текст ошибки (409/403) уже показал toast из api() */}
+  });
+}
 function openDept(id){ location.href='/admin_dept/?department_id='+id; }
 
 /* ---------------- участники ---------------- */
@@ -891,11 +910,16 @@ function openEdit(id){
   openModal('Изменить: '+esc(u.name),
     '<label>Фамилия Имя</label><input name="display_name" value="'+esc(u.name)+'" required>'+
     '<label>Email</label><input name="email" value="'+esc(u.email||'')+'">'+
-    '<label>Роль</label><select name="role">'+roleOptions(u.role)+'</select>'+
-    '<label>Статус</label><select name="is_active"><option value="1" '+(u.active?'selected':'')+'>Активен</option><option value="0" '+(!u.active?'selected':'')+'>Заблокирован</option></select>',
+    (u.env_admin?'<p class="sub">Роль и блокировка env-администратора управляются переменными окружения.</p>'
+      :'<label>Роль</label><select name="role">'+roleOptionsSafe(u.role)+'</select>'+
+       '<label>Статус</label><select name="is_active"><option value="1" '+(u.active?'selected':'')+'>Активен</option><option value="0" '+(!u.active?'selected':'')+'>Заблокирован</option></select>'),
     async(fd)=>{
-      await api('/api/core/admin/users/'+id,'PATCH',{display_name:fd.display_name.value.trim(),
-        email:fd.email.value.trim(),role:fd.role.value,is_active:fd.is_active.value==='1'});
+      // Отправляем только реально существующие поля формы: у env-администратора
+      // select'ов role/is_active нет — раньше это ломало кнопку «Сохранить».
+      const body={display_name:String(fd.display_name||'').trim(),email:String(fd.email||'').trim()};
+      if(fd.role)body.role=String(fd.role);
+      if(fd.is_active)body.is_active=String(fd.is_active)==='1';
+      await api('/api/core/admin/users/'+id,'PATCH',body);
       closeModal();toast('Сохранено');loadUsers(true);
     });
 }

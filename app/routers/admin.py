@@ -136,12 +136,23 @@ async def list_users(q: str | None = None, department_id: int | None = None,
         pairs = memberships.get(u.id, [])
         if scope_depts is not None and not pairs:
             continue                          # руководитель видит только своих
+        # Состояние интеграции с Telegram-ботом для таблицы учётных записей:
+        #   none      — не подключен (нет привязанного chat_id)
+        #   active    — подключен, уведомления активны
+        #   muted     — подключен, но пользователь отключил звук/уведомления (/mute)
+        if not u.telegram_chat_id:
+            tg_state = "none"
+        elif getattr(u, "telegram_optout", None) == "all" or not u.telegram_notify:
+            tg_state = "muted"
+        else:
+            tg_state = "active"
         out.append({"id": u.id, "name": u.display_name, "email": u.email,
                     "login": u.login, "role": u.role.value, "active": u.is_active,
                     "env_admin": bool(is_env_admin_login(u.login)),
                     "must_change_password": bool(u.must_change_password),
                     "no_password": not bool(u.password_hash),
                     "telegram": bool(u.telegram_chat_id),
+                    "telegram_state": tg_state,
                     "calendar": bool(u.yandex_cal_app_password_enc),
                     "departments": [{"id": d[0], "name": d[1]} for d in pairs]})
     if department_id:
@@ -244,9 +255,13 @@ async def patch_user(user_id: int, body: UserPatch, request: Request,
     # Защита контура админов: локальный аккаунт из ADMIN_USERNAME/ADMIN_PASSWORD
     # нельзя понизить или заблокировать через API — отзыв доступа = удаление
     # строки из env + рестарт (см. app/db/seed.sync_admin_logins).
-    # ВАЖНО: проверка идёт ДО записи в журнал — иначе rollback отменил бы и её,
-    # а повторный lazy-load detached-объекта вне сессии бросал MissingGreenlet.
-    if is_env_admin_login(u.login) and (u.role != Role.ADMIN or not u.is_active):
+    # ВАЖНО: блокируем только ПОПЫТКУ реально изменить роль/статус env-админа.
+    # Раньше условие смотрело на итоговое состояние (u.role != ADMIN or
+    # not u.is_active), из-за чего любое сохранение ФИО/email у env-админа
+    # возвращало 409 и кнопка «Сохранить» «не работала».
+    tried_role_downgrade = (body.role is not None and body.role != Role.ADMIN)
+    tried_deactivate = (body.is_active is not None and not body.is_active)
+    if is_env_admin_login(u.login) and (tried_role_downgrade or tried_deactivate):
         # Откатываем НЕ всю транзакцию (session.rollback отменил бы и refresh
         # detached-объекта при формировании 409 -> MissingGreenlet), а только
         # свои изменения: возвращаем роль/активность env-админа.
