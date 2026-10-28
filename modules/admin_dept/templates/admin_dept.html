@@ -267,7 +267,7 @@
               {{ 'Руководитель' if m.dept_role=='head' else 'Участник' }}</span>
             {% endif %}
           </td>
-          <td>{{ '✅' if m.tg_bound else '—' }}</td>
+          <td>{% if m.tg_state == 'active' %}<span class="badge b-green">Подключен (активен)</span>{% elif m.tg_state == 'muted' %}<span class="badge b-amber">Подключен (без звука)</span>{% else %}<span class="badge b-gray">Не подключен</span>{% endif %}</td>
           {% if can_manage %}
           <td style="text-align:right"><button class="btn sm danger" onclick="removeMember({{ m.user_id }}, this)">✕</button></td>
           {% endif %}
@@ -794,6 +794,11 @@ async function toggleModule(key,enable){
 
 /* ---------------- учётные записи ---------------- */
 const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
+// Состояние Telegram-интеграции (telegram_state: none|active|muted) — колонка «Telegram»
+const TG_BADGE={none:'<span class="badge b-gray">Не подключен</span>',
+                active:'<span class="badge b-green">Подключен (активен)</span>',
+                muted:'<span class="badge b-amber">Подключен (без звука)</span>'};
+function tgBadge(u){return TG_BADGE[u.telegram_state||(u.telegram?'active':'none')]||TG_BADGE.none;}
 // Полный набор ролей для формы создания (админ выбирает вплоть до администратора/координатора)
 const ALL_ROLES=['member','head','coordinator','admin'];
 function roleOptions(sel,allowed){
@@ -819,7 +824,7 @@ async function loadUsers(force){
     if(!IS_ADMIN&&DEPT) path+='?department_id='+DEPT;
     USERS_CACHE=await api(path);
     renderUsersFiltered();
-  }catch(e){ if(body) body.innerHTML='<tr><td colspan="7" class="muted">Нет доступа к списку пользователей.</td></tr>'; }
+  }catch(e){ if(body) body.innerHTML='<tr><td colspan="8" class="muted">Нет доступа к списку пользователей.</td></tr>'; }
 }
 function userInDept(u){ return DEPT && (u.departments||[]).some(d=>d.id===DEPT); }
 function renderUsersFiltered(){
@@ -827,7 +832,7 @@ function renderUsersFiltered(){
   const q=(document.getElementById('usersQ')?.value||'').trim().toLowerCase();
   let list=USERS_CACHE.filter(u=>IS_ADMIN||userInDept(u));
   if(q) list=list.filter(u=>[u.name,u.login,u.email].join(' ').toLowerCase().includes(q));
-  if(!list.length){ body.innerHTML='<tr><td colspan="7" class="muted">Никого не найдено.</td></tr>'; return; }
+  if(!list.length){ body.innerHTML='<tr><td colspan="8" class="muted">Никого не найдено.</td></tr>'; return; }
   body.innerHTML=list.map(u=>{
     const depts=(u.departments||[]).map(d=>`<span class="badge b-gray">${esc(d.name)}</span>`).join(' ')||'<span class="muted">—</span>';
     let actions='';
@@ -852,6 +857,7 @@ function renderUsersFiltered(){
       <td>${ROLE_LABEL[u.role]||u.role}</td>
       <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-gray">Заблокирован</span>'}</td>
       <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change_password?'<span class="badge b-orange">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+      <td>${tgBadge(u)}</td>
       <td>${depts}</td>
       <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
   }).join('');
