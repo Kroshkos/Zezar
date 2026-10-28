@@ -322,8 +322,8 @@
   <option value="admin">Администратор</option>
 </select>
     <table class="tbl">
-      <thead><tr><th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Telegram</th><th>Подразделения</th>
-        <th style="text-align:right">Действия</th></tr></thead>
+      <thead><tr><th style="white-space:nowrap">Пользователь</th><th style="white-space:nowrap">Логин</th><th style="white-space:nowrap">Роль</th><th style="white-space:nowrap">Статус</th><th style="white-space:nowrap">Пароль</th><th style="white-space:nowrap">Telegram <a href="https://t.me/sipm_liot_bot" target="_blank" rel="noopener" title="Открыть бота @sipm_liot_bot в Telegram" style="font-size:12px;text-decoration:none">🤖</a></th><th style="white-space:nowrap">Подразделения</th>
+        <th style="text-align:right;white-space:nowrap">Действия</th></tr></thead>
       <tbody id="usersBody"><tr><td colspan="8" class="muted">Загрузка…</td></tr></tbody>
     </table>
   </div>
@@ -816,6 +816,10 @@ function roleOptionsSafe(sel){
   return ['member','head','coordinator','admin']
     .map(v=>`<option value="${v}" ${v===sel?'selected':''}>${({admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'})[v]}</option>`).join('');
 }
+/* Резервный esc: если core.js не загрузился (жёсткий кэш), esc определён здесь —
+   иначе renderUsersFiltered() бросает ReferenceError и таблица остаётся пустой,
+   в т.ч. без колонки «Telegram». */
+if(typeof esc==='undefined'){var esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function loadUsers(force){
   if(USERS_CACHE&&!force) return renderUsersFiltered();
   const body=document.getElementById('usersBody');
@@ -824,7 +828,7 @@ async function loadUsers(force){
     if(!IS_ADMIN&&DEPT) path+='?department_id='+DEPT;
     USERS_CACHE=await api(path);
     renderUsersFiltered();
-  }catch(e){ if(body) body.innerHTML='<tr><td colspan="8" class="muted">Нет доступа к списку пользователей.</td></tr>'; }
+  }catch(e){ if(body) body.innerHTML='<tr><td colspan="8" class="muted">Ошибка загрузки: '+(typeof esc==='function'?esc(String(e&&e.message||e)):'')+'<\/td></tr>'; }
 }
 function userInDept(u){ return DEPT && (u.departments||[]).some(d=>d.id===DEPT); }
 function renderUsersFiltered(){
@@ -856,7 +860,7 @@ function renderUsersFiltered(){
       <td><code>${esc(u.login||'—')}</code>${u.env_admin?' ⚙️':''}</td>
       <td>${ROLE_LABEL[u.role]||u.role}</td>
       <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-gray">Заблокирован</span>'}</td>
-      <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change_password?'<span class="badge b-amber">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+      <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':((u.must_change||u.must_change_password)?'<span class="badge b-amber">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
       <td>${tgBadge(u)}</td>
       <td>${depts}</td>
       <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
