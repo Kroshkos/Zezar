@@ -15,7 +15,8 @@ async function tgShowSteps(){
       '<ol style="font-size:13px;line-height:1.7;margin:8px 0 6px 18px;padding:0">'
       + r.steps.map(s=>'<li>'+esc(s)+'</li>').join('') + '</ol>'
       + '<code style="display:block;background:#0f172a;color:#fff;padding:10px;border-radius:10px;margin:8px 0;font-size:15px">'+esc(r.login)+'</code>'
-      + '<button class="btn sm" type="button" onclick="tgCopy(this)" data-login="'+esc(r.login)+'">📋 Скопировать логин</button>'
+      + '<button class="btn sm" type="button" onclick="tgCopy(this)" data-login="'+esc(r.login)+'">📋 Скопировать логин</button> '
+      + '<a class="btn sm primary" style="text-decoration:none" href="https://t.me/'+esc(D.telegram_bot_username||"sipm_liot_bot")+'?start" target="_blank" rel="noopener">💬 Открыть бота '+esc((r.bot||"@sipm_liot_bot"))+'</a>'
       + (r.bot_configured?'':'<p class="sub" style="color:#b91c1c">Бот не настроен на сервере (TELEGRAM_BOT_TOKEN пуст) — уведомления доставляться не будут.</p>')
       + '<p class="sub" style="margin-top:8px">'+esc(r.note)+'</p>';
   }catch(e){}

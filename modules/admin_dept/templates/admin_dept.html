@@ -131,6 +131,8 @@
             {% else %}
             <button class="btn sm ghost" onclick="setDeptActive({{ d.id }}, true)" title="Активировать">✅</button>
             {% endif %}
+            <button class="btn sm ghost" data-name="{{ d.name }}" data-cnt="{{ d.member_count }}"
+                    onclick="deleteDept({{ d.id }}, this)" title="Удалить подразделение навсегда (только пустое)">🗑</button>
           </td>
         </tr>
       {% endfor %}
@@ -681,6 +683,23 @@ async function setDeptActive(id,active){
   if(active){ await api('/api/core/departments/'+id,'PATCH',{is_active:true}); toast('Подразделение активировано'); setTimeout(()=>location.reload(),400); return; }
   askConfirm('Деактивировать подразделение? Его участники потеряют вход в пространство.',async()=>{
     await api('/api/core/departments/'+id,'PATCH',{is_active:false});toast('Деактивировано');setTimeout(()=>location.reload(),400);});
+}
+async function deleteDept(id,btn){
+  const name=btn.dataset.name||'', cnt=parseInt(btn.dataset.cnt||'0',10);
+  const warn=cnt>0
+    ? 'Удалить подразделение «'+name+'»? В нём '+cnt+' участник(ов) — они будут исключены. '
+      +'Удаление недоступно, если в пространстве есть сущности или шеринги (сначала деактивируйте его).'
+    : 'Удалить подразделение «'+name+'» безвозвратно? Действие необратимо.';
+  askConfirm(warn,async()=>{
+    try{
+      await api('/api/core/departments/'+id,'DELETE');
+      toast('Подразделение удалено');
+      // Если открыто именно это пространство — выходим из него, иначе редирект на битый department_id
+      const url=new URL(location.href);
+      if(url.searchParams.get('department_id')==String(id)){url.searchParams.delete('department_id');location.href=url.toString();}
+      else setTimeout(()=>location.reload(),400);
+    }catch(e){/* текст ошибки (409/403) уже показал toast из api() */}
+  });
 }
 function openDept(id){ location.href='/admin_dept/?department_id='+id; }
 
