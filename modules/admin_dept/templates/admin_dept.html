@@ -787,10 +787,7 @@ async function shareReject(uid,btn){
 }
 
 /* ---------------- модули ---------------- */
-async function toggleModule(key,enable){
-  try{ await api(`/api/core/departments/${DEPT}/modules/${key}`,'PUT',{is_enabled:enable});
-    toast('Модуль обновлён'); setTimeout(()=>location.reload(),400);}catch(e){}
-}
+// (реализация toggleModule — ниже, рядом с резервными esc/api/toast)
 
 /* ---------------- учётные записи ---------------- */
 const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
@@ -816,10 +813,21 @@ function roleOptionsSafe(sel){
   return ['member','head','coordinator','admin']
     .map(v=>`<option value="${v}" ${v===sel?'selected':''}>${({admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'})[v]}</option>`).join('');
 }
-/* Резервный esc: если core.js не загрузился (жёсткий кэш), esc определён здесь —
-   иначе renderUsersFiltered() бросает ReferenceError и таблица остаётся пустой,
-   в т.ч. без колонки «Telegram». */
-if(typeof esc==='undefined'){var esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+/* Резервный api/esc/toggleModule: если core.js не загрузился (жёсткий кэш после
+   правок) или загрузился старым — определяем недостающие функции здесь, иначе
+   renderUsersFiltered()/showTab() бросают ReferenceError, страница становится
+   нерабочей, а таблица остаётся пустой, в т.ч. без колонки «Telegram».
+   typeof-проверки гарантируют: если core.js уже объявил эти имена — ничего не
+   переопределяем и коллизий («Identifier 'esc' has already been declared») нет. */
+if(typeof esc!=='function'){ window.esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+if(typeof toast!=='function'){ window.toast=(msg,err)=>{const t=document.createElement('div');t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:99;background:'+(err?'#dc2626':'#0f172a')+';color:#fff;padding:10px 18px;border-radius:12px;font-size:13px';t.textContent=String(msg||'');document.body.appendChild(t);setTimeout(()=>t.remove(),3200);}; }
+if(typeof api!=='function'){ window.api=async(path,opts={},body)=>{ if(typeof opts==='string')opts={method:opts,body:body}; if(opts&&typeof opts.body==='object'&&opts.body!==null){opts={...opts,body:JSON.stringify(opts.body)};} const r=await fetch(path,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts}); if(r.status===401){location.href='/login';throw new Error('auth');} if(!r.ok){let d;try{const j=await r.json();d=j.detail;if(Array.isArray(d))d=d.map(e=>(e.loc||[]).slice(1).join('.')+': '+(e.msg||'')).join('; ');}catch(e){d=r.statusText} toast('⚠ '+d,true);throw new Error(typeof d==='string'?d:JSON.stringify(d));} return r.status===204?null:r.json(); }; }
+// Локальный toggleModule всегда объявляем (затеняет core.js/window): в старом
+// закэшированном core.js он мог обращаться к несуществующему /modules/ без DEPT.
+window.toggleModule=async function(key,enable){
+  try{ await api(`/api/core/departments/${DEPT}/modules/${key}`,'PUT',{is_enabled:enable});
+    toast('Модуль обновлён'); setTimeout(()=>location.reload(),400);}catch(e){/* текст ошибки показал toast из api() */}
+};
 async function loadUsers(force){
   if(USERS_CACHE&&!force) return renderUsersFiltered();
   const body=document.getElementById('usersBody');
