@@ -104,6 +104,10 @@ async def admin_users_page(request: Request, user: User = Depends(get_current_us
         "env_admin": bool(is_env_admin_login(u.login)),
         "must_change": bool(u.must_change_password),
         "no_password": not bool(u.password_hash),
+        # Состояние Telegram-интеграции: none | active | muted (см. GET /admin/users)
+        "telegram_state": ("none" if not u.telegram_chat_id else
+                           ("muted" if (getattr(u, "telegram_optout", None) == "all"
+                                        or not u.telegram_notify) else "active")),
     } for u in rows]
     depts = (await session.execute(
         select(Department.id, Department.name)
