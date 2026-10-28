@@ -856,7 +856,7 @@ function renderUsersFiltered(){
       <td><code>${esc(u.login||'—')}</code>${u.env_admin?' ⚙️':''}</td>
       <td>${ROLE_LABEL[u.role]||u.role}</td>
       <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-gray">Заблокирован</span>'}</td>
-      <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change_password?'<span class="badge b-orange">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+      <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change_password?'<span class="badge b-amber">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
       <td>${tgBadge(u)}</td>
       <td>${depts}</td>
       <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
