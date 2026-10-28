@@ -1,6 +1,11 @@
 /* Ядро фронтенда: toast/модалка/fetch — поведение как openModal/toast в прототипе */
 "use strict";
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// esc/api/toast объявляются через window.* (и как function-декларации для api/toast),
+// а НЕ через const/let на верхнем уровне: top-level let/const попадают в script's
+// lexical environment и недоступны из inline-скриптов других файлов (ReferenceError
+// «esc is not defined» / «api is not defined»), а дублирующее объявление var/функцией
+// в другом <script> вызывало SyntaxError «Identifier 'esc' has already been declared».
+window.esc = s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Универсальный вызов API. Тело можно передать строкой (JSON) или объектом — как в core.js, так и в admin_dept.
 async function api(path,opts={},body){
   // Поддержка двух стилей вызова: api(path,{method,body}) и api(path,'POST',{..}).
