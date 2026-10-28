@@ -8,7 +8,7 @@
 <div class="card pad" style="overflow:auto">
   <table class="tbl">
     <thead><tr>
-      <th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th style="text-align:right">Действия</th>
+      <th>Пользователь</th><th>Логин</th><th>Роль</th><th>Статус</th><th>Пароль</th><th>Telegram</th><th style="text-align:right">Действия</th>
     </tr></thead>
     <tbody id="usersBody"></tbody>
   </table>
@@ -22,6 +22,11 @@
 const USERS=JSON.parse(document.getElementById('usersData').textContent);
 const DEPTS=JSON.parse(document.getElementById('deptsData').textContent);
 const ROLE_LABEL={admin:'Администратор',coordinator:'Координатор',head:'Руководитель',member:'Участник'};
+// Состояние Telegram-интеграции (telegram_state: none|active|muted)
+const TG_BADGE={none:'<span class="badge b-gray">Не подключен</span>',
+                active:'<span class="badge b-green">Подключен (активен)</span>',
+                muted:'<span class="badge b-amber">Подключен (без звука)</span>'};
+function tgBadge(u){return TG_BADGE[u.telegram_state||(u.telegram?'active':'none')]||TG_BADGE.none;}
 function roleOptions(sel){return Object.entries(ROLE_LABEL).map(([v,l])=>`<option value="${v}" ${v===sel?'selected':''}>${l}</option>`).join('');}
 function deptOptions(){return '<option value="">— без подразделения —</option>'+DEPTS.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');}
 function renderUsers(){
@@ -31,6 +36,7 @@ function renderUsers(){
     <td>${ROLE_LABEL[u.role]||u.role}</td>
     <td>${u.active?'<span class="badge b-green">Активен</span>':'<span class="badge b-red">Заблокирован</span>'}</td>
     <td>${u.no_password?'<span class="badge b-gray">Нет пароля</span>':(u.must_change?'<span class="badge b-amber">Требуется смена</span>':'<span class="badge b-blue">Установлен</span>')}</td>
+    <td>${tgBadge(u)}</td>
     <td style="text-align:right;white-space:nowrap">
       <button class="btn sm ghost" onclick="openEdit(${u.id})">✏️ Изменить</button>
       ${u.env_admin?'':`<button class="btn sm ghost" onclick="openReset(${u.id})">🔑 Сброс пароля</button>
@@ -68,8 +74,12 @@ function openEdit(id){
       :'<label>Роль</label><select name="role">'+roleOptions(u.role)+'</select>'+
        '<label>Статус</label><select name="is_active"><option value="1" '+(u.active?'selected':'')+'>Активен</option><option value="0" '+(!u.active?'selected':'')+'>Заблокирован</option></select>'),
     async(fd)=>{
+      // Отправляем только реально существующие поля формы: у env-администратора
+      // select'ов role/is_active нет, и обращение к fd.role.value бросало TypeError —
+      // из-за этого кнопка «Сохранить» не работала.
       const body={display_name:fd.display_name.value.trim(),email:fd.email.value.trim()};
-      if(!u.env_admin){body.role=fd.role.value;body.is_active=fd.is_active.value==='1';}
+      if(fd.role)body.role=fd.role.value;
+      if(fd.is_active)body.is_active=fd.is_active.value==='1';
       await api('/api/core/admin/users/'+id,'PATCH',body);
       closeModal();toast('Сохранено');location.reload();
     });

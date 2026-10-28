@@ -104,6 +104,10 @@ async def admin_users_page(request: Request, user: User = Depends(get_current_us
         "env_admin": bool(is_env_admin_login(u.login)),
         "must_change": bool(u.must_change_password),
         "no_password": not bool(u.password_hash),
+        # Состояние Telegram-интеграции: none | active | muted (см. GET /admin/users)
+        "telegram_state": ("none" if not u.telegram_chat_id else
+                           ("muted" if (getattr(u, "telegram_optout", None) == "all"
+                                        or not u.telegram_notify) else "active")),
     } for u in rows]
     depts = (await session.execute(
         select(Department.id, Department.name)
@@ -240,6 +244,7 @@ async def integrations_page(request: Request,
     уведомлений (базовые неотключаемые + пользовательские), тест доставки."""
     from app.core import notify as notify_core
     scenarios = await notify_core.scenarios_for_user(session, user)
+    s = get_settings()
     return templates.TemplateResponse(request, "integrations.html", {
         "user": user,
         "page_title": "Интеграции",
@@ -250,7 +255,8 @@ async def integrations_page(request: Request,
         "entity_kind_labels": notify_core.ENTITY_KIND_LABELS,
         "telegram_linked": bool(user.telegram_chat_id),
         "telegram_muted": user.telegram_optout == "all",
+        "telegram_bot_username": s.telegram_bot_username or "sipm_liot_bot",
         "calendar_linked": bool(decrypt_secret(user.yandex_cal_app_password_enc)),
         "calendar_name": user.yandex_cal_name or "Цезарь",
-        "public_base_url": get_settings().public_base_url,
+        "public_base_url": s.public_base_url,
     })

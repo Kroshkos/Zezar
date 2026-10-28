@@ -71,7 +71,8 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = ""
-    telegram_bot_username: str = ""   # например CaesarNotifyBot — для инструкции в UI
+    # например CaesarNotifyBot — для инструкции в UI; по умолчанию — рабочий бот системы
+    telegram_bot_username: str = "sipm_liot_bot"
     telegram_notify_enabled: bool = True
     # Публичный адрес системы для ссылок в уведомлениях (кнопка «Открыть» в Telegram)
     public_base_url: str = "https://zezar-patfiz.waw0.amvera.tech"
