@@ -160,11 +160,13 @@ function cardHTML(c) {
   }
 
   const dname = cdeptName(c.department_id);
-  // Обёртка-ячейка сетки: position:relative для чекбокса выбора. Все карточки
-  // теперь стандартного размера (чек-лист этапов из содержания убран), поэтому
-  // ряды на экране и на бумаге — фиксированной высоты; удлинённые карточки
-  // (если появятся) выносятся на отдельный лист (.tall-sheet).
-  return `<div class="pcardwrap" data-uid="${esc(c.uid)}">
+  // Обёртка-ячейка сетки: position:relative для чекбокса выбора. Карточки,
+  // содержимое которых не влезает в стандартную ячейку (длинные названия задач,
+  // много чипов «Документы и ПО» у проектов), помечаются классом .tall — такие
+  // выносятся на отдельный лист с адаптивной высотой ячеек (.tall-sheet),
+  // где контенту разрешено растягивать карточку (см. CSS-правила app.css).
+  const tallCls = c._tall ? ' tall' : '';
+  return `<div class="pcardwrap${tallCls}" data-uid="${esc(c.uid)}">
     <input type="checkbox" class="csel no-print" style="position:absolute;top:6px;left:6px;z-index:2;margin:0"
            ${CSEL.has(c.uid) ? 'checked' : ''} onchange="tglCardSel('${esc(c.uid)}',this.checked)"
            title="Отметить для печати">
@@ -239,6 +241,46 @@ function updatePrintSrcInfo(data) {
     : `Печатаются по фильтру (ничего не отмечено): ${data.length} шт.`;
 }
 
+/* ---------- измерение содержимого и удлинённые карточки ---------- */
+// Скрытый «измерительный» стенд: рендерит карточку в ячейку стандартного
+// размера (как .fmt-a4 на экране) и сравнивает реальную высоту содержимого
+// с высотой ячейки. Если контент не влезает — карточка признаётся
+// «удлинённой»: ей разрешается растянуться, и она выносится на отдельный
+// лист (.tall-sheet). Так длинный текст перестает наслаиваться на соседние
+// карточки при печати.
+function measureTall(cards, fmt) {
+  cards.forEach(c => { c._tall = false; });
+  if (!cards.length) return cards;
+  let stand = document.getElementById('cardMeasureStand');
+  if (!stand) {
+    stand = document.createElement('div');
+    stand.id = 'cardMeasureStand';
+    stand.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;'
+      + 'display:grid;visibility:hidden;pointer-events:none';
+    document.body.appendChild(stand);
+  }
+  const perRow = fmt === 'a3' ? 4 : 3;
+  // Внутренний размер ячейки стандартного листа А4 (287×200mm, padding 6mm,
+  // gap 4mm): ~89.7×94 mm -> в CSS-пикселях (1mm ≈ 3.7795px).
+  const cellW = Math.round((fmt === 'a3' ? (410 - 12 - 4 * 3) / 4 : (287 - 12 - 4 * 2) / 3) * 3.7795);
+  const cellH = Math.round((200 - 12 - 4) / 2 * 3.7795);
+  stand.style.width = (cellW * perRow + 40) + 'px';
+  stand.style.gridTemplateColumns = `repeat(${perRow}, ${cellW}px)`;
+  stand.style.gridAutoRows = `${cellH}px`;
+  stand.innerHTML = cards.map(cardHTML).join('');
+  Array.from(stand.children).forEach((w, i) => {
+    const inner = w.querySelector('.pcard');
+    if (!inner) return;
+    inner.style.transform = '';
+    inner.style.height = 'auto';       // даём контенту занять нужную высоту
+    const h = inner.scrollHeight;
+    cards[i]._tallPx = h;
+    if (h > cellH + 2) cards[i]._tall = true;
+  });
+  stand.innerHTML = '';
+  return cards;
+}
+
 /* ---------- разбивка на печатные листы ---------- */
 // Динамический @page: размер листа должен соответствовать выбранному формату.
 // Если @page захардкодить (например, A4), браузер масштабирует листы А3 до A4
@@ -254,16 +296,18 @@ function setCardPageSize(fmt) {
   el.textContent = '@media print{@page{size:' + size + ';margin:5mm}}';
 }
 
-// Разделение карточек на «стандартные» и «удлинённые»: чек-листы из содержания
-// убраны, поэтому все карточки теперь одного размера (одна плашка этапа вместо
-// списка этапов). Функция оставлена как точка расширения — всегда относит все
-// карточки к стандартным.
+// Разделение карточек на «стандартные» и «удлинённые»: удлинёнными считаются
+// карточки, помеченные measureTall() (их содержимое не влезает в стандартную
+// ячейку). Такие выносятся на отдельные листы .tall-sheet.
 function splitTallCards(data) {
-  return { standard: data, tall: [] };
+  const standard = [], tall = [];
+  data.forEach(c => (c._tall ? tall : standard).push(c));
+  return { standard, tall };
 }
 
 function buildSheetsHtml(data, fmt) {
   const perPage = PRINT_PER_PAGE[fmt] || 6;
+  measureTall(data, fmt);                   // расставляем флаг ._tall по высоте контента
   const { standard, tall } = splitTallCards(data);
   let html = '';
   // Общие листы: строго фиксированная сетка (3×2 / 4×2) — одинаковые ячейки.
@@ -273,9 +317,18 @@ function buildSheetsHtml(data, fmt) {
     + Array(perPage - page.length).fill('<div></div>').join('')
     + `</div>`).join('');
   // Отдельный лист для нестандартных (удлинённых) карточек: адаптивная высота
-  // ячеек, чтобы длинный контент не тянул за собой весь ряд и не обрезался.
+  // ячеек, чтобы длинный контент не тянул за собой весь ряд и не наслаивался
+  // на соседние карточки. На таких листах печатается меньше карточек, чем на
+  // стандартном — сколько реально помещается по высоте листа с учётом
+  // измеренной высоты самой длинной удлинённой карточки (см. measureTall).
   if (tall.length) {
-    html += chunk(tall, perPage).map((page, i) =>
+    const perRow = fmt === 'a3' ? 4 : 3;
+    // Запас в mm: минимум стандартной ячейке (94mm) и измеренной высоте контента.
+    const rowMm = Math.max(94, ...tall.map(c => c._tallPx || 0)
+      .map(px => px / 3.7795));
+    const rowsFit = Math.max(1, Math.floor((200 - 12 + 4) / (rowMm + 4)));
+    const perTall = perRow * rowsFit;
+    html += chunk(tall, perTall).map((page, i) =>
       `<div class="printpage tall-sheet fmt-${fmt}">`
       + `<div class="tall-sheet-title">Удлинённые карточки — лист ${i + 1}</div>`
       + page.map(cardHTML).join('')
@@ -286,10 +339,11 @@ function buildSheetsHtml(data, fmt) {
 
 /* Подгонка карточек под лист при печати: если содержимое какой-либо карточки
    не влезает в ячейку фиксированной высоты — уменьшаем масштаб её содержимого
-   (transform не ломает сетку). Чек-листы из содержания убраны, поэтому обычно
-   подгонка не требуется; код оставлен как страховка для длинных заголовков. */
+   (transform не ломает сетку). Удлинённые карточки (.tall) пропускаем: они
+   вынесены на отдельный лист с адаптивной высотой и растягивают ячейку сами. */
 function fitSheets(root) {
   root.querySelectorAll('.pcardwrap').forEach(w => {
+    if (w.classList.contains('tall')) return;   // удлинённая — растягивает ячейку своего листа
     const inner = w.querySelector('.pcard');
     if (!inner) return;
     inner.style.transform = '';

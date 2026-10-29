@@ -280,10 +280,15 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 .printpage.fmt-a3{width:420mm;height:200mm;padding:10mm;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,87mm)}
 /* Отдельный лист для нестандартных (удлинённых) карточек: адаптивная высота
    ячеек (auto), чтобы длинная карточка не растягивала весь ряд стандартных.
-   Сейчас чек-листы из содержания убраны и таких карточек не возникает —
-   правило оставлено под будущие расширения (см. splitTallCards в JS). */
+   Удлинённые карточки определяет measureTall() в static/js/meetings_cards.js —
+   правило обеспечивает адаптивную высоту ячеек на отдельном листе. */
 .printpage.tall-sheet{height:auto !important;min-height:210mm;grid-template-rows:repeat(auto-fill,minmax(94mm,auto))}
 .printpage.tall-sheet .tall-sheet-title{grid-column:1/-1;font-size:12px;font-weight:800;color:#333;text-transform:uppercase;letter-spacing:.03em}
+/* удлинённая карточка на отдельном листе: контент целиком виден, ячейка
+   растягивается по высоте — ничего не режется и не наслаивается на соседей */
+.pcardwrap.tall{overflow:visible}
+.pcardwrap.tall .pcard{height:auto !important;overflow:visible}
+.pcardwrap.tall .pinfo{flex:none;overflow:visible}
 .pcardwrap{position:relative;min-height:0;overflow:hidden}
 .pcardwrap .pcard{width:100%}
 .pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
@@ -364,4 +369,12 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
      а не наслаивается на соседнюю карточку */
   body.printing-cards #printCardsOverlay .pcardwrap{overflow:hidden;min-height:0}
   body.printing-cards #printCardsOverlay .pcard{height:100%;max-height:100%;min-height:0}
+  /* удлинённые карточки: печатаются только на отдельном листе (.tall-sheet) —
+     там высота ячеек адаптивная, контент растягивает карточку и ничего не
+     наслаивается друг на друга */
+  body.printing-cards #printCardsOverlay .printpage.tall-sheet.fmt-a4{width:287mm;height:auto !important;min-height:200mm;padding:6mm;gap:4mm;grid-template-rows:repeat(auto-fill,minmax(94mm,auto))}
+  body.printing-cards #printCardsOverlay .printpage.tall-sheet.fmt-a3{width:410mm;height:auto !important;min-height:200mm;padding:6mm;gap:4mm;grid-template-rows:repeat(auto-fill,minmax(94mm,auto))}
+  body.printing-cards #printCardsOverlay .pcardwrap.tall{overflow:visible}
+  body.printing-cards #printCardsOverlay .pcardwrap.tall .pcard{height:auto !important;max-height:none;overflow:visible}
+  body.printing-cards #printCardsOverlay .pcardwrap.tall .pinfo{flex:none;overflow:visible}
 }
