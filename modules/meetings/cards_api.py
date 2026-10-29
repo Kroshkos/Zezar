@@ -151,26 +151,34 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
     task_ids = {e.id: e for e in ents if e.kind == EntityKind.TASK}
 
     # Подчинённые сущности проектов (Документы и ПО), привязанные через
-    # payload.project_entity_uid: uid проекта -> [(kind, title, status_key, stages)].
-    # Нужны для содержания печатной карточки проекта: статусы подчиненных
-    # сущностей выводятся чипами (см. static/js/meetings_cards.js).
+    # payload.project_entity_uid: uid проекта -> [(kind, uid, title, status_key,
+    # stages)]. Нужны для содержания печатной карточки проекта: статусы
+    # подчиненных сущностей выводятся чипами (см. static/js/meetings_cards.js).
+    # LEFT JOIN payload'ов: документ/ПО без строки payload тоже должен попасть
+    # в содержание карточки проекта (без них карточка выглядела «пустой»).
     project_uids = [e.uid for e in ents if e.kind == EntityKind.PROJECT]
     subs_by_project: dict[str, list[tuple]] = {}
     if project_uids:
         rows = (await session.execute(
-            select(Entity.title, Entity.status_key, Entity.uid, DocPayload.stages)
-            .join(DocPayload, DocPayload.entity_id == Entity.id)
+            select(Entity.title, Entity.status_key, Entity.uid,
+                   DocPayload.project_entity_uid, DocPayload.stages)
+            .outerjoin(DocPayload, DocPayload.entity_id == Entity.id)
             .where(Entity.kind == EntityKind.DOC,
                    DocPayload.project_entity_uid.in_(project_uids)))).all()
-        for title, skey, puid, stgs in rows:
-            subs_by_project.setdefault(puid, []).append(("doc", title, skey, stgs or []))
+        for title, skey, euid, puid, stgs in rows:
+            if puid:
+                subs_by_project.setdefault(puid, []).append(
+                    ("doc", euid, title, skey, stgs or []))
         rows = (await session.execute(
-            select(Entity.title, Entity.status_key, Entity.uid, SoftPayload.stages)
-            .join(SoftPayload, SoftPayload.entity_id == Entity.id)
+            select(Entity.title, Entity.status_key, Entity.uid,
+                   SoftPayload.project_entity_uid, SoftPayload.stages)
+            .outerjoin(SoftPayload, SoftPayload.entity_id == Entity.id)
             .where(Entity.kind == EntityKind.SOFT,
                    SoftPayload.project_entity_uid.in_(project_uids)))).all()
-        for title, skey, puid, stgs in rows:
-            subs_by_project.setdefault(puid, []).append(("soft", title, skey, stgs or []))
+        for title, skey, euid, puid, stgs in rows:
+            if puid:
+                subs_by_project.setdefault(puid, []).append(
+                    ("soft", euid, title, skey, stgs or []))
 
     def _sub_mini(kind: str, skey: str, stgs: list) -> tuple[str, str]:
         """Мини-статус подчинённой сущности для чипа: активный этап маршрута
@@ -313,13 +321,14 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             # Подчинённые сущности проекта (Документы и ПО) со статусами —
             # выводятся чипами в содержании печатной карточки проекта.
             "sub_entities": [
-                {"kind": k, "title": t,
+                {"kind": k, "uid": su, "title": t,
+                 "status_label": labels.get((k, sk)) or sk or "",
                  "mini": _sub_mini(k, sk, st)[0],
                  "color": _sub_mini(k, sk, st)[1],
                  "stage_done": sum(1 for s in (st or [])
                                    if isinstance(s, dict) and (s.get("done") or s.get("state") == "done")),
                  "stage_total": len([s for s in (st or []) if isinstance(s, dict)])}
-                for k, t, sk, st in subs_by_project.get(ent.uid, [])
+                for k, su, t, sk, st in subs_by_project.get(ent.uid, [])
             ] if ent.kind == EntityKind.PROJECT else [],
             # текущий этап маршрута — плашка в карточке (как приоритет); None у
             # карточек-задач и сущностей без этапов

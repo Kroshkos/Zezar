@@ -289,8 +289,10 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
 .pcardwrap:has(.csel:checked){outline:2.5px solid var(--acc);outline-offset:-2.5px;border-radius:4px}
 .pcard{border:1.8px solid #ccc;padding:8px 10px 8px 24px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;border-radius:3px;color:#000;min-height:0}
 .pcard>*{min-height:0}
-.pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.pcard .ptop{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .pcard .ptag{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:4px;color:#fff}
+/* бейдж статуса сущности/проекта — в верхней части карточки (рядом с приоритетом) */
+.pcard .ptag.pstatus{max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pcard .ptitle{font-size:15.5px;font-weight:800;line-height:1.22;margin-bottom:7px}
 .pcard .pmeta{font-size:12px;color:#333;margin-bottom:3px;line-height:1.35}
 .pcard .pbottom{display:flex;justify-content:space-between;align-items:flex-end;gap:8px}
