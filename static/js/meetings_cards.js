@@ -122,7 +122,8 @@ function cardHTML(c) {
   let body;
   if (c.type === 'entity') {
     const info = [];
-    if (c.status_label) info.push(`<b>Статус:</b> ${esc(c.status_label)}`);
+    // Статус проекта/сущности больше НЕ дублируется в содержании: он
+    // показывается цветным бейджем в верхней части карточки (см. ниже).
     const ct = c.current_task;
     if (ct && ct.name) {
       const meta = [];
@@ -140,13 +141,18 @@ function cardHTML(c) {
     const subs = c.sub_entities || [];
     if (subs.length) {
       info.push(`<div class="psubs"><span class="psubs-h">📋 Документы и ПО:</span>`
-        + subs.map(s => `<span class="psub-chip" title="${esc(s.title)}">`
+        + subs.map(s => `<span class="psub-chip" title="${esc(s.title)}${s.status_label ? ' · ' + esc(s.status_label) : ''}">`
           + (s.kind === 'doc' ? '📄' : '💿') + ' ' + esc((s.title || '').slice(0, 28))
           + ((s.title || '').length > 28 ? '…' : '')
           + ` <span class="ptag" style="background:${ccolor(s.color)}">${esc(s.mini || '—')}</span>`
           + (s.stage_total ? `<span class="psub-prog">${s.stage_done}/${s.stage_total}</span>` : '')
           + '</span>').join('')
         + '</div>');
+    } else if (c.kind === 'project') {
+      // Пустое состояние: к проекту не привязано ни одного документа/ПО —
+      // в содержании явно показываем это вместо молчаливой пустоты.
+      info.push('<div class="psubs"><span class="psubs-h">📋 Документы и ПО:</span>'
+        + '<div class="pmeta psub-empty">нет привязанных документов и ПО</div></div>');
     }
     body = `<div class="pinfo">${info.map(i => `<div class="${i.startsWith('<div') ? '' : 'pmeta'}">${i}</div>`).join('')}</div>`;
   } else {
@@ -167,6 +173,7 @@ function cardHTML(c) {
       <div style="min-height:0">
         <div class="ptop">
           <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
+          ${c.status_label ? `<span class="ptag pstatus" style="background:${ccolor(c.status_color)}">${esc(c.status_label)}</span>` : ''}
           <span class="pid pdate">${PRINT_DATE}</span>
         </div>
         ${cs ? `<div class="pstage-tag"><span class="ptag" style="background:${scolor}">🧭 ${esc(cs.name)}</span>`
