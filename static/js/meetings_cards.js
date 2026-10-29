@@ -326,36 +326,44 @@ function buildSheetsHtml(data, fmt) {
     // Высота заголовка листа с единицей line-height (см. .tall-sheet-title в
     // app.css), в mm — учитывается при расчёте помещающегося числа рядов.
     const titleMm = 6;
-    // Ряды формируются по МАКСИМУМУ ячеек одной строки сетки: если на один ряд
-    // попадают короткая и очень длинная карточки, весь ряд растягивается до
-    // самой длинной. Поэтому для pack-расчёта высота каждой карточки =
-    // максимум среди карточек её ряда, а не собственная высота. Иначе реальная
-    // раскладка оказывалась выше расчётной и хвост удлинённых карточек
-    // переносился на следующий физический лист поверх содержимого того листа.
-    const hMm = tall.map(c => Math.max(94, (c._tallPx || 0) / 3.7795));
-    const rowHs = [];
-    for (let i = 0; i < hMm.length; i += perRow)
-      rowHs.push(Math.max(...hMm.slice(i, i + perRow)));
-    // Жадная упаковка рядов по листам: суммарная высота рядов + заголовок +
-    // gap между рядами не должны превышать чистую высоту листа (200mm минус
-    // padding 6mm сверху/снизу). Так ни одна удлинённая карточка не «вылезает»
-    // за свой лист и не наслаивается при печати.
-    const usable = 200 - 12 - titleMm;
+    const gapMm = 4;                              // gap между рядами на .tall-sheet
+    const usable = 200 - 12 - titleMm;            // чистая высота листа под контент
+    const PXMM = 3.7795;                          // CSS-пикселей в миллиметре
+
+    /* Упаковка удлинённых карточек по отдельным листам.
+
+       КЛЮЧЕВОЕ: карточки сортируются по измеренной высоте контента. Без
+       сортировки на один ряд сетки попадают короткая и очень длинная карточки,
+       высота ряда = максимум из них, и гигантская карточка (выше цельного
+       листа) растягивает весь ряд — Chromium переносит её хвост на следующий
+       физический лист ПОВЕРХ его содержимого (наслаивание при печати). После
+       сортировки по убыванию высокие карточки занимают ряд целиком и каждый
+       следующий ряд гарантированно не выше предыдущего. */
+    const sorted = tall.slice().sort((a, b) => (b._tallPx || 0) - (a._tallPx || 0));
+    const rows = [];                              // [{cards:[...], hMm}]
+    for (let i = 0; i < sorted.length; i += perRow) {
+      const rc = sorted.slice(i, i + perRow);
+      rows.push({ cards: rc, hMm: Math.max(...rc.map(c => Math.max(94, (c._tallPx || 0) / PXMM))) });
+    }
+    // Карточка выше полезной высоты листа не влезает ни в одну ячейку —
+    // уменьшаем масштаб её содержимого ровно так, чтобы она заняла свой лист
+    // целиком (transform не ломает сетку; см. также fitSheets для стандартных).
+    rows.forEach(r => { r.cards.forEach(c => { c._fitK = r.hMm > usable ? usable / r.hMm : 0; }); });
+
+    // Жадная упаковка рядов по листам: Σ(высота ряда + gap) + заголовок ≤
+    // чистая высота листа. Первый ряд всегда попадает на лист даже если выше
+    // лимита (для него уже выставлен ._fitK) — иначе получили бы пустой лист.
     const pages = [];
     let cur = [], used = 0;
-    rowHs.forEach(h => {
-      const need = h + (cur.length ? 4 : 0);       // gap 4mm между рядами
+    rows.forEach(r => {
+      const need = r.hMm + (cur.length ? gapMm : 0);
       if (cur.length && used + need > usable) { pages.push(cur); cur = []; used = 0; }
-      cur.push(h); used += need;
+      cur.push(r); used += need;
     });
     if (cur.length) pages.push(cur);
-    let off = 0;
+
     html += pages.map((rowPage, idx) => {
-      // Последний ряд листа может быть неполным — число карточек считаем
-      // суммой ёмкостей рядов, но не больше фактического остатка.
-      const cap = rowPage.reduce((a) => a + perRow, 0);
-      const slice = tall.slice(off, off + cap);
-      off += slice.length;
+      const slice = rowPage.flatMap(r => r.cards);
       return `<div class="printpage tall-sheet fmt-${fmt}">`
         + `<div class="tall-sheet-title">Удлинённые карточки — лист ${idx + 1}</div>`
         + slice.map(cardHTML).join('')
@@ -363,6 +371,27 @@ function buildSheetsHtml(data, fmt) {
     }).join('');
   }
   return html;
+}
+
+/* Масштабирование контента удлинённой карточки, которая выше цельного листа:
+   transform не влияет на сетку и не создаёт новых полос разрыва. Применяется
+   к уже отрисованному контейнеру листов (после measureTall/buildSheetsHtml),
+   поэтому инлайн-стили гарантированно перекрывают print-правила app.css. */
+function applyTallFit(root) {
+  root.querySelectorAll('.printpage.tall-sheet .pcardwrap.tall').forEach(w => {
+    const card = CD.cards.find(c => c.uid === w.dataset.uid);
+    if (!card || !card._fitK) return;
+    const inner = w.querySelector('.pcard');
+    if (!inner || inner.dataset.fitted) return;
+    inner.dataset.fitted = '1';
+    const k = card._fitK;
+    // ширина контента растёт обратно масштабу, чтобы после scale занять 100%
+    inner.style.setProperty('height', 'auto', 'important');
+    inner.style.setProperty('max-height', 'none', 'important');
+    inner.style.transform = `scale(${k})`;
+    inner.style.transformOrigin = 'top left';
+    inner.style.width = (100 / k).toFixed(2) + '%';
+  });
 }
 
 /* Подгонка карточек под лист при печати: если содержимое какой-либо карточки
@@ -404,6 +433,7 @@ function renderCardSheets() {
   document.getElementById('cempty').hidden = data.length > 0;
   const host = document.getElementById('cardPages');
   host.innerHTML = buildSheetsHtml(data, fmt);
+  applyTallFit(host);                 // масштаб «сверхдлинных» карточек под лист
 }
 
 /* ---------- печать ----------
@@ -436,6 +466,7 @@ async function printCards() {
   document.body.classList.add('printing-cards');
   ov.classList.add('on');
   fitSheets(ov);                          // подгонка многоэтапных карточек под лист
+  applyTallFit(ov);                       // масштаб «сверхдлинных» удлинённых карточек
   // Страховка на случай, если браузер не поддерживает событие afterprint
   let cleaned = false;
   const cleanup = () => {
