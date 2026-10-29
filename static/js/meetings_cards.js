@@ -323,16 +323,44 @@ function buildSheetsHtml(data, fmt) {
   // измеренной высоты самой длинной удлинённой карточки (см. measureTall).
   if (tall.length) {
     const perRow = fmt === 'a3' ? 4 : 3;
-    // Запас в mm: минимум стандартной ячейке (94mm) и измеренной высоте контента.
-    const rowMm = Math.max(94, ...tall.map(c => c._tallPx || 0)
-      .map(px => px / 3.7795));
-    const rowsFit = Math.max(1, Math.floor((200 - 12 + 4) / (rowMm + 4)));
-    const perTall = perRow * rowsFit;
-    html += chunk(tall, perTall).map((page, i) =>
-      `<div class="printpage tall-sheet fmt-${fmt}">`
-      + `<div class="tall-sheet-title">Удлинённые карточки — лист ${i + 1}</div>`
-      + page.map(cardHTML).join('')
-      + `</div>`).join('');
+    // Высота заголовка листа с единицей line-height (см. .tall-sheet-title в
+    // app.css), в mm — учитывается при расчёте помещающегося числа рядов.
+    const titleMm = 6;
+    // Ряды формируются по МАКСИМУМУ ячеек одной строки сетки: если на один ряд
+    // попадают короткая и очень длинная карточки, весь ряд растягивается до
+    // самой длинной. Поэтому для pack-расчёта высота каждой карточки =
+    // максимум среди карточек её ряда, а не собственная высота. Иначе реальная
+    // раскладка оказывалась выше расчётной и хвост удлинённых карточек
+    // переносился на следующий физический лист поверх содержимого того листа.
+    const hMm = tall.map(c => Math.max(94, (c._tallPx || 0) / 3.7795));
+    const rowHs = [];
+    for (let i = 0; i < hMm.length; i += perRow)
+      rowHs.push(Math.max(...hMm.slice(i, i + perRow)));
+    // Жадная упаковка рядов по листам: суммарная высота рядов + заголовок +
+    // gap между рядами не должны превышать чистую высоту листа (200mm минус
+    // padding 6mm сверху/снизу). Так ни одна удлинённая карточка не «вылезает»
+    // за свой лист и не наслаивается при печати.
+    const usable = 200 - 12 - titleMm;
+    const pages = [];
+    let cur = [], used = 0;
+    rowHs.forEach(h => {
+      const need = h + (cur.length ? 4 : 0);       // gap 4mm между рядами
+      if (cur.length && used + need > usable) { pages.push(cur); cur = []; used = 0; }
+      cur.push(h); used += need;
+    });
+    if (cur.length) pages.push(cur);
+    let off = 0;
+    html += pages.map((rowPage, idx) => {
+      // Последний ряд листа может быть неполным — число карточек считаем
+      // суммой ёмкостей рядов, но не больше фактического остатка.
+      const cap = rowPage.reduce((a) => a + perRow, 0);
+      const slice = tall.slice(off, off + cap);
+      off += slice.length;
+      return `<div class="printpage tall-sheet fmt-${fmt}">`
+        + `<div class="tall-sheet-title">Удлинённые карточки — лист ${idx + 1}</div>`
+        + slice.map(cardHTML).join('')
+        + `</div>`;
+    }).join('');
   }
   return html;
 }
