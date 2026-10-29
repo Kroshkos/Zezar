@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service, refdata
+from app.core import access, entity_service, refdata, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -44,6 +44,7 @@ class SoftIn(BaseModel):
     responsible_user_id: int | None = None
     executor_user_ids: list[int] = []        # исполнители (может быть несколько, как в прототипе)
     project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
+    stages_json: str | None = None           # JSON [{name, deadline}] — маршрут (wf) ПО
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> SoftPayload | None:
@@ -59,6 +60,8 @@ def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False,
                project_title: str | None = None) -> dict:
     execs = _executors(ent)
+    stages = (p.stages if p else []) or []
+    done, total = wf_service.wf_stats(stages)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -66,7 +69,8 @@ def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
         "cross_dept": cross_dept,
         "soft_type": p.soft_type if p else "", "repo_url": p.repo_url if p else "",
         "env": p.env if p else "",
-        "stages": (p.stages if p else []) or [],
+        "stages": stages, "stage_done": done, "stage_total": total,
+        "progress": round(done / total * 100) if total else 0,
         "project_entity_uid": p.project_entity_uid if p else None,
         "project_title": project_title or "",
         "responsibles": resp_names,
@@ -268,11 +272,26 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # маршрут (wf) ПО: [{name, deadline}] -> нормализованные этапы + автозадачи
+    import json as _json
+    stages_raw = []
+    if body.stages_json:
+        try:
+            stages_raw = _json.loads(body.stages_json)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Некорректный JSON в поле stages")
+    stages = wf_service.wf_build_stages(stages_raw if isinstance(stages_raw, list) else [])
     session.add(SoftPayload(
         entity_id=ent.id, soft_type=body.soft_type or None,
-        repo_url=body.repo_url or None, env=body.env or None, stages=[],
+        repo_url=body.repo_url or None, env=body.env or None, stages=stages,
         project_entity_uid=body.project_entity_uid or None))
     await session.flush()
+    if stages:
+        await wf_service.wf_create_stage_tasks(
+            session, user, ent, stages, dept_id, title_prefix="ПО «")
+        pl = await _load_payload(session, ent.id)
+        if pl:
+            pl.stages = stages
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
@@ -310,9 +329,18 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
     if payload:
         if "project_entity_uid" in body:
             await _check_project(session, ctx, body["project_entity_uid"])
-        for f in _SOFT_FIELDS:
+        for f in _SOFT_FIELDS - {"stages"}:
             if f in body:
-                setattr(payload, f, body[f] if (f == "stages" or body[f]) else None)
+                setattr(payload, f, body[f] or None)
+        # маршрут (wf): PATCH {stages:[...]} — слияние по id/имени + автозадачи новых
+        if "stages" in body:
+            merged = wf_service.wf_merge_stages(payload.stages or [], body["stages"])
+            payload.stages = merged
+            await session.flush()
+            await wf_service.wf_create_stage_tasks(
+                session, user, ent, merged, ent.owner_department_id,
+                title_prefix="ПО «")
+            payload.stages = merged
     await session.commit()
     return {"ok": True}
 

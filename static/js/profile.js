@@ -132,12 +132,28 @@ function moduleBlockHTML(P,m){
       +(m.doc_type?'📑 '+esc(m.doc_type)+' · ':'')+(m.number?'№ '+esc(m.number)+' · ':'')
       +(m.issued_at?'выдан '+pfmt(m.issued_at):'')+'</div>';
     if(m.file_ref)h+='<div style="margin-top:6px"><a class="lchip" href="'+esc(m.file_ref)+'" target="_blank" rel="noopener">📎 файл</a></div>';
+    // маршрут (wf) документа — тот же холст, что у проектов/ПО
+    if(m.stage_total)h+='<div style="margin-top:6px;font-size:12.5px">Этапы маршрута: '+m.stage_done+'/'+m.stage_total
+      +'<div style="background:#eef1f7;border-radius:99px;height:8px;margin-top:4px"><div style="background:var(--acc);height:8px;border-radius:99px;width:'+m.progress+'%"></div></div></div>';
+    if(m.stages&&m.stages.length){
+      h+='<div style="overflow-x:auto;margin-top:8px">'+wfCanvasHTML({stages:m.stages})+'</div>';
+      if(P.can_edit&&window.wfCanvasEditor)h+='<div style="margin-top:6px"><button type="button" class="btn sm" onclick="openWfEditorGeneric(\'docs\',\''+P.uid+'\')">🖐 Редактировать маршрут</button></div>';
+    } else if(P.can_edit){
+      h+='<div style="margin-top:8px"><button type="button" class="btn sm" onclick="openWfEditorGeneric(\'docs\',\''+P.uid+'\')">🧭 Создать маршрут (workflow)</button></div>';
+    }
   }
   if(k==='soft'){
     h+='<div style="margin-top:8px;font-size:12.5px;color:var(--muted)">'
       +(m.soft_type?'🧩 '+esc(m.soft_type):'')+(m.env?' · ⚙️ '+esc(m.env):'')+'</div>';
     if(m.repo_url)h+='<div style="margin-top:6px"><a class="lchip" href="'+esc(m.repo_url)+'" target="_blank" rel="noopener">🔗 репозиторий</a></div>';
-    if(m.stages&&m.stages.length)h+='<div style="overflow-x:auto;margin-top:8px">'+wfCanvasHTML({stages:m.stages})+'</div>';
+    if(m.stage_total)h+='<div style="margin-top:6px;font-size:12.5px">Этапы маршрута: '+m.stage_done+'/'+m.stage_total
+      +'<div style="background:#eef1f7;border-radius:99px;height:8px;margin-top:4px"><div style="background:var(--acc);height:8px;border-radius:99px;width:'+m.progress+'%"></div></div></div>';
+    if(m.stages&&m.stages.length){
+      h+='<div style="overflow-x:auto;margin-top:8px">'+wfCanvasHTML({stages:m.stages})+'</div>';
+      if(P.can_edit&&window.wfCanvasEditor)h+='<div style="margin-top:6px"><button type="button" class="btn sm" onclick="openWfEditorGeneric(\'softs\',\''+P.uid+'\')">🖐 Редактировать маршрут</button></div>';
+    } else if(P.can_edit){
+      h+='<div style="margin-top:8px"><button type="button" class="btn sm" onclick="openWfEditorGeneric(\'softs\',\''+P.uid+'\')">🧭 Создать маршрут (workflow)</button></div>';
+    }
   }
   if(k==='grant'){
     h+='<div style="margin-top:8px;font-size:12.5px;color:var(--muted)">'
@@ -169,6 +185,44 @@ function moduleBlockHTML(P,m){
     }
   }
   return h;
+}
+
+// общий редактор маршрута (workflow) для документов и ПО — по образцу
+// openWfEditor из projects.js: тот же холст wf_canvas.js, сохранение PATCH
+// {stages:[...]} на эндпоинт соответствующего модуля.
+async function openWfEditorGeneric(apiBase, uid){
+  if(!window.wfCanvasEditor){toast('Холст маршрута не загрузился (wf_canvas.js)');return;}
+  let P;
+  try{ P=await api('/api/core/entities/'+uid+'/profile'); }catch(e){ return; }
+  const stages=((P.module||{}).stages||[]).map(s=>Object.assign({},s));
+  const body='<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'
+    +'Перетаскивайте узлы, связывайте этапы кнопкой ⛓, добавляйте через ＋→. '
+    +'Для каждого нового этапа сервер создаст автозадачу.</div>'
+    +'<div id="wfEditBox"></div>';
+  openModal('🧭 Маршрут: '+esc(P.title),body,async()=>{
+    const st=ed.getStages();
+    await api('/api/'+apiBase+'/'+uid,{method:'PATCH',body:JSON.stringify({stages:st})});
+    closeModal();toast('Маршрут сохранён · новые этапы создали автозадачи');
+    // обновить карточки текущей страницы, если её скрипт загружен
+    try{
+      if(typeof DD!=='undefined'&&DD.docs&&typeof renderDocCards==='function'){
+        const d=DD.docs.find(x=>x.uid===uid);
+        if(d){d.stages=st;d.stage_total=st.length;
+          d.stage_done=st.filter(s=>s.done||s.state==='done').length;
+          d.progress=d.stage_total?Math.round(d.stage_done/d.stage_total*100):0;}
+        renderDocCards();
+      } else if(typeof SD!=='undefined'&&SD.softs&&typeof renderSoftCards==='function'){
+        const s=SD.softs.find(x=>x.uid===uid);
+        if(s){s.stages=st;s.stage_total=st.length;
+          s.stage_done=st.filter(sx=>sx.done||sx.state==='done').length;
+          s.progress=s.stage_total?Math.round(s.stage_done/s.stage_total*100):0;}
+        renderSoftCards();
+      }
+    }catch(e){}
+  },'💾 Сохранить маршрут',true);
+  const box=document.getElementById('wfEditBox');
+  const ed=window.wfCanvasEditor(box,stages);
+  Promise.resolve(ed).then(h=>{ if(h&&typeof h.getStages==='function') ed=h; });
 }
 
 // холст маршрута (тот же, что в projects.js; если страница проектов не загружена — своя копия)
