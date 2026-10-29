@@ -11,6 +11,7 @@ from sqlalchemy import Boolean, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
+from app.core.json_type import SafeJSON
 
 
 class TaskPayload(TimestampMixin, Base):
@@ -21,8 +22,8 @@ class TaskPayload(TimestampMixin, Base):
         ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True)
     group_key: Mapped[Optional[str]] = mapped_column(String(50))      # taskGroups из демо
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36))  # привязка к проекту
-    assignee_names: Mapped[list] = mapped_column(JSON, default=list)  # историческое поле демо (ФИО)
-    checklist: Mapped[list] = mapped_column(JSON, default=list)       # [{text, done}]
+    assignee_names: Mapped[list] = mapped_column(SafeJSON(list), default=list)  # историческое поле демо (ФИО)
+    checklist: Mapped[list] = mapped_column(SafeJSON(list), default=list)       # [{text, done}]
     wf_kind: Mapped[Optional[str]] = mapped_column(String(50))        # тип согласования (demo: t.wf)
     result_of: Mapped[Optional[str]] = mapped_column(Text)            # результат/комментарий
     cross_dept: Mapped[bool] = mapped_column(Boolean, default=False)  # признак межпространственного шеринга
@@ -39,9 +40,9 @@ class MeetingPayload(TimestampMixin, Base):
     secretary: Mapped[Optional[str]] = mapped_column(String(200))     # секретарь
     attendees: Mapped[Optional[str]] = mapped_column(Text)            # список участников (текст, как в демо)
     time_: Mapped[Optional[str]] = mapped_column("time", String(16))  # время начала 'HH:MM'
-    agenda: Mapped[list] = mapped_column(JSON, default=list)          # [{q, who, minutes}]
-    decisions: Mapped[list] = mapped_column(JSON, default=list)       # [{text, who, due, taskId}]
-    linked_task_uids: Mapped[list] = mapped_column(JSON, default=list)
+    agenda: Mapped[list] = mapped_column(SafeJSON(list), default=list)          # [{q, who, minutes}]
+    decisions: Mapped[list] = mapped_column(SafeJSON(list), default=list)       # [{text, who, due, taskId}]
+    linked_task_uids: Mapped[list] = mapped_column(SafeJSON(list), default=list)
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту (связанность категорий)
     location: Mapped[Optional[str]] = mapped_column(String(200))
     start_at: Mapped[Optional[str]] = mapped_column(String(32))       # ISO datetime для календаря
@@ -50,7 +51,7 @@ class MeetingPayload(TimestampMixin, Base):
     # ИС_Цезарь.html): карточки задач, заведённых на совещании.
     # Структура записи — как new_tasks в mBlank()/mRenderNewTaskList():
     # {uid, title, tag, priority, due, assignee_id, assignee_name, status_key}
-    cards: Mapped[list] = mapped_column(JSON, default=list)
+    cards: Mapped[list] = mapped_column(SafeJSON(list), default=list)
 
 
 class ProjectPayload(TimestampMixin, Base):
@@ -62,12 +63,12 @@ class ProjectPayload(TimestampMixin, Base):
     # Маршрут (workflow): этапы [{name,state,date,deadline,comment,taskId,branches:[...]}]
     # — автозадачи создаются на каждый этап; ответвления и условия — на холсте маршрута
     # (по образу wfCanvas из sipm_lite_v3.html).
-    stages: Mapped[list] = mapped_column(JSON, default=list)
+    stages: Mapped[list] = mapped_column(SafeJSON(list), default=list)
     customer: Mapped[Optional[str]] = mapped_column(String(200))
     # бюджет/источник финансирования удалён из формы проекта по ТЗ (поле остаётся
     # в БД для исторических данных, но не заполняется и не отображается)
     budget: Mapped[Optional[str]] = mapped_column(String(64))
-    links: Mapped[list] = mapped_column(JSON, default=list)
+    links: Mapped[list] = mapped_column(SafeJSON(list), default=list)
     # Иерархия проектов: проект может быть частью другого проекта (родитель —
     # uid сущности kind=project; хранится uid, а не FK id — устойчивость при
     # репликации/синхронизации пространств и отсутствие каскадного удаления).
@@ -93,7 +94,7 @@ class DocPayload(TimestampMixin, Base):
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
     # Маршрут (workflow) документа — та же структура этапов, что у проектов/ПО:
     # [{id,name,state,date,deadline,comment,taskId,branches,x,y,links_out}]
-    stages: Mapped[list] = mapped_column(JSON, default=list)
+    stages: Mapped[list] = mapped_column(SafeJSON(list), default=list)
 
 
 class SoftPayload(TimestampMixin, Base):
@@ -105,7 +106,7 @@ class SoftPayload(TimestampMixin, Base):
     soft_type: Mapped[Optional[str]] = mapped_column(String(120))
     repo_url: Mapped[Optional[str]] = mapped_column(String(500))
     env: Mapped[Optional[str]] = mapped_column(String(120))
-    stages: Mapped[list] = mapped_column(JSON, default=list)
+    stages: Mapped[list] = mapped_column(SafeJSON(list), default=list)
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
 
 
