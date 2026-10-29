@@ -135,6 +135,19 @@ function cardHTML(c) {
     } else {
       info.push('<b>Текущая задача:</b> —');
     }
+    // Статусы подчинённых сущностей проекта (Документы и ПО) — чипами в
+    // содержании карточки (задумка: сверху статус проекта, внутри — Docs/Softs).
+    const subs = c.sub_entities || [];
+    if (subs.length) {
+      info.push(`<div class="psubs"><span class="psubs-h">📋 Документы и ПО:</span>`
+        + subs.map(s => `<span class="psub-chip" title="${esc(s.title)}">`
+          + (s.kind === 'doc' ? '📄' : '💿') + ' ' + esc((s.title || '').slice(0, 28))
+          + ((s.title || '').length > 28 ? '…' : '')
+          + ` <span class="ptag" style="background:${ccolor(s.color)}">${esc(s.mini || '—')}</span>`
+          + (s.stage_total ? `<span class="psub-prog">${s.stage_done}/${s.stage_total}</span>` : '')
+          + '</span>').join('')
+        + '</div>');
+    }
     body = `<div class="pinfo">${info.map(i => `<div class="${i.startsWith('<div') ? '' : 'pmeta'}">${i}</div>`).join('')}</div>`;
   } else {
     body = `<div class="pnotes" title="Место для рукописных заметок"></div>`;
