@@ -354,6 +354,48 @@ async def notify_participants(
             payload={"kind": ent.kind.value, "event": event_key})
 
 
+async def _close_wf_stage_for_task(session: AsyncSession, user: User,
+                                   task: Entity) -> None:
+    """Замыкание маршрута: завершение автозадачи этапа закрывает этап и
+    активирует следующий (см. wf_service.wf_close_stage_for_task).
+
+    Вызывается из update_entity при переводе задачи в done. Если носитель
+    маршрута не найден — молча выходим (обычная задача без привязки к этапу).
+    Уведомляем участников сущности-носителя (раньше переход этапа происходил
+    «молча» — пользовательский баг «отмечаю задачу выполненной, а следующий
+    этап не активируется»: часть проблемы была ещё и в том, что хук вызывал
+    несуществующую функцию и падал NameError/500 либо не вызывался вовсе).
+    """
+    from app.core import wf_service
+    try:
+        res = await wf_service.wf_close_stage_for_task(session, user, task)
+    except Exception:  # защита основного пути: маршрут не должен ломать закрытие задачи
+        return
+    if not res:
+        return
+    owner = res.get("owner")
+    stage = res.get("stage") or ""
+    nxt = res.get("next")
+    if owner is None:
+        return
+    note = f"Этап «{stage}» закрыт (автозадача выполнена)"
+    if nxt:
+        note += f", активирован следующий этап: «{nxt}»"
+    session.add(AuditLog(user_id=user.id, action="wf_stage_done",
+                         entity_id=owner.id,
+                         details_json={"task_uid": task.uid, "stage": stage,
+                                       "next": nxt}))
+    await log_event(session, "entity_wf_stage_done", category="entity",
+                    user=user, object=f"{owner.kind.value}:{owner.title}"[:200],
+                    level="info", message=note,
+                    details={"entity_uid": owner.uid, "task_uid": task.uid,
+                             "stage": stage, "next": nxt})
+    try:
+        await notify_participants(session, user, owner, "stage_done", note)
+    except Exception:
+        pass
+
+
 async def update_entity(
     session: AsyncSession, user: User, ent: Entity, changes: dict[str, Any],
 ) -> Entity:

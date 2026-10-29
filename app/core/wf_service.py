@@ -239,3 +239,160 @@ def wf_find_owner_payload_cls(kind: Any) -> Any | None:
     from app.models.module_payloads import DocPayload, ProjectPayload, SoftPayload
     return {EntityKind.PROJECT: ProjectPayload, EntityKind.DOC: DocPayload,
             EntityKind.SOFT: SoftPayload}.get(kind)
+
+
+async def wf_link_task_to_stage(session: AsyncSession, task_uid: str,
+                                owner_uid: str, stage_id: str) -> bool:
+    """Ручная привязка задачи к этапу маршрута (замыкает «Задача → этап», если
+    автозадача была создана отдельно или taskId у этапа пуст). Возвращает True,
+    если привязка выполнена."""
+    from app.models.core import Entity
+    ent = await session.scalar(select(Entity).where(Entity.uid == owner_uid))
+    if ent is None:
+        return False
+    cls = wf_find_owner_payload_cls(ent.kind)
+    if cls is None:
+        return False
+    pl = await session.scalar(select(cls).where(cls.entity_id == ent.id))
+    if pl is None:
+        return False
+    stages = [s for s in (pl.stages or []) if isinstance(s, dict)]
+    hit = False
+    for s in stages:
+        if str(s.get("id") or "") == str(stage_id):
+            s["taskId"] = task_uid
+            hit = True
+        for br in (s.get("branches") or []):
+            if not isinstance(br, dict):
+                continue
+            for bs in (br.get("steps") or []):
+                if isinstance(bs, dict) and str(bs.get("id") or "") == str(stage_id):
+                    bs["taskId"] = task_uid
+                    hit = True
+    if hit:
+        pl.stages = stages
+        await session.flush()
+    return hit
+
+
+def wf_payload_entity_join():
+    """Вспомогательное: payload-таблица связана с entities через entity_id."""
+    from app.models.module_payloads import ProjectPayload
+    return ProjectPayload.entity_id
+
+
+async def wf_close_stage_for_task(session: AsyncSession, user: User,
+                                  task: Entity) -> dict | None:
+    """Замыкает «Задача → этап»: ищет носителя маршрута (project/doc/soft),
+    у которого есть этап с taskId == uid задачи, закрывает его и активирует
+    следующий. Возвращает {'owner': <Entity>, 'stage': ..., 'next': ...} или
+    None, если связь не найдена.
+
+    Пузы поиска (по приоритету):
+      1) TaskPayload.project_entity_uid — задача создана как автозадача этапа;
+      2) описания задач вида «… — этап: …» / «автозадача этапа «…»» — легаси,
+         где project_entity_uid не заполнялся;
+      3) EntityLink задача ↔ носитель маршрута (ручная привязка).
+    """
+    from app.models.core import Entity, EntityLink
+    from app.models.module_payloads import TaskPayload
+
+    owner = None
+    tp = await session.scalar(
+        select(TaskPayload).where(TaskPayload.entity_id == task.id))
+    if tp and getattr(tp, "project_entity_uid", None):
+        owner = await session.scalar(
+            select(Entity).where(Entity.uid == tp.project_entity_uid))
+
+    # 2) эвристика по описанию автозадачи (легаси-данные без project_entity_uid)
+    desc = str(task.description or "")
+    m_name = ""
+    if not owner:
+        import re
+        m = re.search(r"— этап:\s*(.+)$", desc) or \
+            re.search(r"автозадача этапа «(.+?)»", desc) or \
+            re.search(r"ветки «(.+?)»", desc)
+        if m:
+            m_name = (m.group(1) or "").strip()
+
+    candidates: list[Entity] = []
+    if owner is not None:
+        candidates.append(owner)
+    if m_name or not candidates:
+        # все носители маршрутов того же подразделения + связанные через EntityLink
+        linked_ids = set()
+        for link in await session.scalars(select(EntityLink).where(
+                (EntityLink.entity_a_id == task.id)
+                | (EntityLink.entity_b_id == task.id))):
+            linked_ids.add(link.entity_b_id if link.entity_a_id == task.id
+                           else link.entity_a_id)
+        q = select(Entity).where(Entity.kind.in_(
+            ("project", "doc", "soft")))
+        if linked_ids:
+            q = q.where(Entity.id.in_(sorted(linked_ids)))
+        elif task.owner_department_id:
+            q = select(Entity).where(
+                Entity.kind.in_(("project", "doc", "soft")),
+                Entity.owner_department_id == task.owner_department_id)
+        for e in await session.scalars(q):
+            if e not in candidates:
+                candidates.append(e)
+
+    for ent in candidates:
+        cls = wf_find_owner_payload_cls(ent.kind)
+        if cls is None:
+            continue
+        pl = await session.scalar(select(cls).where(cls.entity_id == ent.id))
+        if pl is None or not pl.stages:
+            continue
+        stages = [s for s in pl.stages if isinstance(s, dict)]
+        hit = _find_stage_by_task_or_name(stages, task.uid, m_name)
+        if hit is None:
+            continue
+        res = wf_close_stage_by_task(stages, task.uid)
+        if res is None and m_name:
+            # этап найден по имени, но taskId пуст — привяжем и закроем вручную
+            res = _close_stage_row(stages, hit)
+        pl.stages = stages
+        await session.flush()
+        return {"owner": ent, **res}
+    return None
+
+
+def _find_stage_by_task_or_name(stages: list[dict], task_uid: str,
+                                name: str) -> dict | None:
+    for s in stages:
+        if str(s.get("taskId") or "") == str(task_uid):
+            return s
+        if name and str(s.get("name", "")).strip().lower() == name.lower():
+            return s
+        for br in (s.get("branches") or []):
+            if not isinstance(br, dict):
+                continue
+            for bs in (br.get("steps") or []):
+                if isinstance(bs, dict) and (
+                        str(bs.get("taskId") or "") == str(task_uid)
+                        or (name and str(bs.get("name", "")).strip().lower()
+                            == name.lower())):
+                    return bs
+    return None
+
+
+def _close_stage_row(stages: list[dict], row: dict) -> dict:
+    """Закрывает конкретный этап/шаг (найденный по имени) и активирует
+    следующий незакрытый этап."""
+    idx = next((i for i, s in enumerate(stages)
+                if s is row or row in (s.get("branches") or [])
+                or any(bs is row for br in (s.get("branches") or [])
+                       if isinstance(br, dict)
+                       for bs in (br.get("steps") or []))), None)
+    if idx is None:
+        idx = len(stages) - 1
+    cur = stages[idx]
+    if not _is_closed(cur):
+        cur["state"] = "done"
+        cur["done"] = True
+    _activate_next(stages, idx)
+    nxt = next((s for s in stages[idx + 1:] if not _is_closed(s)), None)
+    return {"stage": str(cur.get("name") or ""),
+            "next": str(nxt.get("name") or "") if nxt else None}
