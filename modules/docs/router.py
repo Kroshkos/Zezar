@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service, refdata
+from app.core import access, entity_service, refdata, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -47,6 +47,7 @@ class DocIn(BaseModel):
     executor_user_ids: list[int] = []        # исполнители (может быть несколько, как в прототипе)
     project_entity_uid: str | None = None    # привязка к проекту (связанность категорий)
     share_with: list[int] = []               # межпространственный контекст: dept_id[]
+    stages_json: str | None = None           # JSON [{name, deadline}] — маршрут (wf) документа
 
 
 async def _load_payload(session: AsyncSession, ent_id: int) -> DocPayload | None:
@@ -62,6 +63,8 @@ def _doc_dict(ent: Entity, p: DocPayload | None, perm: Permission | None,
               resp_names: list[str], cross_dept: bool = False,
               project_title: str | None = None) -> dict:
     execs = _executors(ent)
+    stages = (p.stages if p else []) or []
+    done, total = wf_service.wf_stats(stages)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "due_date": ent.due_date,
@@ -69,6 +72,8 @@ def _doc_dict(ent: Entity, p: DocPayload | None, perm: Permission | None,
         "cross_dept": cross_dept,
         "doc_type": p.doc_type if p else "", "number": p.number if p else "",
         "issued_at": p.issued_at if p else "", "file_ref": p.file_ref if p else "",
+        "stages": stages, "stage_done": done, "stage_total": total,
+        "progress": round(done / total * 100) if total else 0,
         "project_entity_uid": p.project_entity_uid if p else None,
         "project_title": project_title or "",
         "responsibles": resp_names,
@@ -273,11 +278,26 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # маршрут (wf) документа: [{name, deadline}] -> нормализованные этапы + автозадачи
+    import json as _json
+    stages_raw = []
+    if body.stages_json:
+        try:
+            stages_raw = _json.loads(body.stages_json)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Некорректный JSON в поле stages")
+    stages = wf_service.wf_build_stages(stages_raw if isinstance(stages_raw, list) else [])
     session.add(DocPayload(
         entity_id=ent.id, doc_type=body.doc_type or None, number=body.number or None,
         issued_at=body.issued_at or None, file_ref=body.file_ref or None,
-        project_entity_uid=body.project_entity_uid or None))
+        project_entity_uid=body.project_entity_uid or None, stages=stages))
     await session.flush()
+    if stages:
+        await wf_service.wf_create_stage_tasks(
+            session, user, ent, stages, dept_id, title_prefix="Документ «")
+        pl = await _load_payload(session, ent.id)
+        if pl:
+            pl.stages = stages
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
@@ -318,6 +338,15 @@ async def patch_doc(uid: str, body: dict, user: User = Depends(get_current_user)
         for f in _DOC_FIELDS:
             if f in body:
                 setattr(payload, f, body[f] or None)
+        # маршрут (wf): PATCH {stages:[...]} — слияние по id/имени + автозадачи новых
+        if "stages" in body:
+            merged = wf_service.wf_merge_stages(payload.stages or [], body["stages"])
+            payload.stages = merged
+            await session.flush()
+            await wf_service.wf_create_stage_tasks(
+                session, user, ent, merged, ent.owner_department_id,
+                title_prefix="Документ «")
+            payload.stages = merged
     await session.commit()
     return {"ok": True}
 

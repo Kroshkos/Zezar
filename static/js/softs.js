@@ -28,8 +28,10 @@ function renderSoftCards(){
       +(s.env?' · 🖥 '+esc(s.env):'')+'</div>'
       +(s.executor_names&&s.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(s.executor_names.join(', '))+'</div>':'')
       +(!s.executor_names&&s.responsibles.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(s.responsibles.join(', '))+'</div>':'')
+      +(s.stage_total?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">🧭 Маршрут: '+s.stage_done+'/'+s.stage_total+'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
       +(s.project_title?'<span class="lchip">📁 '+esc(s.project_title)+'</span>':'')
+      +(s.can_edit?'<button type="button" class="lchip" title="Редактировать маршрут (workflow)" onclick="openWfEditorGeneric(\'softs\',\''+s.uid+'\')">🖐 '+esc('Маршрут')+'</button>':'')
       +(s.repo_url?'<a class="lchip" href="'+esc(s.repo_url)+'" target="_blank" rel="noopener">🗂 репозиторий</a>':'')
       +(s.cross_dept?'<span class="lchip">🔗 межпространственное</span>':'')
       +(s.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')

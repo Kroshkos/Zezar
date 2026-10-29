@@ -127,6 +127,10 @@ function renderProjCards(){
       +(p.leader_name?' · 👤 рук.: '+esc(p.leader_name):'')+dates+'</div>'
       +'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">Этапы: '+p.stage_done+'/'+p.stage_total
       +(p.executor_names&&p.executor_names.length||p.responsibles.length?' · 👥 '+esc((p.executor_names&&p.executor_names.length?p.executor_names:p.responsibles).join(', ')):'')+'</div>'+bar
+      +(p.sub_entities&&p.sub_entities.length?'<div class="link-chips" style="margin-top:9px">'
+        +'<span style="font-size:11.5px;color:var(--muted);align-self:center">📋 Документы и ПО:</span>'
+        +p.sub_entities.map(s=>'<span class="lchip" title="'+esc(s.title)+'">'+(s.kind==='doc'?'📄':'💿')+' <b>'+esc((s.title||'').slice(0,32))+((s.title||'').length>32?'…':'')+'</b> <span class="badge '+(s.status==='done'?'b-green':s.status==='canceled'?'b-gray':'b-blue')+'" style="font-size:10.5px">'+esc(s.mini||'—')+'</span>'+(s.stage_total?' <span style="color:var(--muted);font-size:10.5px">'+s.stage_done+'/'+s.stage_total+'</span>':'')+'</span>').join('')
+        +'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
       +(p.parent_title?'<span class="lchip">🗂 часть проекта: <b>'+esc(p.parent_title)+'</b></span>':'')
       +(p.grant_title?'<span class="lchip">💰 <b>'+esc(p.grant_title)+'</b></span>':'')
@@ -155,6 +159,9 @@ function openProjectCard(uid){
     +(p.priority_indicator_title?'<div style="font-size:12.5px;color:var(--muted);margin-top:3px">🚀 Приоритет-2030: '+esc(p.priority_indicator_title)+'</div>':'')
     +(p.description?'<div style="margin-top:8px;font-size:13px">'+esc(p.description)+'</div>':'')
     +wfCanvasHTML(p)
+    +(p.sub_entities&&p.sub_entities.length?'<div style="margin-top:10px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">📋 Документы и ПО проекта:</div><div class="link-chips">'
+      +p.sub_entities.map(s=>'<span class="lchip" title="'+esc(s.title)+'">'+(s.kind==='doc'?'📄':'💿')+' <b>'+esc(s.title)+'</b> <span class="badge '+(s.status==='done'?'b-green':s.status==='canceled'?'b-gray':'b-blue')+'">'+esc(s.mini||'—')+'</span>'+(s.stage_total?' <span style="color:var(--muted);font-size:10.5px">'+s.stage_done+'/'+s.stage_total+'</span>':'')+'</span>').join('')
+      +'</div></div>':'')
     +'<div id="projLinksBox" style="margin-top:10px"></div>'
     +(p.can_edit&&window.wfCanvasEditor?'<div style="margin-top:8px"><button type="button" class="btn sm" id="wfEditBtn">🖐 Редактировать маршрут на холсте</button></div>':'');
   openModal('Проект: '+esc(p.title),body,'Закрыть',()=>closeModal(),true);

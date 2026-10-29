@@ -91,6 +91,9 @@ class DocPayload(TimestampMixin, Base):
     issued_at: Mapped[Optional[str]] = mapped_column(String(32))
     file_ref: Mapped[Optional[str]] = mapped_column(String(500))
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)  # привязка к проекту
+    # Маршрут (workflow) документа — та же структура этапов, что у проектов/ПО:
+    # [{id,name,state,date,deadline,comment,taskId,branches,x,y,links_out}]
+    stages: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class SoftPayload(TimestampMixin, Base):

@@ -29,8 +29,10 @@ function renderDocCards(){
       +(d.issued_at?' · выдан '+dfmt(d.issued_at):'')+'</div>'
       +(d.executor_names&&d.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(d.executor_names.join(', '))+'</div>':'')
       +(d.responsibles.length&&!d.executor_names?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(d.responsibles.join(', '))+'</div>':'')
+      +(d.stage_total?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">🧭 Маршрут: '+d.stage_done+'/'+d.stage_total+'</div>':'')
       +'<div class="link-chips" style="margin-top:11px">'
       +(d.project_title?'<span class="lchip">🗂 проект: <b>'+esc(d.project_title)+'</b></span>':'')
+      +(d.can_edit?'<button type="button" class="lchip" title="Редактировать маршрут (workflow)" onclick="openWfEditorGeneric(\'docs\',\''+d.uid+'\')">🖐 '+esc('Маршрут')+'</button>':'')
       +(d.file_ref?'<a class="lchip" href="'+esc(d.file_ref)+'" target="_blank" rel="noopener">📎 файл</a>':'')
       +(d.cross_dept?'<span class="lchip">🔗 межпространственный</span>':'')
       +(d.perm==='read'?'<span class="badge b-amber">только чтение</span>':'')
