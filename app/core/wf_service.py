@@ -13,11 +13,13 @@ API:
 """
 from __future__ import annotations
 
+import copy
 import uuid as _uuid
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core import entity_service
 from app.models.core import Entity, EntityKind, User
@@ -124,7 +126,10 @@ async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
             session, user, kind=EntityKind.TASK, module_key="tasks",
             owner_department_id=dept_id, title=title, description=desc,
             status_key="new", due_date=due or None, responsible_user_id=resp_id)
-        session.add(TaskPayload(entity_id=t.id, project_entity_uid=None))
+        # ВАЖНО: project_entity_uid привязываем сразу — иначе автозадача
+        # «не знает» о носителе маршрута и при её завершении этап не найдётся
+        # (в модуле projects привязку делал роутер, в docs/softs — нет).
+        session.add(TaskPayload(entity_id=t.id, project_entity_uid=ent.uid))
         created += 1
         return t
 
@@ -305,12 +310,14 @@ async def wf_close_stage_for_task(session: AsyncSession, user: User,
         owner = await session.scalar(
             select(Entity).where(Entity.uid == tp.project_entity_uid))
 
-    # 2) эвристика по описанию автозадачи (легаси-данные без project_entity_uid)
-    desc = str(task.description or "")
+    # 2) эвристика по описанию/названию автозадачи (легаси-данные без
+    #    project_entity_uid): «— этап: X» — в НАЗВАНИИ задачи,
+    #    «автозадача этапа «X»» — в описании.
+    desc = f"{task.title or ''}\n{task.description or ''}"
     m_name = ""
     if not owner:
         import re
-        m = re.search(r"— этап:\s*(.+)$", desc) or \
+        m = re.search(r"— этап:\s*(.+?)(?:\n|$)", desc) or \
             re.search(r"автозадача этапа «(.+?)»", desc) or \
             re.search(r"ветки «(.+?)»", desc)
         if m:
@@ -346,7 +353,13 @@ async def wf_close_stage_for_task(session: AsyncSession, user: User,
         pl = await session.scalar(select(cls).where(cls.entity_id == ent.id))
         if pl is None or not pl.stages:
             continue
-        stages = [s for s in pl.stages if isinstance(s, dict)]
+        # ВАЖНО: работаем с ГЛУБОКОЙ КОПИЕЙ. SQLAlchemy не отслеживает
+        # мутации внутри JSON-колонки (без mutate_only=False при маппинге),
+        # поэтому правка dict'ов «на месте» не делает объект dirty и изменения
+        # теряются при commit — это и был баг «отмечаю автозадачу выполненной,
+        # а следующий этап не активируется». Присваивание нового объекта +
+        # flag_modified гарантированно помечают колонку изменённой.
+        stages = copy.deepcopy([s for s in pl.stages if isinstance(s, dict)])
         hit = _find_stage_by_task_or_name(stages, task.uid, m_name)
         if hit is None:
             continue
@@ -354,7 +367,10 @@ async def wf_close_stage_for_task(session: AsyncSession, user: User,
         if res is None and m_name:
             # этап найден по имени, но taskId пуст — привяжем и закроем вручную
             res = _close_stage_row(stages, hit)
+        if res is None:
+            continue
         pl.stages = stages
+        flag_modified(pl, "stages")
         await session.flush()
         return {"owner": ent, **res}
     return None
