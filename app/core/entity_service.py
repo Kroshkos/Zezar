@@ -373,6 +373,12 @@ async def update_entity(
         # flush'ем до постановки события, иначе воркер прочитает устаревших
         # исполнителей из extra_json['executors'] и адресаты не получат уведомление.
         await session.flush()
+        # Замыкание маршрута: завершение задачи-автозадачи закрывает этап и
+        # активирует следующий (см. wf_service.wf_close_stage_by_task).
+        if ("status_key" in changed and ent.kind == EntityKind.TASK
+                and str(changes.get("status_key") or "").lower()
+                    in ("done", "closed", "completed", "finished")):
+            await _close_wf_stage_for_task(session, user, ent)
         await _log_only(session, user, action, ent,
                         {"changed": changed, "old_status": old_status})
         from app.core.notify import ACTION_EVENT_KEYS, link_for

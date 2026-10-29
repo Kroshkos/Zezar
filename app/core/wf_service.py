@@ -156,3 +156,86 @@ def wf_stats(stages: Any) -> tuple[int, int]:
     st = [s for s in (stages or []) if isinstance(s, dict)]
     done = sum(1 for s in st if s.get("done") or s.get("state") == "done")
     return done, len(st)
+
+
+# --- Автозакрытие этапов маршрута при завершении автозадачи -----------------
+# Замыкание «Задача → этап»: taskId хранится в payload.stages сущности-носителя
+# маршрута (project/doc/soft). При переводе задачи в done этап должен
+# закрываться и маршрут должен переходить на следующий этап — раньше этого
+# не происходило, потому что модуль tasks вообще не знал о существовании
+# этапов (пользовательский баг: «отмечаю автозадачу выполненной, а следующий
+# этап не активируется»).
+
+_TASK_DONE_KEYS = {"done", "closed", "completed", "finished"}
+
+
+def is_task_done(status_key: str | None) -> bool:
+    return str(status_key or "").strip().lower() in _TASK_DONE_KEYS
+
+
+def _is_closed(s: dict) -> bool:
+    return bool(s.get("done")) or str(s.get("state")) == "done"
+
+
+def _activate_next(stages: list[dict], from_idx: int) -> bool:
+    """Активирует первый незакрытый этап после from_idx (в порядке холста;
+    связи links_out учитываются только если образуют однозначную цепочку)."""
+    ids = [s.get("id") for s in stages]
+    order = list(range(from_idx + 1, len(stages)))
+    # если у этапа есть явные связи — идём по ним первыми
+    src = stages[from_idx]
+    linked = [i for i, sid in enumerate(ids)
+              if sid in (src.get("links_out") or [])]
+    for i in linked + order:
+        s = stages[i]
+        if not _is_closed(s) and s.get("state") != "rejected":
+            if s.get("state") != "active":
+                s["state"] = "active"
+                return True
+            return False  # следующий уже активен — ничего менять не нужно
+    return False
+
+
+def wf_close_stage_by_task(stages: list[dict], task_uid: str) -> dict | None:
+    """Закрывает этап с taskId==task_uid и активирует следующий.
+    Возвращает {'stage': <имя закрытого>, 'next': <имя следующего>|None} или
+    None, если этап не найден (ничего не меняем)."""
+    rows = [s for s in (stages or []) if isinstance(s, dict)]
+    idx = next((i for i, s in enumerate(rows)
+                if s.get("taskId") and str(s["taskId"]) == str(task_uid)), None)
+    if idx is None:
+        return None
+    cur = rows[idx]
+    changed = False
+    if not _is_closed(cur):
+        cur["state"] = "done"
+        cur["done"] = True
+        changed = True
+    # шаги ответвлений того же этапа
+    for br in (cur.get("branches") or []):
+        if not isinstance(br, dict):
+            continue
+        for bs in (br.get("steps") or []):
+            if isinstance(bs, dict) and str(bs.get("taskId") or "") == str(task_uid) \
+                    and not _is_closed(bs):
+                bs["state"] = "done"
+                bs["done"] = True
+                changed = True
+    nxt_name = None
+    if _activate_next(rows, idx):
+        changed = True
+        nxt = next((s for s in rows[idx + 1:] if not _is_closed(s)), None)
+        nxt_name = str(nxt.get("name") or "") if nxt else None
+    if changed:
+        return {"stage": str(cur.get("name") or ""), "next": nxt_name}
+    # этап уже был закрыт — вернём имя для корректного ответа API
+    return {"stage": str(cur.get("name") or ""), "next": None, "noop": True} \
+        if _is_closed(cur) else None
+
+
+def wf_find_owner_payload_cls(kind: Any) -> Any | None:
+    """payload-модель сущности-носителя маршрута по EntityKind."""
+    from app.models.core import EntityKind
+    from app.models.module_payloads import DocPayload, ProjectPayload, SoftPayload
+    return {EntityKind.PROJECT: ProjectPayload, EntityKind.DOC: DocPayload,
+            EntityKind.SOFT: SoftPayload}.get(kind)

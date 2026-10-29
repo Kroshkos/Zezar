@@ -100,7 +100,7 @@ const PRINT_DATE = new Date().toLocaleDateString('ru-RU');
 function cardHTML(c) {
   const dcolor = deptColor(c.department_id);          // полоса — по подразделению
   const pcolor = ccolor(c.priority_color);            // плашка — приоритет (как раньше)
-  const scolor = ccolor((c.current_stage || {}).color); // плашка — текущий этап маршрута
+
   // QR ведёт на профиль сущности: полный URL текущего хоста (чтобы сканер
   // с телефона попал в ту же инсталляцию, что открыта в браузере).
   let qrBlock;
@@ -160,7 +160,6 @@ function cardHTML(c) {
   }
 
   const dname = cdeptName(c.department_id);
-  const cs = c.current_stage;
   // Обёртка-ячейка сетки: position:relative для чекбокса выбора. Все карточки
   // теперь стандартного размера (чек-лист этапов из содержания убран), поэтому
   // ряды на экране и на бумаге — фиксированной высоты; удлинённые карточки
@@ -173,11 +172,11 @@ function cardHTML(c) {
       <div style="min-height:0">
         <div class="ptop">
           <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
-          ${c.status_label ? `<span class="ptag pstatus" style="background:${ccolor(c.status_color)}">${esc(c.status_label)}</span>` : ''}
           <span class="pid pdate">${PRINT_DATE}</span>
         </div>
-        ${cs ? `<div class="pstage-tag"><span class="ptag" style="background:${scolor}">🧭 ${esc(cs.name)}</span>`
-             + `<span class="pstage-pos">${cs.index + 1}/${cs.total} · ${esc(cs.label)}</span></div>` : ''}
+        /* Статус проекта и плашка текущего этапа из шапки карточки убраны
+           по требованию пользователя: верхняя часть — только приоритет и дата;
+           содержание — статусы привязанных Документов и ПО (psubs). */
         ${dname ? `<div class="pdept" style="color:${dcolor}">${esc(dname)}</div>` : ''}
         <div class="pdir" style="color:${dcolor}">${esc(c.tag)}${c.cross_dept ? ' · межпространственная' : ''}</div>
         <div class="ptitle">${esc(c.title)}</div>
