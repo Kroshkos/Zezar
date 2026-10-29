@@ -86,15 +86,22 @@ async def _module_block(session: AsyncSession, ent: Entity, p) -> dict:
                 "progress": round(done / len(stages) * 100) if stages else 0,
                 "links": (p.links if p else []) or []}
     if kind == EntityKind.DOC:
+        dstages = (p.stages if p else []) or []
+        ddone = sum(1 for s in dstages if s.get("done") or s.get("state") == "done")
         return {"doc_type": (p.doc_type if p else "") or "",
                 "number": (p.number if p else "") or "",
                 "issued_at": (p.issued_at if p else "") or "",
-                "file_ref": (p.file_ref if p else "") or ""}
+                "file_ref": (p.file_ref if p else "") or "",
+                "stages": dstages, "stage_done": ddone, "stage_total": len(dstages),
+                "progress": round(ddone / len(dstages) * 100) if dstages else 0}
     if kind == EntityKind.SOFT:
+        sstages = (p.stages if p else []) or []
+        sdone = sum(1 for s in sstages if s.get("done") or s.get("state") == "done")
         return {"soft_type": (p.soft_type if p else "") or "",
                 "repo_url": (p.repo_url if p else "") or "",
                 "env": (p.env if p else "") or "",
-                "stages": (p.stages if p else []) or []}
+                "stages": sstages, "stage_done": sdone, "stage_total": len(sstages),
+                "progress": round(sdone / len(sstages) * 100) if sstages else 0}
     if kind == EntityKind.GRANT:
         return {"program": (p.program if p else "") or "",
                 "amount": (p.amount if p else "") or "",

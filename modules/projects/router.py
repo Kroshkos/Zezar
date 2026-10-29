@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core import access, entity_service
+from app.core import access, entity_service, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -23,7 +23,7 @@ from app.models.core import (
     PriorityLevel, Role, User, WfTemplate,
 )
 from app.core import refdata
-from app.models.module_payloads import ProjectPayload, TaskPayload
+from app.models.module_payloads import DocPayload, ProjectPayload, SoftPayload, TaskPayload
 from app.ui import render_page
 
 router = APIRouter()
@@ -72,10 +72,18 @@ async def _load_payload(session: AsyncSession, ent_id: int) -> ProjectPayload | 
 def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False,
                parent_title: str | None = None, leader_name: str | None = None,
-               grant_title: str | None = None, prio_ind_title: str | None = None) -> dict:
+               grant_title: str | None = None, prio_ind_title: str | None = None,
+               sub_entities: list | None = None, status_labels: dict | None = None) -> dict:
     stages = (p.stages if p else []) or []
     done = sum(1 for s in stages if s.get("done") or s.get("state") == "done")
     execs = _executors(ent)
+    # подчинённые сущности (Документы/ПО) со статусами — для содержимого карточки
+    subs = []
+    for kind, title, skey, stgs in (sub_entities or []):
+        mini = _sub_status_label(kind, skey, stgs, status_labels or {})
+        d, t = wf_service.wf_stats(stgs)
+        subs.append({"kind": kind, "title": title, "status": skey, "mini": mini,
+                     "stage_done": d, "stage_total": t})
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
         "status_key": ent.status_key, "priority_key": ent.priority_key,
@@ -95,6 +103,7 @@ def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
         "priority_indicator_title": prio_ind_title or "",
         "stages": stages, "stage_done": done, "stage_total": len(stages),
         "progress": round(done / len(stages) * 100) if stages else 0,
+        "sub_entities": subs,
         "links": (p.links if p else []) or [],
         "parent_uid": (p.parent_uid if p else None),
         "parent_title": parent_title or "",
@@ -107,6 +116,50 @@ def _proj_dict(ent: Entity, p: ProjectPayload | None, perm: Permission | None,
         "can_share": access.can_manage_sharing(perm),
         "sync_state": ent.sync_state.value,
     }
+
+
+async def _sub_entities_map(session: AsyncSession, project_uids: list[str]) -> dict[str, list[tuple]]:
+    """Подчинённые сущности проектов (Документы и ПО), привязанные через
+    payload.project_entity_uid. Возвращает {uid проекта: [(kind,title,status_key,stages)]}.
+    Используется для отображения статусов подчиненных сущностей в карточках проектов."""
+    if not project_uids:
+        return {}
+    out: dict[str, list[tuple]] = {}
+    rows = (await session.execute(
+        select(Entity.title, Entity.status_key, Entity.uid, DocPayload.stages)
+        .join(DocPayload, DocPayload.entity_id == Entity.id)
+        .where(Entity.kind == EntityKind.DOC,
+               DocPayload.project_entity_uid.in_(project_uids)))).all()
+    for title, skey, puid, stages in rows:
+        out.setdefault(puid, []).append(("doc", title, skey, stages or []))
+    rows = (await session.execute(
+        select(Entity.title, Entity.status_key, Entity.uid, SoftPayload.stages)
+        .join(SoftPayload, SoftPayload.entity_id == Entity.id)
+        .where(Entity.kind == EntityKind.SOFT,
+               SoftPayload.project_entity_uid.in_(project_uids)))).all()
+    for title, skey, puid, stages in rows:
+        out.setdefault(puid, []).append(("soft", title, skey, stages or []))
+    return out
+
+
+def _sub_status_label(kind: str, status_key: str, stages: list, labels: dict) -> str:
+    """Мини-статус подчинённой сущности для чипа в карточке проекта:
+    этап маршрута (wf) в работе → «🧭 <этап>», иначе — метка статуса из справочника."""
+    st = [s for s in (stages or []) if isinstance(s, dict)]
+    act = next((s for s in st if s.get("state") == "active"), None)
+    if act and st and not all(s.get("done") or s.get("state") == "done" for s in st):
+        return f"🧭 {str(act.get('name') or '').strip()}"[:60]
+    return labels.get((kind, status_key)) or status_key or "—"
+
+
+async def _status_labels(session: AsyncSession, dept_id) -> dict:
+    """{(kind,value): label} по эффективным справочникам статусов docs/softs."""
+    labels: dict = {}
+    mods = await refdata.enabled_modules(session, dept_id)
+    for kind in (EntityKind.DOC, EntityKind.SOFT):
+        for s in await refdata.effective_statuses(session, kind, dept_id, mods):
+            labels[(kind.value.lower(), s.key)] = s.label
+    return labels
 
 
 async def _linked_titles(session: AsyncSession, payloads: list[ProjectPayload]) -> tuple[dict, dict, dict[int, str]]:
@@ -244,12 +297,15 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
     ptitles = await _parent_titles(session, list(payloads.values()))
     gmap, pimap, lmap = await _linked_titles(session, list(payloads.values()))
+    submap = await _sub_entities_map(session, [e.uid for e, _, _ in pairs])
+    slabels = await _status_labels(session, await refdata.context_dept(session, user, None))
     items = [_proj_dict(e, payloads[e.id], p, await _resp_names(session, e),
                         cross_dept=c,
                         parent_title=ptitles.get(payloads[e.id].parent_uid or ""),
                         leader_name=lmap.get(payloads[e.id].leader_user_id or 0, "") if payloads[e.id] else "",
                         grant_title=gmap.get((payloads[e.id].grant_entity_uid if payloads[e.id] else "") or ""),
-                        prio_ind_title=pimap.get((payloads[e.id].priority_indicator_uid if payloads[e.id] else "") or ""))
+                        prio_ind_title=pimap.get((payloads[e.id].priority_indicator_uid if payloads[e.id] else "") or ""),
+                        sub_entities=submap.get(e.uid, []), status_labels=slabels)
              for e, p, c in sorted(pairs, key=lambda x: (x[0].due_date or "9999"))]
     dept = await refdata.context_dept(session, user, None)
     modules = await refdata.enabled_modules(session, dept)
@@ -304,6 +360,8 @@ async def list_projects(user: User = Depends(get_current_user),
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
     ptitles = await _parent_titles(session, list(payloads.values()))
     gmap, pimap, lmap = await _linked_titles(session, list(payloads.values()))
+    submap = await _sub_entities_map(session, [e.uid for e, _, _ in pairs])
+    slabels = await _status_labels(session, await refdata.context_dept(session, user, None))
     out = []
     for ent, perm, cross in pairs:
         pl = payloads[ent.id]
@@ -312,7 +370,8 @@ async def list_projects(user: User = Depends(get_current_user),
                               parent_title=ptitles.get((pl.parent_uid if pl else "") or ""),
                               leader_name=lmap.get(pl.leader_user_id or 0, "") if pl else "",
                               grant_title=gmap.get((pl.grant_entity_uid if pl else "") or ""),
-                              prio_ind_title=pimap.get((pl.priority_indicator_uid if pl else "") or "")))
+                              prio_ind_title=pimap.get((pl.priority_indicator_uid if pl else "") or ""),
+                              sub_entities=submap.get(ent.uid, []), status_labels=slabels))
     return out
 
 
