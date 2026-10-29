@@ -24,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, utcnow
+from app.core.json_type import SafeJSON
 
 
 # ======================= Перечисления =======================
@@ -133,7 +134,7 @@ class Workspace(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     department_id: Mapped[int] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), unique=True)
-    settings_json: Mapped[dict] = mapped_column(JSON, default=dict)  # темы/виджеты дашборда из демо
+    settings_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)  # темы/виджеты дашборда из демо
 
     department: Mapped[Department] = relationship(back_populates="workspace")
     modules: Mapped[List["WorkspaceModule"]] = relationship(
@@ -161,7 +162,7 @@ class WorkspaceModule(TimestampMixin, Base):
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     module_key: Mapped[str] = mapped_column(String(50))
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    config_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
 
     workspace: Mapped[Workspace] = relationship(back_populates="modules")
 
@@ -204,8 +205,8 @@ class Entity(TimestampMixin, Base):
     status_key: Mapped[Optional[str]] = mapped_column(String(50))       # ссылка на StatusSet.key
     priority_key: Mapped[Optional[str]] = mapped_column(String(50))
     due_date: Mapped[Optional[str]] = mapped_column(String(32))         # ISO-дата (как в демо)
-    tags: Mapped[list] = mapped_column(JSON, default=list)
-    extra_json: Mapped[dict] = mapped_column(JSON, default=dict)        # «остальное» без миграций
+    tags: Mapped[list] = mapped_column(SafeJSON(list), default=list)
+    extra_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)        # «остальное» без миграций
 
     # --- Синхронизация с Яндекс.Календарём ---
     sync_state: Mapped[SyncState] = mapped_column(
@@ -391,7 +392,7 @@ class TaskGroup(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    criteria: Mapped[dict] = mapped_column(JSON, default=dict)
+    criteria: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
     source_global_id: Mapped[Optional[int]] = mapped_column(
@@ -411,7 +412,7 @@ class WfTemplate(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    steps: Mapped[list] = mapped_column(JSON, default=list)             # ['Подготовка', ...]
+    steps: Mapped[list] = mapped_column(SafeJSON(list), default=list)             # ['Подготовка', ...]
     kind_scope: Mapped[Optional[str]] = mapped_column(String(50))       # для каких EntityKind
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
@@ -429,7 +430,7 @@ class EntityWfState(Base):
         ForeignKey("entities.id", ondelete="CASCADE"), unique=True)
     template_id: Mapped[Optional[int]] = mapped_column(ForeignKey("wf_templates.id"))
     current_step: Mapped[int] = mapped_column(Integer, default=0)
-    history: Mapped[list] = mapped_column(JSON, default=list)  # [{step, who, at, comment}]
+    history: Mapped[list] = mapped_column(SafeJSON(list), default=list)  # [{step, who, at, comment}]
 
 
 # ======================= Журнал событий / аудит / очередь уведомлений =======================
@@ -454,7 +455,7 @@ class EventLog(Base):
     ip: Mapped[Optional[str]] = mapped_column(String(64))
     level: Mapped[str] = mapped_column(String(10), default="info")
     message: Mapped[Optional[str]] = mapped_column(Text)
-    details_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    details_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
 
 
 class AuditLog(Base):
@@ -466,7 +467,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(50))          # create/update/status/reassign/share
     entity_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("entities.id", ondelete="SET NULL"), index=True)
-    details_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    details_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
 
 
 class AclState(Base):
@@ -490,7 +491,7 @@ class OutboxEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     topic: Mapped[str] = mapped_column(String(50), index=True)   # 'telegram.notify' | 'calendar.sync'
-    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/done/error
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text)
@@ -522,8 +523,8 @@ class NotifyScenario(Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text)
     event_key: Mapped[str] = mapped_column(String(50), index=True)
-    entity_kinds: Mapped[list] = mapped_column(JSON, default=list)
-    module_keys: Mapped[list] = mapped_column(JSON, default=list)
+    entity_kinds: Mapped[list] = mapped_column(SafeJSON(list), default=list)
+    module_keys: Mapped[list] = mapped_column(SafeJSON(list), default=list)
     template: Mapped[str] = mapped_column(Text, default="")
     is_base: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[Optional[int]] = mapped_column(
@@ -578,7 +579,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text, default="")
     send_at: Mapped[datetime] = mapped_column(DateTime, index=True)   # naive UTC
-    audience_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    audience_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
     # {"mode":"all"} | {"mode":"users","user_ids":[..]} |
     # {"mode":"department","department_id":N,"include_head":true} |
     # {"mode":"heads"}
@@ -592,7 +593,7 @@ class Notification(Base):
     # Вложения рассылки: [{"file_id": "...", "type": "photo|video|document",
     # "caption": "..."}] — file_id загружен ботом через uploadMediaFile
     # (медиа, присланное администратором в чат бота).
-    media_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    media_json: Mapped[Optional[list]] = mapped_column(SafeJSON(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

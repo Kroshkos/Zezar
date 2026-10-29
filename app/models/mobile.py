@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, utcnow
+from app.core.json_type import SafeJSON
 
 
 class PushSubscription(TimestampMixin, Base):
@@ -51,6 +52,6 @@ class MobileEvent(TimestampMixin, Base):
     body: Mapped[Optional[str]] = mapped_column(Text)
     entity_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)
     module_key: Mapped[Optional[str]] = mapped_column(String(50))
-    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[dict] = mapped_column(SafeJSON(dict), default=dict)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     pushed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
