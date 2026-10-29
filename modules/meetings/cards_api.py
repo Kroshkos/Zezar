@@ -150,6 +150,41 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             stages_by_project.setdefault(t.project_entity_uid, []).append(t.entity_id)
     task_ids = {e.id: e for e in ents if e.kind == EntityKind.TASK}
 
+    # Подчинённые сущности проектов (Документы и ПО), привязанные через
+    # payload.project_entity_uid: uid проекта -> [(kind, title, status_key, stages)].
+    # Нужны для содержания печатной карточки проекта: статусы подчиненных
+    # сущностей выводятся чипами (см. static/js/meetings_cards.js).
+    project_uids = [e.uid for e in ents if e.kind == EntityKind.PROJECT]
+    subs_by_project: dict[str, list[tuple]] = {}
+    if project_uids:
+        rows = (await session.execute(
+            select(Entity.title, Entity.status_key, Entity.uid, DocPayload.stages)
+            .join(DocPayload, DocPayload.entity_id == Entity.id)
+            .where(Entity.kind == EntityKind.DOC,
+                   DocPayload.project_entity_uid.in_(project_uids)))).all()
+        for title, skey, puid, stgs in rows:
+            subs_by_project.setdefault(puid, []).append(("doc", title, skey, stgs or []))
+        rows = (await session.execute(
+            select(Entity.title, Entity.status_key, Entity.uid, SoftPayload.stages)
+            .join(SoftPayload, SoftPayload.entity_id == Entity.id)
+            .where(Entity.kind == EntityKind.SOFT,
+                   SoftPayload.project_entity_uid.in_(project_uids)))).all()
+        for title, skey, puid, stgs in rows:
+            subs_by_project.setdefault(puid, []).append(("soft", title, skey, stgs or []))
+
+    def _sub_mini(kind: str, skey: str, stgs: list) -> tuple[str, str]:
+        """Мини-статус подчинённой сущности для чипа: активный этап маршрута
+        («🧭 <этап>»), иначе — метка статуса из справочника."""
+        st = [s for s in (stgs or []) if isinstance(s, dict)]
+        act = next((s for s in st if s.get("state") == "active"), None)
+        if act and not all(s.get("done") or s.get("state") == "done" for s in st):
+            name = str(act.get("name") or "").strip()
+            if name:
+                return ("🧭 " + name)[:60], "b-blue"
+        label = labels.get((kind, skey)) or skey or "—"
+        color = stcolor.get((kind, skey), "b-gray")
+        return label, color
+
     # Журнал печати: последняя дата печати каждой сущности (фильтр
     # «ещё не печатались» на клиенте). Отдельный запрос — без изменения
     # updated_at самих сущностей.
@@ -275,6 +310,17 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             # текущий этап показывается отдельной плашкой (current_stage).
             # Поле оставлено пустым для обратной совместимости клиента.
             "stages": [],
+            # Подчинённые сущности проекта (Документы и ПО) со статусами —
+            # выводятся чипами в содержании печатной карточки проекта.
+            "sub_entities": [
+                {"kind": k, "title": t,
+                 "mini": _sub_mini(k, sk, st)[0],
+                 "color": _sub_mini(k, sk, st)[1],
+                 "stage_done": sum(1 for s in (st or [])
+                                   if isinstance(s, dict) and (s.get("done") or s.get("state") == "done")),
+                 "stage_total": len([s for s in (st or []) if isinstance(s, dict)])}
+                for k, t, sk, st in subs_by_project.get(ent.uid, [])
+            ] if ent.kind == EntityKind.PROJECT else [],
             # текущий этап маршрута — плашка в карточке (как приоритет); None у
             # карточек-задач и сущностей без этапов
             "current_stage": _current_stage_of(stages) if card_type == "entity" else None,
