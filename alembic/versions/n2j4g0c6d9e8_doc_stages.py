@@ -15,16 +15,39 @@ branch_labels = None
 depends_on = None
 
 
+def _has_stages() -> bool:
+    """Колонка stages уже есть в doc_payloads?
+
+    Легаси-БД, созданные старым create_all и наштампованные на head, могут
+    содержать doc_payloads.stages (колонка добавлена в модель) — тогда
+    повторный ADD COLUMN падает с "duplicate column name".
+    """
+    from alembic import op as _op
+    conn = _op.get_bind()
+    try:
+        rows = conn.exec_driver_sql("PRAGMA table_info(doc_payloads)").fetchall()
+    except Exception:  # таблица ещё не создана
+        return False
+    return any(r[1] == 'stages' for r in rows)
+
+
 def upgrade() -> None:
+    if _has_stages():
+        # схема уже самовосстановлена (create_all/_sync_missing_columns) —
+        # достаточно заполнять NULL для истории
+        op.execute("UPDATE doc_payloads SET stages = '[]' WHERE stages IS NULL")
+        return
     op.add_column(
         'doc_payloads',
         sa.Column('stages', sa.JSON(), nullable=True),
     )
     # исторические строки без маршрута -> пустой список (модель ожидает list)
-    op.execute("UPDATE doc_payloads SET stages = '[]'::json WHERE stages IS NULL")
-    op.alter_column('doc_payloads', 'stages', nullable=False,
-                    server_default=sa.text("'[]'"))
+    # ('[]'::json — синтаксис PostgreSQL, не поддерживается SQLite)
+    op.execute("UPDATE doc_payloads SET stages = '[]' WHERE stages IS NULL")
 
 
 def downgrade() -> None:
-    op.drop_column('doc_payloads', 'stages')
+    if not _has_stages():
+        return
+    with op.batch_alter_table('doc_payloads') as batch_op:
+        batch_op.drop_column('stages')
