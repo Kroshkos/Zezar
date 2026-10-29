@@ -24,6 +24,7 @@ async def main() -> None:
     from app.db.base import Base
     import app.models.core  # noqa
     import app.models.module_payloads  # noqa
+    import app.models.mobile  # noqa
     from app.models.core import Department, Entity, EntityKind, User
     from app.models.module_payloads import ProjectPayload, TaskPayload
     from app.core import entity_service, wf_service
