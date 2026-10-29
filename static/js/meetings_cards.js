@@ -174,9 +174,6 @@ function cardHTML(c) {
           <span class="ptag" style="background:${pcolor}">${esc(c.priority_label) || 'Без приоритета'}</span>
           <span class="pid pdate">${PRINT_DATE}</span>
         </div>
-        /* Статус проекта и плашка текущего этапа из шапки карточки убраны
-           по требованию пользователя: верхняя часть — только приоритет и дата;
-           содержание — статусы привязанных Документов и ПО (psubs). */
         ${dname ? `<div class="pdept" style="color:${dcolor}">${esc(dname)}</div>` : ''}
         <div class="pdir" style="color:${dcolor}">${esc(c.tag)}${c.cross_dept ? ' · межпространственная' : ''}</div>
         <div class="ptitle">${esc(c.title)}</div>
