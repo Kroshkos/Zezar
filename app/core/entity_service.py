@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import access
 from app.core.events import log_event
+from app.core.wf_service import is_task_done as wf_is_task_done
 from app.models.core import (
     AuditLog, DepartmentMember, Entity, EntityKind, EntityShare, EntityResponsible,
     OutboxEvent, Permission, SyncState, User,
@@ -354,20 +355,42 @@ async def notify_participants(
             payload={"kind": ent.kind.value, "event": event_key})
 
 
+async def _task_status_is_done(session: AsyncSession, task: Entity) -> bool:
+    """Финальный (успешно завершённый) статус задачи с учётом справочника
+    status_sets: канонический "done", эвристика ключа (wf_service.is_task_done)
+    и цвет b-green в эффективном наборе подразделения (как в notify)."""
+    from app.core.notify import terminal_status_keys
+    from app.core.wf_service import is_task_done
+    k = str(task.status_key or "").strip().lower()
+    if not k:
+        return False
+    if is_task_done(k):
+        return True
+    try:
+        keys = await terminal_status_keys(session, "task")
+    except Exception:
+        return False
+    return k in keys
+
+
 async def _close_wf_stage_for_task(session: AsyncSession, user: User,
                                    task: Entity) -> None:
     """Замыкание маршрута: завершение автозадачи этапа закрывает этап и
     активирует следующий (см. wf_service.wf_close_stage_for_task).
 
-    Вызывается из update_entity при переводе задачи в done. Если носитель
-    маршрута не найден — молча выходим (обычная задача без привязки к этапу).
-    Уведомляем участников сущности-носителя (раньше переход этапа происходил
-    «молча» — пользовательский баг «отмечаю задачу выполненной, а следующий
-    этап не активируется»: часть проблемы была ещё и в том, что хук вызывал
-    несуществующую функцию и падал NameError/500 либо не вызывался вовсе).
+    Вызывается из update_entity при переводе задачи в финальный статус. Если
+    носитель маршрута не найден — молча выходим (обычная задача без привязки
+    к этапу). Уведомляем участников сущности-носителя (раньше переход этапа
+    происходил «молча» — пользовательский баг «отмечаю задачу выполненной, а
+    следующий этап не активируется»: часть проблемы была ещё и в том, что хук
+    вызывал несуществующую функцию и падал NameError/500 либо не вызывался
+    вовсе; кроме того, распознавался только канонический ключ "done", тогда
+    как в справочнике задач финальный статус — "executed"/пользовательский).
     """
     from app.core import wf_service
     try:
+        if not await _task_status_is_done(session, task):
+            return
         res = await wf_service.wf_close_stage_for_task(session, user, task)
     except Exception:  # защита основного пути: маршрут не должен ломать закрытие задачи
         return
@@ -418,8 +441,7 @@ async def update_entity(
         # Замыкание маршрута: завершение задачи-автозадачи закрывает этап и
         # активирует следующий (см. wf_service.wf_close_stage_by_task).
         if ("status_key" in changed and ent.kind == EntityKind.TASK
-                and str(changes.get("status_key") or "").lower()
-                    in ("done", "closed", "completed", "finished")):
+                and wf_is_task_done(changes.get("status_key"))):
             await _close_wf_stage_for_task(session, user, ent)
         await _log_only(session, user, action, ent,
                         {"changed": changed, "old_status": old_status})

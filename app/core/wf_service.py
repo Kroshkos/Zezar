@@ -172,11 +172,26 @@ def wf_stats(stages: Any) -> tuple[int, int]:
 # этапов (пользовательский баг: «отмечаю автозадачу выполненной, а следующий
 # этап не активируется»).
 
-_TASK_DONE_KEYS = {"done", "closed", "completed", "finished"}
+_TASK_DONE_KEYS = {"done", "closed", "completed", "finished",
+                   "executed", "achieved", "held", "signed", "archived"}
+
+# Суффиксы «успешно завершённых» статусов (см. seed: PROJECT_STATUSES —
+# "exec"=Выполнение, DOC_STATUSES — "signed"/"archived"). Позволяет корректно
+# распознавать финальные статусы и в пользовательских справочниках status_sets,
+# где ключ может отличаться от канонического "done".
+_TASK_DONE_SUFFIXES = ("done", "complete", "executed", "closed")
 
 
 def is_task_done(status_key: str | None) -> bool:
-    return str(status_key or "").strip().lower() in _TASK_DONE_KEYS
+    k = str(status_key or "").strip().lower()
+    if not k:
+        return False
+    if k in _TASK_DONE_KEYS:
+        return True
+    # служебные/негативные ключи не считаем завершением никогда
+    if any(b in k for b in ("cancel", "reject", "backlog", "draft", "new")):
+        return False
+    return any(k.endswith(sfx) for sfx in _TASK_DONE_SUFFIXES)
 
 
 def _is_closed(s: dict) -> bool:
