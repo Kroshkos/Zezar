@@ -112,11 +112,7 @@ async def patch_department(dept_id: int, body: dict, user: User = Depends(get_cu
     for k in changed:
         setattr(dept, k, body[k])
     if changed:
-        # Скаляры актора читаем ДО commit: get_current_user возвращает detached
-        # User из собственной сессии — ленивое чтение user.display_name внутри
-        # log_event после мутаций/commit бросало MissingGreenlet (500 на PATCH).
-        await log_event(session, "update_department", category="dept",
-                        user_id=user.id, actor_name=user.display_name,
+        await log_event(session, "update_department", category="dept", user=user,
                         object=dept.name, level="warning",
                         message=f"Изменено подразделение '{dept.name}': {', '.join(changed)}")
     await session.commit()

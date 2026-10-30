@@ -39,21 +39,6 @@ class ShareIn(BaseModel):
     permission: Permission = Permission.READ
 
 
-@router.get("/departments/for-share")
-async def departments_for_share(user: User = Depends(get_current_user),
-                                session: AsyncSession = Depends(session_dep)):
-    """Все активные подразделения как возможные цели шеринга.
-
-    Модульные страницы раньше отдавали в выпадающий список только пространства
-    пользователя (ctx.department_ids) — руководитель не мог расшарить сущность
-    другим подразделениям, хотя бэкенд (POST /shares) это разрешает.
-    """
-    rows = (await session.scalars(
-        select(Department).where(Department.is_active == True)  # noqa: E712
-        .order_by(Department.name))).all()
-    return [{"id": d.id, "name": d.name} for d in rows]
-
-
 @router.get("/entities/{uid}/shares")
 async def list_shares(uid: str, user: User = Depends(get_current_user),
                       session: AsyncSession = Depends(session_dep)):
