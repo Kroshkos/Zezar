@@ -427,7 +427,11 @@ async def update_entity(
         # «Исполнена»), финальный успешный статус помечен цветом b-green.
         if ("status_key" in changed and ent.kind == EntityKind.TASK):
             from app.core import wf_service as _wfs
-            _done_keys = await _wfs.task_done_keys(session)
+            # справочник берём ЭФФЕКТИВНЫЙ для пространства-владельца задачи —
+            # иначе кастомные статусы подразделения («готово», «исполнена»)
+            # не распознавались и этап не закрывался
+            _done_keys = await _wfs.task_done_keys(session,
+                                                    ent.owner_department_id)
             if _wfs.is_task_done(changes.get("status_key"), _done_keys):
                 await _close_wf_stage_for_task(session, user, ent)
         await _log_only(session, user, action, ent,

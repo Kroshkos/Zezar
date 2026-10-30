@@ -297,7 +297,12 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
             session, user, ent, stages, dept_id, title_prefix="Документ «")
         pl = await _load_payload(session, ent.id)
         if pl:
-            pl.stages = stages
+            # новый объект + flag_modified: SQLAlchemy не видит мутации dict'ов
+            # внутри JSON-колонки (taskId автозадач терялся при commit — баг №3)
+            import copy as _copy
+            from sqlalchemy.orm.attributes import flag_modified as _fm
+            pl.stages = _copy.deepcopy(stages)
+            _fm(pl, "stages")
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
@@ -335,7 +340,12 @@ async def patch_doc(uid: str, body: dict, user: User = Depends(get_current_user)
     if payload:
         if "project_entity_uid" in body:
             await _check_project(session, ctx, body["project_entity_uid"])
-        for f in _DOC_FIELDS:
+        # ВАЖНО: поле «stages» из тела не должно попасть в setattr(payload, f, ...)
+        # до ветки слияния ниже — иначе сырой список клиента (без id/taskId/state)
+        # перезапишет маршрут, wf_merge_stages потеряет taskId и хук закрытия
+        # этапа перестанет находить задачу (баг №3: «отмечаю автозадачу выполненной,
+        # а переход на следующий этап не происходит»).
+        for f in _DOC_FIELDS - {"stages"}:
             if f in body:
                 setattr(payload, f, body[f] or None)
         # маршрут (wf): PATCH {stages:[...]} — слияние по id/имени + автозадачи новых
@@ -346,7 +356,14 @@ async def patch_doc(uid: str, body: dict, user: User = Depends(get_current_user)
             await wf_service.wf_create_stage_tasks(
                 session, user, ent, merged, ent.owner_department_id,
                 title_prefix="Документ «")
-            payload.stages = merged
+            # ВАЖНО: присваиваем НОВЫЙ список (глубокую копию) и явно ставим
+            # флаг изменения JSON-колонки. SQLAlchemy не отслеживает мутации
+            # dict'ов внутри JSON-типа: без этого taskId автозадач терялся при
+            # commit, и хук закрытия этапа не находил задачу (баг №3).
+            import copy as _copy
+            from sqlalchemy.orm.attributes import flag_modified as _fm
+            payload.stages = _copy.deepcopy(merged)
+            _fm(payload, "stages")
     await session.commit()
     return {"ok": True}
 

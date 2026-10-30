@@ -52,8 +52,23 @@ function openModal(title,bodyHtml,onSave,saveLabel='Сохранить'){
     const fd=new Proxy(form.elements,{
       get(el,k){
         if(typeof k!=='string') return el[k];
+        // Нативные методы/свойства объекта-мишени (hasOwnProperty, toString...)
+        // обязаны работать как обычно: обработчики модалок вызывают
+        // fd.hasOwnProperty('color') для проверки наличия поля. Если этого
+        // не сделать, прокси вернёт undefined (у HTMLFormControlsCollection
+        // таких свойств нет) и код решит, что поля нет, — «Сохранить» в окне
+        // изменения подразделения молча не выполнял PATCH.
+        if(!(k in el)){
+          const p=Object.getPrototypeOf(el);
+          if(p && typeof p[k]==='function') return p[k].bind(el);
+        }
         const c=el[k];
         if(!c) return undefined;
+        // guard: el[k] может вернуть примитив (number/string) — напр. el.length,
+        // el.item... У примитивов 'value' in c бросает TypeError («has already
+        // been used»/«Cannot use 'in» operator»), из-за чего submit падал ДО
+        // отправки PATCH и кнопка «Сохранить» молчала.
+        if(typeof c!=='object') return c;
         // Элементы форм (HTMLInputElement и т.п.) всегда имеют .value —
         // возвращаем строковое значение поля (fd.title → «текст»).
         if(typeof c==='object'&&'value'in c) return c.value;

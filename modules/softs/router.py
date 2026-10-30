@@ -291,12 +291,17 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
             session, user, ent, stages, dept_id, title_prefix="ПО «")
         pl = await _load_payload(session, ent.id)
         if pl:
-            pl.stages = stages
+            # новый объект + flag_modified: SQLAlchemy не видит мутации dict'ов
+            # внутри JSON-колонки (taskId автозадач терялся при commit — баг №3)
+            import copy as _copy
+            from sqlalchemy.orm.attributes import flag_modified as _fm
+            pl.stages = _copy.deepcopy(stages)
+            _fm(pl, "stages")
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
 
-_SOFT_FIELDS = {"soft_type", "repo_url", "env", "stages", "project_entity_uid"}
+_SOFT_FIELDS = {"soft_type", "repo_url", "env", "project_entity_uid"}
 
 
 @router.patch("/{uid}")
@@ -329,7 +334,7 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
     if payload:
         if "project_entity_uid" in body:
             await _check_project(session, ctx, body["project_entity_uid"])
-        for f in _SOFT_FIELDS - {"stages"}:
+        for f in _SOFT_FIELDS:
             if f in body:
                 setattr(payload, f, body[f] or None)
         # маршрут (wf): PATCH {stages:[...]} — слияние по id/имени + автозадачи новых
@@ -340,7 +345,14 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
             await wf_service.wf_create_stage_tasks(
                 session, user, ent, merged, ent.owner_department_id,
                 title_prefix="ПО «")
-            payload.stages = merged
+            # ВАЖНО: присваиваем НОВЫЙ список (глубокую копию) и явно ставим
+            # флаг изменения JSON-колонки. SQLAlchemy не отслеживает мутации
+            # dict'ов внутри JSON-типа: без этого taskId автозадач терялся при
+            # commit, и хук закрытия этапа не находил задачу (баг №3).
+            import copy as _copy
+            from sqlalchemy.orm.attributes import flag_modified as _fm
+            payload.stages = _copy.deepcopy(merged)
+            _fm(payload, "stages")
     await session.commit()
     return {"ok": True}
 
