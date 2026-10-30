@@ -391,20 +391,25 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
     # ответственного сам (служебный слот + шэр); здесь доназначаем внешних
     # исполнителей — открываем слот в их пространстве и поднимаем шэр до EDIT,
     # чтобы set_executors нашёл свободный слот (иначе назначение игнорируется).
+    # ВАЖНО: на entity_responsibles действует UNIQUE(entity_id, department_id)
+    # (одно подразделение = один слот), поэтому перед вставкой всегда
+    # перечитываем состояние через SELECT — иначе два внешних исполнителя из
+    # одного подразделения давали IntegrityError на flush().
     if ctx.is_global:
         exec_ids = [e for e in dict.fromkeys(body.executor_user_ids or []) if e]
+        await session.flush()
         for e in exec_ids:
             md = await session.scalar(
                 select(DepartmentMember.department_id).where(
                     DepartmentMember.user_id == e).order_by(DepartmentMember.id))
             if md is None or md == dept_id:
-                continue
+                continue  # внутренний исполнитель: слот владельца уже обработан ядром
             occupied = await session.scalar(
                 select(EntityResponsible.id).where(
                     EntityResponsible.entity_id == ent.id,
                     EntityResponsible.user_id == e))
             if occupied:
-                continue
+                continue  # уже занимает слот (например, внешний ответственный)
             sh = await session.scalar(
                 select(EntityShare).where(
                     EntityShare.entity_id == ent.id,
@@ -413,23 +418,22 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
                 session.add(EntityShare(
                     entity_id=ent.id, target_department_id=md,
                     permission=Permission.EDIT, granted_by_user_id=user.id))
-                session.add(EntityResponsible(entity_id=ent.id,
-                                              department_id=md, user_id=e))
-            elif access._perm_lt(sh.permission, Permission.EDIT):
-                sh.permission = Permission.EDIT
-                free_slot = await session.scalar(
-                    select(EntityResponsible).where(
-                        EntityResponsible.entity_id == ent.id,
-                        EntityResponsible.department_id == md,
-                        EntityResponsible.user_id.is_(None)))
-                if free_slot is None:
-                    session.add(EntityResponsible(entity_id=ent.id,
-                                                  department_id=md, user_id=e))
-                else:
-                    free_slot.user_id = e
             else:
+                await session.flush()
+                if not access._perm_lt(sh.permission, Permission.EDIT):
+                    sh.permission = Permission.EDIT
+            await session.flush()
+            slot = await session.scalar(
+                select(EntityResponsible).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.department_id == md))
+            if slot is None:
                 session.add(EntityResponsible(entity_id=ent.id,
                                               department_id=md, user_id=e))
+            elif slot.user_id is None:
+                slot.user_id = e
+            # слот занят другим сотрудником этого подразделения — исполнитель
+            # остаётся только в extra_json.executors (имена/доступ по шэру)
         await session.flush()
     # маршрут (wf) ПО: [{name, deadline}] -> нормализованные этапы + автозадачи
     import json as _json
@@ -472,18 +476,18 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
     core_changes = {k: v for k, v in body.items()
                     if k in {"title", "description", "status_key", "due_date"}}
     await entity_service.update_entity(session, user, ent, core_changes)
-    if "executor_user_ids" in body:
-        try:
-            await entity_service.set_executors(
-                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-    if "responsible_user_id" in body:
-        try:
-            await entity_service.assign_responsible(
-                session, user, ent, ent.owner_department_id, body["responsible_user_id"])
-        except PermissionError as e:
-            raise HTTPException(400, str(e))
+    if "soft_type" in body:
+        await _check_ref_type(session, user, ent.owner_department_id, body["soft_type"])
+    # Ответственный/исполнители: единая логика назначения (в т.ч. внешние
+    # сотрудники для админа/координатора — служебные слоты + шэры).
+    # set_executors вызывается внутри _assign_soft_people, поэтому отдельный
+    # блок executor_user_ids ниже убран (иначе двойное обновление/уведомления).
+    if "responsible_user_id" in body or "executor_user_ids" in body:
+        exec_ids = [int(x) for x in (body.get("executor_user_ids") or [])]
+        resp_id = body.get("responsible_user_id")
+        await _assign_soft_people(
+            session, user, ent, perm,
+            int(resp_id) if resp_id else None, exec_ids)
     payload = await _load_payload(session, ent.id)
     if payload:
         if "project_entity_uid" in body:
