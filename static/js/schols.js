@@ -119,11 +119,9 @@ function scholFormModal(uid){
 }
 
 async function shareSchol(uid){
-  // Цели шеринга — ВСЕ активные подразделения (ядро), а не только пространства пользователя.
-  let depts=[];try{depts=await api('/api/core/departments/for-share')}catch(e){depts=XD.departments||[]}
-  if(!depts.length){toast('Нет подразделений');return}
+  if(!XD.departments.length){toast('Нет подразделений');return}
   const body='<label>Подразделение</label><select name="target_department_id">'
-    +depts.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
+    +XD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
     +'<label>Права принимающей стороны</label><select name="permission">'
     +'<option value="read">Только чтение</option><option value="edit">Редактирование</option></select>';
   openModal('Шеринг назначения',body,async(fd)=>{
