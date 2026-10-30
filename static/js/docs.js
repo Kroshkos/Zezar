@@ -12,7 +12,7 @@ function tglD(el){const k=el.dataset.k;
 function renderDocCards(){
   const q=(document.getElementById('dq').value||'').toLowerCase();
   let list=DD.docs.filter(d=>{
-    if(q && !(d.title+' '+(d.number||'')+' '+(d.doc_type||'')).toLowerCase().includes(q))return false;
+    if(q && !(d.title+' '+(d.doc_type||'')).toLowerCase().includes(q))return false;
     if(DS.size && !DS.has(d.status_key))return false;
     return true;
   });
@@ -22,11 +22,9 @@ function renderDocCards(){
     return '<div class="card pad">'
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
-      +'<span style="color:var(--muted);font-size:12px">'+(d.number?'№ '+esc(d.number):'без номера')+'</span></div>'
+      +(d.doc_type?'<span style="color:var(--muted);font-size:12px">📑 '+esc(d.doc_type)+'</span>':'')+'</div>'
       +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+d.uid+'\');return false">'+esc(d.title||'Документ')+'</a></h3>'
-      +'<div style="color:var(--muted);font-size:12.5px">📅 '+dfmt(d.due_date)
-      +(d.doc_type?' · 📑 '+esc(d.doc_type):'')
-      +(d.issued_at?' · выдан '+dfmt(d.issued_at):'')+'</div>'
+      +'<div style="color:var(--muted);font-size:12.5px">📅 Дедлайн: '+dfmt(d.due_date)+'</div>'
       +(d.executor_names&&d.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(d.executor_names.join(', '))+'</div>':'')
       +(d.responsibles.length&&!d.executor_names?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👤 '+esc(d.responsibles.join(', '))+'</div>':'')
       +(d.stage_total?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">🧭 Маршрут: '+d.stage_done+'/'+d.stage_total+'</div>':'')

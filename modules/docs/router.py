@@ -36,10 +36,8 @@ async def _has_shares(session: AsyncSession, ent: Entity) -> bool:
 class DocIn(BaseModel):
     title: str = Field(min_length=2, max_length=500)
     status_key: str | None = None            # draft/signed/in_work/archived/canceled
-    due_date: str | None = None              # ISO-дата документа (поле ядра -> календарь)
-    doc_type: str | None = ""                # вид документа (docTypes из демо)
-    number: str | None = ""                  # номер документа
-    issued_at: str | None = ""               # дата выдачи/регистрации
+    due_date: str | None = None              # дедлайн документа (поле ядра -> календарь)
+    doc_type: str | None = ""                # вид документа (справочник doc_type)
     file_ref: str | None = ""                # ссылка на файл
     description: str | None = ""
     department_id: int | None = None         # для админа/координатора: чьё пространство
@@ -72,8 +70,7 @@ def _doc_dict(ent: Entity, p: DocPayload | None, perm: Permission | None,
         "responsible_user_id": responsible_uid,
         "department_id": ent.owner_department_id,
         "cross_dept": cross_dept,
-        "doc_type": p.doc_type if p else "", "number": p.number if p else "",
-        "issued_at": p.issued_at if p else "", "file_ref": p.file_ref if p else "",
+        "doc_type": p.doc_type if p else "", "file_ref": p.file_ref if p else "",
         "stages": stages, "stage_done": done, "stage_total": total,
         "progress": round(done / total * 100) if total else 0,
         "project_entity_uid": p.project_entity_uid if p else None,
@@ -555,8 +552,8 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
             raise HTTPException(422, "Некорректный JSON в поле stages")
     stages = wf_service.wf_build_stages(stages_raw if isinstance(stages_raw, list) else [])
     session.add(DocPayload(
-        entity_id=ent.id, doc_type=body.doc_type or None, number=body.number or None,
-        issued_at=body.issued_at or None, file_ref=body.file_ref or None,
+        entity_id=ent.id, doc_type=body.doc_type or None,
+        file_ref=body.file_ref or None,
         project_entity_uid=body.project_entity_uid or None, stages=stages))
     await session.flush()
     if stages:
@@ -569,7 +566,7 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
     return {"uid": ent.uid, "ok": True}
 
 
-_DOC_FIELDS = {"doc_type", "number", "issued_at", "file_ref", "project_entity_uid"}
+_DOC_FIELDS = {"doc_type", "file_ref", "project_entity_uid"}
 
 
 @router.patch("/{uid}")

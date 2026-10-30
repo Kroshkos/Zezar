@@ -171,7 +171,8 @@ async def _check_ref_type(session: AsyncSession, user: User, dept_id: int,
 async def _assign_soft_people(session: AsyncSession, user: User, ent: Entity,
                               perm: Permission | None,
                               responsible_user_id: int | None,
-                              executor_ids: list[int]) -> None:
+                              executor_ids: list[int], *,
+                              notify: bool = True) -> None:
     """Назначение ответственного и исполнителей с учётом изоляции пространств.
 
     Администратор/координатор может выбрать сотрудника из ЛЮБОГО подразделения:
@@ -318,7 +319,8 @@ async def _assign_soft_people(session: AsyncSession, user: User, ent: Entity,
                 for e in dict.fromkeys(executor_ids):
                     if e:
                         await _ensure_slot(e)
-            await entity_service.set_executors(session, user, ent, executor_ids)
+            await entity_service.set_executors(session, user, ent, executor_ids,
+                                               notify=notify)
             # set_executors мог освободить слот внешнего ответственного/исполнителя
             # (unique подразделения = один слот) — возвращаем его на своё место;
             # инвариант "primary существует" восстанавливаем всегда.
@@ -508,15 +510,12 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
     # (одно подразделение = один слот), поэтому перед вставкой всегда
     # перечитываем состояние через flush+SELECT — иначе два внешних исполнителя
     # из одного подразделения давали IntegrityError на flush().
-    if ctx.is_global:
-        await _external_executors(session, user, ent, dept_id,
-                                  list(body.executor_user_ids or []))
-    else:
-        # Обычный участник: чужого (несостоящего в пространстве-владельце)
-        # ответственного принимать нельзя — create_entity при внешнем выборе
-        # открывает служебный слот+шэр в чужом подразделении (лазейка доступа).
-        # Ядро в таких случаях ставит owner-слоту user_id=None — проверяем, что
-        # ответственный реально занял слот своего пространства.
+    # Обычный участник: чужого (несостоящего в пространстве-владельце)
+    # ответственного принимать нельзя — ядро в таких случаях ставит
+    # owner-слоту user_id=None. Проверяем, что ответственный реально занял
+    # слот пространства-владельца (иначе 400 + откат транзакции).
+    resp_id = body.responsible_user_id or user.id
+    if not ctx.is_global:
         from app.models.core import EntityResponsible
         owner_slot = await session.scalar(
             select(EntityResponsible).where(
@@ -525,6 +524,17 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
         if resp_id != user.id and (owner_slot is None or owner_slot.user_id != resp_id):
             await session.rollback()
             raise HTTPException(400, "Ответственный должен состоять в выбранном подразделении")
+    # Внешние исполнители (админ/координатор может выбрать сотрудников из
+    # ЛЮБОГО подразделения): доназначаем их через единую логику модуля —
+    # служебные слоты + шэры в пространствах исполнителей. set_executors
+    # внутри вызывается с notify=False: карточка ещё не имеет payload, а
+    # уведомление о создании («создана карточка») уже покрывает назначенных
+    # участников — иначе получался дубль событий.
+    if ctx.is_global and body.executor_user_ids:
+        perm = await access.resolve_permission(session, ctx, ent)
+        await _assign_soft_people(session, user, ent, perm,
+                                  None, list(body.executor_user_ids),
+                                  notify=False)
     # маршрут (wf) ПО: [{name, deadline}] -> нормализованные этапы + автозадачи
     import json as _json
     stages_raw = []
