@@ -74,6 +74,13 @@ function docFormModal(uid){
       +'<select name="executor_user_ids" id="dexec" multiple size="4" style="width:100%">'
       +DD.people.map(p=>'<option value="'+p.id+'" '+(cur.has(String(p.id))?'selected':'')+'>'+esc(p.name)+'</option>').join('')
       +'</select></div>';}
+  // Ответственный — один сотрудник из выпадающего списка (при создании по умолчанию — текущий пользователь)
+  let respSel='';
+  if(DD.people&&DD.people.length){
+    const curId=d?(d.responsible_user_id||null):(DD.me||null);
+    respSel='<div><label>Ответственный</label><select name="responsible_user_id">'
+      +DD.people.map(p=>'<option value="'+p.id+'" '+(String(p.id)===String(curId)?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';}
   const dtList=(DD.doc_types||[]).length
     ? '<div><label>Вид документа</label><select name="doc_type"><option value="">—</option>'
       +DD.doc_types.map(t=>'<option value="'+esc(t.label)+'" '+((d&&d.doc_type===t.label)?'selected':'')+'>'+esc(t.label)+'</option>').join('')
@@ -81,36 +88,38 @@ function docFormModal(uid){
     : '<div><label>Вид документа</label><input name="doc_type" value="'+esc(d&&d.doc_type||'')+'"></div>';
   const body='<label>Название документа *</label><input name="title" required value="'+esc(d?d.title:'')+'">'
     +'<div class="frow">'
-    +'<div><label>Дата (календарь)</label><input type="date" name="due_date" value="'+(d&&d.due_date||'')+'"></div>'
-    +'<div><label>Номер</label><input name="number" value="'+esc(d&&d.number||'')+'"></div>'
+    +'<div><label>Дедлайн (календарь)</label><input type="date" name="due_date" value="'+(d&&d.due_date||'')+'"></div>'
     +dtList
-    +'</div><div class="frow">'
-    +'<div><label>Выдан/зарегистрирован</label><input type="date" name="issued_at" value="'+esc(d&&d.issued_at||'')+'"></div>'
-    +'<div><label>Ссылка на файл</label><input name="file_ref" placeholder="https://…" value="'+esc(d&&d.file_ref||'')+'"></div>'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
+    +'</div><div class="frow">'
+    +'<div><label>Ссылка на файл</label><input name="file_ref" placeholder="https://…" value="'+esc(d&&d.file_ref||'')+'"></div>'
+    +(respSel||'<div></div>')
     +'</div><div class="frow">'+deptSel+projSel+'</div>'
     +execSel
     +'<label>Описание / комментарий</label><textarea name="description" rows="2">'+esc(d?d.description:'')+'</textarea>';
   openModal(d?'Редактирование документа':'Новый документ',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите название документа');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
-              status_key:fd.status_key,number:fd.number,doc_type:fd.doc_type,
-              issued_at:fd.issued_at||null,file_ref:fd.file_ref};
+              status_key:fd.status_key,doc_type:fd.doc_type,file_ref:fd.file_ref};
     if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
+    if(f.responsible_user_id&&f.responsible_user_id.value)pl.responsible_user_id=+f.responsible_user_id.value;
     const sel=f.querySelector('#dexec');
     if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
     if(f.department_id)pl.department_id=+f.department_id.value;
+    const enames=(pl.executor_user_ids||[]).map(id=>(DD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+    const rname=pl.responsible_user_id?((DD.people.find(p=>p.id===pl.responsible_user_id)||{}).name||''):'';
+    const ptitle=pl.project_entity_uid?((DD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
     if(d){
       await api('/api/docs/'+d.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(d,pl);
-      if(pl.executor_user_ids)d.executor_names=pl.executor_user_ids.map(id=>(DD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
-      if(pl.project_entity_uid!==undefined)d.project_title=pl.project_entity_uid?((DD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
+      if(pl.executor_user_ids)d.executor_names=enames;
+      if(pl.responsible_user_id&&rname)d.responsibles=[rname];
+      if(pl.project_entity_uid!==undefined)d.project_title=ptitle;
       toast('Сохранено · событие обновится в календарях');
     }else{
       const r=await api('/api/docs',{method:'POST',body:JSON.stringify(pl)});
-      DD.docs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],
-        executor_names:(pl.executor_user_ids||[]).map(id=>(DD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean),
-        project_title:pl.project_entity_uid?((DD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):''},pl));
+      DD.docs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,
+        responsibles:rname?[rname]:[],executor_names:enames,project_title:ptitle},pl));
       toast('Документ создан');
     }
     closeModal();renderDocCards();

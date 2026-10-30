@@ -509,43 +509,22 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
     # перечитываем состояние через flush+SELECT — иначе два внешних исполнителя
     # из одного подразделения давали IntegrityError на flush().
     if ctx.is_global:
-        exec_ids = [e for e in dict.fromkeys(body.executor_user_ids or []) if e]
-        await session.flush()
-        for e in exec_ids:
-            md = await session.scalar(
-                select(DepartmentMember.department_id).where(
-                    DepartmentMember.user_id == e).order_by(DepartmentMember.id))
-            if md is None or md == dept_id:
-                continue  # внутренний исполнитель: слот владельца уже обработан ядром
-            occupied = await session.scalar(
-                select(EntityResponsible.id).where(
-                    EntityResponsible.entity_id == ent.id,
-                    EntityResponsible.user_id == e))
-            if occupied:
-                continue  # уже занимает слот (например, внешний ответственный)
-            sh = await session.scalar(
-                select(EntityShare).where(
-                    EntityShare.entity_id == ent.id,
-                    EntityShare.target_department_id == md))
-            if sh is None:
-                session.add(EntityShare(
-                    entity_id=ent.id, target_department_id=md,
-                    permission=Permission.EDIT, granted_by_user_id=user.id))
-            elif access._perm_lt(sh.permission, Permission.EDIT):
-                sh.permission = Permission.EDIT
-            await session.flush()
-            slot = await session.scalar(
-                select(EntityResponsible).where(
-                    EntityResponsible.entity_id == ent.id,
-                    EntityResponsible.department_id == md))
-            if slot is None:
-                session.add(EntityResponsible(entity_id=ent.id,
-                                              department_id=md, user_id=e))
-            elif slot.user_id is None:
-                slot.user_id = e
-            # слот занят другим сотрудником этого подразделения — исполнитель
-            # остаётся только в extra_json.executors (имена/доступ по шэру)
-        await session.flush()
+        await _external_executors(session, user, ent, dept_id,
+                                  list(body.executor_user_ids or []))
+    else:
+        # Обычный участник: чужого (несостоящего в пространстве-владельце)
+        # ответственного принимать нельзя — create_entity при внешнем выборе
+        # открывает служебный слот+шэр в чужом подразделении (лазейка доступа).
+        # Ядро в таких случаях ставит owner-слоту user_id=None — проверяем, что
+        # ответственный реально занял слот своего пространства.
+        from app.models.core import EntityResponsible
+        owner_slot = await session.scalar(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.department_id == dept_id))
+        if resp_id != user.id and (owner_slot is None or owner_slot.user_id != resp_id):
+            await session.rollback()
+            raise HTTPException(400, "Ответственный должен состоять в выбранном подразделении")
     # маршрут (wf) ПО: [{name, deadline}] -> нормализованные этапы + автозадачи
     import json as _json
     stages_raw = []
