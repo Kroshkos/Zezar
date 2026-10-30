@@ -64,6 +64,11 @@ function openModal(title,bodyHtml,onSave,saveLabel='Сохранить'){
         }
         const c=el[k];
         if(!c) return undefined;
+        // guard: el[k] может вернуть примитив (number/string) — напр. el.length,
+        // el.item... У примитивов 'value' in c бросает TypeError («has already
+        // been used»/«Cannot use 'in» operator»), из-за чего submit падал ДО
+        // отправки PATCH и кнопка «Сохранить» молчала.
+        if(typeof c!=='object') return c;
         // Элементы форм (HTMLInputElement и т.п.) всегда имеют .value —
         // возвращаем строковое значение поля (fd.title → «текст»).
         if(typeof c==='object'&&'value'in c) return c.value;
