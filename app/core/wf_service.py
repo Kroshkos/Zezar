@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import uuid as _uuid
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -115,13 +116,42 @@ def wf_merge_stages(old: list | None, new_raw: list | None) -> list[dict]:
 
 async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
                                 stages: list[dict], dept_id: int,
-                                title_prefix: str = "") -> int:
+                                title_prefix: str = "",
+                                leader_user_id: int | None = None) -> int:
     """Автозадачи для этапов БЕЗ taskId (и шагов ответвлений). Возвращает число
-    созданных задач. Исполнитель — автор сущности; срок — дедлайн этапа."""
+    созданных задач. Исполнитель — руководитель маршрута (leader) или автор
+    сущности; срок — дедлайн этапа.
+
+    Идемпотентность (баг «при повторном сохранении маршрута создаются дубли
+    автозадач, а хук закрытия этапа находит не ту задачу»): перед созданием
+    новой задачи ищем уже существующую автозадачу этого носителя с тем же
+    названием («… — этап: X») и только привязываем её к этапу — без дублей.
+    """
     created = 0
+    resp = leader_user_id or user.id
+
+    async def _reuse_existing(title: str) -> str | None:
+        """Найти ранее созданную автозадачу этого носителя по точному названию."""
+        row = await session.execute(
+            select(Entity.id, TaskPayload.project_entity_uid)
+            .join(TaskPayload, TaskPayload.entity_id == Entity.id)
+            .where(Entity.kind == EntityKind.TASK,
+                   Entity.module_key == "tasks",
+                   Entity.title == title))
+        for eid, puid in row.all():
+            if puid is None or puid == ent.uid:
+                r2 = await session.execute(
+                    select(Entity.uid).where(Entity.id == eid))
+                return r2.scalar_one_or_none()
+        return None
 
     async def _mk_task(title: str, desc: str, due: str | None, resp_id: int):
         nonlocal created
+        old_uid = await _reuse_existing(title)
+        if old_uid:
+            # задача уже существует (пересоздание маршрута/смена id этапа) —
+            # просто возвращаем её uid, дубли недопустимы
+            return SimpleNamespace(uid=old_uid)
         t = await entity_service.create_entity(
             session, user, kind=EntityKind.TASK, module_key="tasks",
             owner_department_id=dept_id, title=title, description=desc,
@@ -139,7 +169,7 @@ async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
         t = await _mk_task(
             f"{title_prefix}{ent.title} — этап: {s['name']}",
             "Автозадача этапа «" + s["name"] + "». Завершение задачи закрывает этап.",
-            s.get("deadline") or None, user.id)
+            s.get("deadline") or None, resp)
         s["taskId"] = t.uid
     for s in stages:
         for br in (s.get("branches") or []):
@@ -152,7 +182,7 @@ async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
                         f"{title_prefix}{ent.title} — ветка «{br.get('name', '')}»:"
                         f" {bs.get('name', '')}",
                         f"Автозадача этапа ветки «{br.get('name', '')}».",
-                        bs.get("deadline") or None, user.id)
+                        bs.get("deadline") or None, resp)
                     bs["taskId"] = t.uid
     return created
 
@@ -196,17 +226,34 @@ def is_task_done(status_key: str | None, extra_terminal_keys: set[str] | None = 
     return False
 
 
-async def task_done_keys(session: AsyncSession) -> set[str]:
-    """Ключи завершающих статусов задач из StatusSet: все бегущие по полю key
-    («done»-синонимы) плюс любые активные записи вида task с цветом b-green."""
-    from app.models.core import StatusSet
-    rows = (await session.scalars(
-        select(StatusSet).where(StatusSet.kind == EntityKind.TASK))).all()
-    keys = {r.key.strip().lower() for r in rows
-            if r.is_active and (r.color == "b-green"
-                                or r.key.strip().lower() in _TASK_DONE_KEYS
-                                or str(r.label or "").strip().lower() in _TASK_DONE_LABELS)}
-    return keys | _TASK_DONE_KEYS
+async def task_done_keys(session: AsyncSession,
+                         dept_id: int | None = None) -> set[str]:
+    """Ключи завершающих статусов задач из StatusSet.
+
+    Учитывается ЭФФЕКТИВНЫЙ справочник подразделения-владельца задачи
+    (refdata.effective_statuses): глобальные шаблоны + собственные записи
+    пространства с переопределениями/выключениями. Раньше использовался
+    плоский запрос по всем записям вида task — при кастомных справочниках
+    («готово», «исполнена» и т.п.) хук автосокрытия этапа не срабатывал.
+    Если подразделение отключило модуль tasks (effective_statuses вернул
+    пустой список) — остаётся детерминированный набор ключей.
+    """
+    base = set(_TASK_DONE_KEYS)
+    try:
+        from app.core import refdata
+        rows = await refdata.effective_statuses(session, EntityKind.TASK, dept_id)
+    except Exception:  # справочник не должен ломать основной путь
+        from app.core.security import log as _log
+        _log.exception("wf: не удалось прочитать справочник статусов задач")
+        return base
+    for r in rows:
+        if not r.is_active:
+            continue
+        if (r.color == "b-green"
+                or str(r.key or "").strip().lower() in _TASK_DONE_KEYS
+                or str(r.label or "").strip().lower() in _TASK_DONE_LABELS):
+            base.add(str(r.key).strip().lower())
+    return base
 
 
 def _is_closed(s: dict) -> bool:
