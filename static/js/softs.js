@@ -121,11 +121,9 @@ function softFormModal(uid){
 }
 
 async function shareSoft(uid){
-  // Цели шеринга — ВСЕ активные подразделения (ядро), а не только пространства пользователя.
-  let depts=[];try{depts=await api('/api/core/departments/for-share')}catch(e){depts=SD.departments||[]}
-  if(!depts.length){toast('Нет подразделений');return}
+  if(!SD.departments.length){toast('Нет подразделений');return}
   const body='<label>Подразделение</label><select name="target_department_id">'
-    +depts.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
+    +SD.departments.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('')+'</select>'
     +'<label>Права принимающей стороны</label><select name="permission">'
     +'<option value="read">Только чтение</option><option value="edit">Редактирование</option></select>';
   openModal('Шеринг записи',body,async(fd)=>{
