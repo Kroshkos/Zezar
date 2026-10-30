@@ -75,6 +75,14 @@ function softFormModal(uid){
       +SD.projects.map(p=>'<option value="'+p.uid+'" '+(s&&s.project_entity_uid===p.uid?'selected':'')+'>'+esc(p.title)+'</option>').join('')
       +'</select></div>';}
   else if(s&&s.project_title){projSel='<input type="hidden" name="project_entity_uid" value="'+esc(s.project_entity_uid||'')+'">';}
+  // Ответственный — один сотрудник из справочника пользователей (как в задачах);
+  // при создании по умолчанию выбирается текущий пользователь.
+  let respSel='';
+  if(SD.people&&SD.people.length){
+    const curId=s?(s.responsible_user_id||null):(SD.me||null);
+    respSel='<div><label>Ответственный</label><select name="responsible_user_id">'
+      +SD.people.map(p=>'<option value="'+p.id+'" '+(String(p.id)===String(curId)?'selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';}
   // Исполнители — может быть несколько (мульти-select, как в задачах/проектах)
   let execSel='';
   if(SD.people&&SD.people.length){
@@ -92,6 +100,7 @@ function softFormModal(uid){
     +'<div><label>Репозиторий</label><input name="repo_url" placeholder="https://…" value="'+esc(s&&s.repo_url||'')+'"></div>'
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
     +'</div><div class="frow">'+deptSel+projSel+'</div>'
+    +(respSel?'<div class="frow">'+respSel+'</div>':'')
     +execSel
     +'<label>Описание</label><textarea name="description" rows="2">'+esc(s?s.description:'')+'</textarea>';
   openModal(s?'Редактирование записи':'Новая разработка',body,async(fd,f)=>{
@@ -101,18 +110,22 @@ function softFormModal(uid){
     if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
     const sel=f.querySelector('#sexec');
     if(sel)pl.executor_user_ids=Array.from(sel.selectedOptions).map(o=>+o.value);
+    if(f.responsible_user_id&&f.responsible_user_id.value)pl.responsible_user_id=+f.responsible_user_id.value;
     if(f.department_id)pl.department_id=+f.department_id.value;
     const enames=(pl.executor_user_ids||[]).map(id=>(SD.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+    const rname=pl.responsible_user_id?((SD.people.find(p=>p.id===pl.responsible_user_id)||{}).name||''):'';
     const ptitle=pl.project_entity_uid?((SD.projects.find(p=>p.uid===pl.project_entity_uid)||{}).title||''):'';
     if(s){
       await api('/api/softs/'+s.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(s,pl);
       if(pl.executor_user_ids)s.executor_names=enames;
+      if(pl.responsible_user_id!==undefined&&rname)s.responsibles=[rname];
       if(pl.project_entity_uid!==undefined)s.project_title=ptitle;
       toast('Сохранено · событие обновится в календарях');
     }else{
       const r=await api('/api/softs',{method:'POST',body:JSON.stringify(pl)});
-      SD.softs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],stages:[],
+      SD.softs.unshift(Object.assign({uid:r.uid,can_edit:true,can_share:true,
+        responsibles:rname?[rname]:[],stages:[],
         executor_names:enames,project_title:ptitle},pl));
       toast('Запись создана');
     }
