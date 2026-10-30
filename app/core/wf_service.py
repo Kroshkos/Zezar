@@ -174,9 +174,39 @@ def wf_stats(stages: Any) -> tuple[int, int]:
 
 _TASK_DONE_KEYS = {"done", "closed", "completed", "finished"}
 
+# Пользовательские статусы задач из справочников (RefData): ключ может быть
+# любым («ready», «complete» и т.п.), поэтому дополнительно ориентируемся на
+# цвет записи: b-green — финальный успешный статус (тот же контракт, что и в
+# app.core.notify.terminal_status_keys). Иначе хук автосокрытия этапа молча
+# не срабатывал для подразделений с собственными справочниками статусов.
+_TASK_DONE_LABELS = {
+    "готово", "выполнено", "выполнена", "исполнено", "исполнена",
+    "завершено", "завершена", "закрыто", "закрыта", "решено", "решена",
+}
 
-def is_task_done(status_key: str | None) -> bool:
-    return str(status_key or "").strip().lower() in _TASK_DONE_KEYS
+
+def is_task_done(status_key: str | None, extra_terminal_keys: set[str] | None = None) -> bool:
+    """Завершающий ли это статус задачи: детерминированные ключи + ключи
+    пользовательского справочника (color=b-green / финальные метки)."""
+    k = str(status_key or "").strip().lower()
+    if k in _TASK_DONE_KEYS:
+        return True
+    if extra_terminal_keys and k in {str(x).strip().lower() for x in extra_terminal_keys}:
+        return True
+    return False
+
+
+async def task_done_keys(session: AsyncSession) -> set[str]:
+    """Ключи завершающих статусов задач из StatusSet: все бегущие по полю key
+    («done»-синонимы) плюс любые активные записи вида task с цветом b-green."""
+    from app.models.core import StatusSet
+    rows = (await session.scalars(
+        select(StatusSet).where(StatusSet.kind == EntityKind.TASK))).all()
+    keys = {r.key.strip().lower() for r in rows
+            if r.is_active and (r.color == "b-green"
+                                or r.key.strip().lower() in _TASK_DONE_KEYS
+                                or str(r.label or "").strip().lower() in _TASK_DONE_LABELS)}
+    return keys | _TASK_DONE_KEYS
 
 
 def _is_closed(s: dict) -> bool:
