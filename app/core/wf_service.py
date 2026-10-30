@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import uuid as _uuid
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -115,13 +116,42 @@ def wf_merge_stages(old: list | None, new_raw: list | None) -> list[dict]:
 
 async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
                                 stages: list[dict], dept_id: int,
-                                title_prefix: str = "") -> int:
+                                title_prefix: str = "",
+                                leader_user_id: int | None = None) -> int:
     """Автозадачи для этапов БЕЗ taskId (и шагов ответвлений). Возвращает число
-    созданных задач. Исполнитель — автор сущности; срок — дедлайн этапа."""
+    созданных задач. Исполнитель — руководитель маршрута (leader) или автор
+    сущности; срок — дедлайн этапа.
+
+    Идемпотентность (баг «при повторном сохранении маршрута создаются дубли
+    автозадач, а хук закрытия этапа находит не ту задачу»): перед созданием
+    новой задачи ищем уже существующую автозадачу этого носителя с тем же
+    названием («… — этап: X») и только привязываем её к этапу — без дублей.
+    """
     created = 0
+    resp = leader_user_id or user.id
+
+    async def _reuse_existing(title: str) -> str | None:
+        """Найти ранее созданную автозадачу этого носителя по точному названию."""
+        row = await session.execute(
+            select(Entity.id, TaskPayload.project_entity_uid)
+            .join(TaskPayload, TaskPayload.entity_id == Entity.id)
+            .where(Entity.kind == EntityKind.TASK,
+                   Entity.module_key == "tasks",
+                   Entity.title == title))
+        for eid, puid in row.all():
+            if puid is None or puid == ent.uid:
+                r2 = await session.execute(
+                    select(Entity.uid).where(Entity.id == eid))
+                return r2.scalar_one_or_none()
+        return None
 
     async def _mk_task(title: str, desc: str, due: str | None, resp_id: int):
         nonlocal created
+        old_uid = await _reuse_existing(title)
+        if old_uid:
+            # задача уже существует (пересоздание маршрута/смена id этапа) —
+            # просто возвращаем её uid, дубли недопустимы
+            return SimpleNamespace(uid=old_uid)
         t = await entity_service.create_entity(
             session, user, kind=EntityKind.TASK, module_key="tasks",
             owner_department_id=dept_id, title=title, description=desc,
@@ -139,7 +169,7 @@ async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
         t = await _mk_task(
             f"{title_prefix}{ent.title} — этап: {s['name']}",
             "Автозадача этапа «" + s["name"] + "». Завершение задачи закрывает этап.",
-            s.get("deadline") or None, user.id)
+            s.get("deadline") or None, resp)
         s["taskId"] = t.uid
     for s in stages:
         for br in (s.get("branches") or []):
@@ -152,7 +182,7 @@ async def wf_create_stage_tasks(session: AsyncSession, user: User, ent: Entity,
                         f"{title_prefix}{ent.title} — ветка «{br.get('name', '')}»:"
                         f" {bs.get('name', '')}",
                         f"Автозадача этапа ветки «{br.get('name', '')}».",
-                        bs.get("deadline") or None, user.id)
+                        bs.get("deadline") or None, resp)
                     bs["taskId"] = t.uid
     return created
 
