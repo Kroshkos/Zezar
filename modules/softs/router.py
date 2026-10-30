@@ -15,8 +15,8 @@ from app.core import access, entity_service, refdata, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
-    Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
-    StatusSet, User,
+    Department, DepartmentMember, Entity, EntityKind, EntityResponsible,
+    EntityShare, Permission, StatusSet, User,
 )
 from app.models.module_payloads import SoftPayload
 from app.ui import render_page
@@ -58,7 +58,8 @@ def _executors(ent: Entity) -> list[dict]:
 
 def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
                resp_names: list[str], cross_dept: bool = False,
-               project_title: str | None = None) -> dict:
+               project_title: str | None = None,
+               responsible_uid: int | None = None) -> dict:
     execs = _executors(ent)
     stages = (p.stages if p else []) or []
     done, total = wf_service.wf_stats(stages)
@@ -74,6 +75,7 @@ def _soft_dict(ent: Entity, p: SoftPayload | None, perm: Permission | None,
         "project_entity_uid": p.project_entity_uid if p else None,
         "project_title": project_title or "",
         "responsibles": resp_names,
+        "responsible_user_id": responsible_uid,
         "executors": execs,
         "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
@@ -149,6 +151,212 @@ async def _check_project(session: AsyncSession, ctx: access.AccessContext,
         raise HTTPException(403, "Нет доступа к выбранному проекту")
 
 
+async def _check_ref_type(session: AsyncSession, user: User, dept_id: int,
+                          label: str | None) -> None:
+    """Тип ПО обязан быть из справочника администрирования (RefType kind=soft_type):
+    глобальные шаблоны администратора + записи/активированные копии подразделения."""
+    if not label:
+        return
+    from sqlalchemy import or_
+    from app.models.core import RefType
+    ok = await session.scalar(
+        select(RefType.id).where(
+            RefType.kind == RefType.KIND_SOFT, RefType.is_active == True,  # noqa: E712
+            RefType.label == label,
+            or_(RefType.department_id.is_(None), RefType.department_id == dept_id)))
+    if ok is None:
+        raise HTTPException(422, "Тип ПО должен быть выбран из справочника (администрирование → Типы ПО)")
+
+
+async def _assign_soft_people(session: AsyncSession, user: User, ent: Entity,
+                              perm: Permission | None,
+                              responsible_user_id: int | None,
+                              executor_ids: list[int]) -> None:
+    """Назначение ответственного и исполнителей с учётом изоляции пространств.
+
+    Администратор/координатор может выбрать сотрудника из ЛЮБОГО подразделения:
+    если выбранный не состоит в пространстве-владельце, для его подразделения
+    открывается служебный слот (+шэр), как это делает create_entity для
+    внешнего ответственного. Для обычных пользователей действует стандартная
+    проверка членства (entity_service.assign_responsible/set_executors).
+    """
+    from app.models.core import Role
+    is_global = user.role in (Role.ADMIN, Role.COORDINATOR)
+    owner_dept = ent.owner_department_id
+
+    async def _primary_uid() -> int | None:
+        """Текущий primary ответственный (из БД, без pending-шума)."""
+        return await session.scalar(
+            select(EntityResponsible.user_id).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.is_primary == True))  # noqa: E712
+
+    async def _member_dept(uid: int) -> int | None:
+        return await session.scalar(
+            select(DepartmentMember.department_id).where(
+                DepartmentMember.user_id == uid).order_by(DepartmentMember.id))
+
+    async def _ensure_slot(uid: int, *, primary: bool = False) -> None:
+        """Служебный слот (и, при необходимости, шэр READ/EDIT) для внешнего сотрудника.
+
+        ВАЖНО: на entity_responsibles действует UNIQUE(entity_id, department_id)
+        (одно подразделение = один слот), поэтому перед вставкой перечитываем
+        состояние через flush+SELECT — иначе два внешних исполнителя из одного
+        подразделения давали IntegrityError.
+
+        primary=True разрешает занять уже занятый слот подразделения: ответственный
+        важнее исполнителя, прежний occupant остаётся только в extra_json.executors.
+        """
+        md = await _member_dept(uid)
+        if md is None or md == owner_dept:
+            return
+        has = await session.scalar(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.user_id == uid))
+        if has:
+            if primary:
+                has.is_primary = True
+            return
+        sh = await session.scalar(
+            select(EntityShare).where(
+                EntityShare.entity_id == ent.id,
+                EntityShare.target_department_id == md))
+        if sh is None:
+            session.add(EntityShare(entity_id=ent.id, target_department_id=md,
+                                    permission=Permission.READ,
+                                    granted_by_user_id=user.id))
+        elif access._perm_lt(sh.permission, Permission.EDIT):
+            # принимающая сторона должна видеть назначение — поднимаем шэр до EDIT
+            sh.permission = Permission.EDIT
+        await session.flush()  # фиксируем pending-слоты до повторного SELECT
+        slot = await session.scalar(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.department_id == md,
+                EntityResponsible.user_id.is_(None)))
+        if slot is None:
+            occupied = await session.scalar(
+                select(EntityResponsible).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.department_id == md))
+            if occupied is not None:
+                if not primary:
+                    # слот этого подразделения занят другим сотрудником — исполнитель
+                    # остаётся только в extra_json.executors (имена/доступ по шэру)
+                    return
+                occupied.user_id = uid
+                occupied.is_primary = True
+                return
+            slot = EntityResponsible(entity_id=ent.id, department_id=md)
+            session.add(slot)
+        slot.user_id = uid
+        if primary:
+            slot.is_primary = True
+
+    try:
+        # Фиксируем состояние слотов ДО изменений: set_executors освобождает
+        # неиспользуемые НЕprimary-слоты (user_id=None), и без этого снимка
+        # внешний ответственный терял назначение, если до этого числился
+        # исполнителем (его слот сбрасывался, а primary оставался на старом).
+        slots_before = {r.user_id: r.id for r in (await session.scalars(
+            select(EntityResponsible).where(
+                EntityResponsible.entity_id == ent.id,
+                EntityResponsible.user_id.is_not(None))))
+            if r.user_id}
+        if responsible_user_id:
+            md = await _member_dept(responsible_user_id)
+            if is_global and md is not None and md != owner_dept:
+                # Внешний ответственный (выбор из ЛЮБОГО подразделения):
+                # освобождаем старый primary-слот и открываем служебный слот
+                # в пространстве сотрудника — иначе assign_responsible в
+                # owner_dept падал бы с «должен состоять в подразделении».
+                old_primary = await session.scalar(
+                    select(EntityResponsible).where(
+                        EntityResponsible.entity_id == ent.id,
+                        EntityResponsible.is_primary == True))  # noqa: E712
+                if old_primary is not None and old_primary.user_id == responsible_user_id:
+                    pass  # уже основной — ничего не трогаем
+                else:
+                    if old_primary is not None:
+                        old_primary.is_primary = False
+                    await _ensure_slot(responsible_user_id, primary=True)
+                    await session.flush()
+                    new_slot = await session.scalar(
+                        select(EntityResponsible).where(
+                            EntityResponsible.entity_id == ent.id,
+                            EntityResponsible.user_id == responsible_user_id))
+                    if new_slot is not None:
+                        new_slot.is_primary = True
+                    elif old_primary is not None:
+                        # слот подразделения занят другим сотрудником —
+                        # откатываем primary на прежнего, чтобы не потерять инвариант
+                        old_primary.is_primary = True
+                        raise HTTPException(
+                            400, "Выбранный ответственный уже занимает слот своего "
+                                 "подразделения в этой карточке другим сотрудником")
+                await session.flush()
+                from app.core.entity_service import _log_only, _emit_assigned
+                await _log_only(session, user, "reassign", ent,
+                                {"department_id": md,
+                                 "user_id": responsible_user_id})
+                if responsible_user_id != user.id:
+                    await _emit_assigned(session, user, ent, [responsible_user_id])
+                    from app.core.mobile_notify import emit_mobile_event
+                    await emit_mobile_event(
+                        session, user_id=responsible_user_id, type_="assigned",
+                        title=f"Вас назначили ответственным: {ent.title}",
+                        body=ent.description or None, entity_uid=ent.uid,
+                        module_key=ent.module_key,
+                        payload={"kind": ent.kind.value, "due_date": ent.due_date})
+            else:
+                await entity_service.assign_responsible(
+                    session, user, ent, owner_dept, responsible_user_id)
+        if executor_ids:
+            prev_primary = await _primary_uid()
+            if is_global:
+                for e in dict.fromkeys(executor_ids):
+                    if e:
+                        await _ensure_slot(e)
+            await entity_service.set_executors(session, user, ent, executor_ids)
+            # set_executors мог освободить слот внешнего ответственного/исполнителя
+            # (unique подразделения = один слот) — возвращаем его на своё место;
+            # инвариант "primary существует" восстанавливаем всегда.
+            for uid_in_req in dict.fromkeys(executor_ids):
+                if not uid_in_req:
+                    continue
+                still = await session.scalar(
+                    select(EntityResponsible.id).where(
+                        EntityResponsible.entity_id == ent.id,
+                        EntityResponsible.user_id == uid_in_req))
+                if still or uid_in_req not in slots_before:
+                    continue
+                freed = await session.get(EntityResponsible, slots_before[uid_in_req])
+                if freed is not None and freed.user_id is None \
+                        and freed.user_id != prev_primary:
+                    freed.user_id = uid_in_req
+            now_primary = await _primary_uid()
+            if now_primary is None and prev_primary:
+                slot = await session.scalar(
+                    select(EntityResponsible).where(
+                        EntityResponsible.entity_id == ent.id,
+                        EntityResponsible.user_id == prev_primary))
+                if slot is not None:
+                    slot.is_primary = True
+                else:
+                    owner_slot = await session.scalar(
+                        select(EntityResponsible).where(
+                            EntityResponsible.entity_id == ent.id,
+                            EntityResponsible.department_id == owner_dept))
+                    if owner_slot is not None:
+                        owner_slot.user_id = prev_primary
+                        owner_slot.is_primary = True
+    except PermissionError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 # ---------------- HTML ----------------
 
 @router.get("")
@@ -170,16 +378,20 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         resp_names = []
+        primary_uid = None
         for r in ent.responsibles:
+            if r.is_primary:
+                primary_uid = r.user_id
             if r.user_id:
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        items.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
-    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in items])
-    cards = [_soft_dict(e, pl, p, rn, cross_dept=c,
+        items.append((ent, await _load_payload(session, ent.id), perm, resp_names,
+                      cross, primary_uid))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _, _ in items])
+    cards = [_soft_dict(e, pl, p, rn, cross_dept=c, responsible_uid=ru,
                         project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
-             for e, pl, p, rn, c in items]
+             for e, pl, p, rn, c, ru in items]
     # Справочник — иерархический (ядро app/core/refdata): глобальные шаблоны
     # администратора + собственные/активированные записи подразделения; набор
     # ограничен подключённым модулем данного workspace.
@@ -196,15 +408,24 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
         rows = (await session.scalars(
             select(Department).where(Department.id.in_(ctx.department_ids or [-1])))).all()
         depts = [{"id": d.id, "name": d.name} for d in rows]
-    # сотрудники для назначения исполнителей (несколько) — как people в прототипе
-    members = (await session.scalars(
-        select(DepartmentMember).where(
-            DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+    # сотрудники для назначения ответственного/исполнителей — как people в
+    # прототипе. Для админа/координатора — все активные пользователи (они вправе
+    # создавать записи в любом пространстве и назначать любого сотрудника);
+    # иначе — только участники доступных подразделений (изоляция workspace).
     people: list[dict] = []
-    for m in members:
-        u = await session.get(User, m.user_id)
-        if u and u.is_active and not any(x["id"] == u.id for x in people):
-            people.append({"id": u.id, "name": u.display_name})
+    if ctx.is_global:
+        users = (await session.scalars(
+            select(User).where(User.is_active == True)  # noqa: E712
+            .order_by(User.display_name))).all()
+        people = [{"id": u.id, "name": u.display_name} for u in users]
+    else:
+        members = (await session.scalars(
+            select(DepartmentMember).where(
+                DepartmentMember.department_id.in_(ctx.department_ids or [-1])))).all()
+        for m in members:
+            u = await session.get(User, m.user_id)
+            if u and u.is_active and not any(x["id"] == u.id for x in people):
+                people.append({"id": u.id, "name": u.display_name})
     # проекты для привязки единицы ПО (связанность категорий в рамках модулей)
     projects = [{"uid": e.uid, "title": e.title}
                 for e in await _visible_projects(session, ctx)]
@@ -221,6 +442,7 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
         softs=cards,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         departments=depts, people=people, projects=projects, soft_types=soft_types,
+        me=user.id,
     )
 
 
@@ -243,16 +465,20 @@ async def list_softs(user: User = Depends(get_current_user),
                 and ent.owner_department_id not in ctx.department_ids:
             continue
         resp_names = []
+        primary_uid = None
         for r in ent.responsibles:
+            if r.is_primary:
+                primary_uid = r.user_id
             if r.user_id:
                 u = await session.get(User, r.user_id)
                 if u:
                     resp_names.append(u.display_name)
-        out.append((ent, await _load_payload(session, ent.id), perm, resp_names, cross))
-    ptitles = await _project_titles(session, [pl for _, pl, _, _, _ in out])
-    return [_soft_dict(e, pl, p, rn, cross_dept=c,
+        out.append((ent, await _load_payload(session, ent.id), perm, resp_names,
+                    cross, primary_uid))
+    ptitles = await _project_titles(session, [pl for _, pl, _, _, _, _ in out])
+    return [_soft_dict(e, pl, p, rn, cross_dept=c, responsible_uid=ru,
                        project_title=ptitles.get((pl.project_entity_uid if pl else "") or ""))
-            for e, pl, p, rn, c in out]
+            for e, pl, p, rn, c, ru in out]
 
 
 @router.post("")
@@ -261,6 +487,7 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
     dept_id = await _pick_department(session, user, body)
     ctx = await access.build_context(session, user)
     await _check_project(session, ctx, body.project_entity_uid)
+    await _check_ref_type(session, user, dept_id, body.soft_type)
     try:
         ent = await entity_service.create_entity(
             session, user, kind=EntityKind.SOFT, module_key=MODULE_KEY,
@@ -272,6 +499,53 @@ async def create_soft(body: SoftIn, user: User = Depends(get_current_user),
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # Внешний ответственный/исполнители: админ/координатор может выбрать
+    # сотрудников из ЛЮБОГО подразделения. create_entity обрабатывает внешнего
+    # ответственного сам (служебный слот + шэр); здесь доназначаем внешних
+    # исполнителей — открываем слот в их пространстве и поднимаем шэр до EDIT,
+    # чтобы set_executors нашёл свободный слот (иначе назначение игнорируется).
+    # ВАЖНО: на entity_responsibles действует UNIQUE(entity_id, department_id)
+    # (одно подразделение = один слот), поэтому перед вставкой всегда
+    # перечитываем состояние через flush+SELECT — иначе два внешних исполнителя
+    # из одного подразделения давали IntegrityError на flush().
+    if ctx.is_global:
+        exec_ids = [e for e in dict.fromkeys(body.executor_user_ids or []) if e]
+        await session.flush()
+        for e in exec_ids:
+            md = await session.scalar(
+                select(DepartmentMember.department_id).where(
+                    DepartmentMember.user_id == e).order_by(DepartmentMember.id))
+            if md is None or md == dept_id:
+                continue  # внутренний исполнитель: слот владельца уже обработан ядром
+            occupied = await session.scalar(
+                select(EntityResponsible.id).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.user_id == e))
+            if occupied:
+                continue  # уже занимает слот (например, внешний ответственный)
+            sh = await session.scalar(
+                select(EntityShare).where(
+                    EntityShare.entity_id == ent.id,
+                    EntityShare.target_department_id == md))
+            if sh is None:
+                session.add(EntityShare(
+                    entity_id=ent.id, target_department_id=md,
+                    permission=Permission.EDIT, granted_by_user_id=user.id))
+            elif access._perm_lt(sh.permission, Permission.EDIT):
+                sh.permission = Permission.EDIT
+            await session.flush()
+            slot = await session.scalar(
+                select(EntityResponsible).where(
+                    EntityResponsible.entity_id == ent.id,
+                    EntityResponsible.department_id == md))
+            if slot is None:
+                session.add(EntityResponsible(entity_id=ent.id,
+                                              department_id=md, user_id=e))
+            elif slot.user_id is None:
+                slot.user_id = e
+            # слот занят другим сотрудником этого подразделения — исполнитель
+            # остаётся только в extra_json.executors (имена/доступ по шэру)
+        await session.flush()
     # маршрут (wf) ПО: [{name, deadline}] -> нормализованные этапы + автозадачи
     import json as _json
     stages_raw = []
@@ -313,18 +587,18 @@ async def patch_soft(uid: str, body: dict, user: User = Depends(get_current_user
     core_changes = {k: v for k, v in body.items()
                     if k in {"title", "description", "status_key", "due_date"}}
     await entity_service.update_entity(session, user, ent, core_changes)
-    if "executor_user_ids" in body:
-        try:
-            await entity_service.set_executors(
-                session, user, ent, [int(x) for x in (body["executor_user_ids"] or [])])
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-    if "responsible_user_id" in body:
-        try:
-            await entity_service.assign_responsible(
-                session, user, ent, ent.owner_department_id, body["responsible_user_id"])
-        except PermissionError as e:
-            raise HTTPException(400, str(e))
+    if "soft_type" in body:
+        await _check_ref_type(session, user, ent.owner_department_id, body["soft_type"])
+    # Ответственный/исполнители: единая логика назначения (в т.ч. внешние
+    # сотрудники для админа/координатора — служебные слоты + шэры).
+    # set_executors вызывается внутри _assign_soft_people, поэтому отдельный
+    # блок executor_user_ids ниже убран (иначе двойное обновление/уведомления).
+    if "responsible_user_id" in body or "executor_user_ids" in body:
+        exec_ids = [int(x) for x in (body.get("executor_user_ids") or [])]
+        resp_id = body.get("responsible_user_id")
+        await _assign_soft_people(
+            session, user, ent, perm,
+            int(resp_id) if resp_id else None, exec_ids)
     payload = await _load_payload(session, ent.id)
     if payload:
         if "project_entity_uid" in body:
