@@ -422,10 +422,14 @@ async def update_entity(
         await session.flush()
         # Замыкание маршрута: завершение задачи-автозадачи закрывает этап и
         # активирует следующий (см. wf_service.wf_close_stage_by_task).
-        if ("status_key" in changed and ent.kind == EntityKind.TASK
-                and str(changes.get("status_key") or "").lower()
-                    in ("done", "closed", "completed", "finished")):
-            await _close_wf_stage_for_task(session, user, ent)
+        # Терминальные статусы берём НЕ только из хардкода: у подразделений
+        # свои справочники статусов (ключ может быть «ready», метка —
+        # «Исполнена»), финальный успешный статус помечен цветом b-green.
+        if ("status_key" in changed and ent.kind == EntityKind.TASK):
+            from app.core import wf_service as _wfs
+            _done_keys = await _wfs.task_done_keys(session)
+            if _wfs.is_task_done(changes.get("status_key"), _done_keys):
+                await _close_wf_stage_for_task(session, user, ent)
         await _log_only(session, user, action, ent,
                         {"changed": changed, "old_status": old_status})
         from app.core.notify import ACTION_EVENT_KEYS, link_for
