@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Optional
 
@@ -22,6 +23,8 @@ from app.models.core import (
     OutboxEvent, Permission, SyncState, User,
 )
 
+
+log = logging.getLogger("caesar.entity_service")
 
 _PERM_ORDER = {Permission.READ: 0, Permission.EDIT: 1, Permission.FULL: 2}
 
@@ -370,6 +373,7 @@ async def _close_wf_stage_for_task(session: AsyncSession, user: User,
     try:
         res = await wf_service.wf_close_stage_for_task(session, user, task)
     except Exception:  # защита основного пути: маршрут не должен ломать закрытие задачи
+        log.exception("wf: не удалось закрыть этап для автозадачи %s", task.uid)
         return
     if not res:
         return
@@ -393,7 +397,8 @@ async def _close_wf_stage_for_task(session: AsyncSession, user: User,
     try:
         await notify_participants(session, user, owner, "stage_done", note)
     except Exception:
-        pass
+        log.exception("wf: не удалось отправить уведомления по этапу (сущность %s)",
+                      owner.uid)
 
 
 async def update_entity(
