@@ -196,17 +196,34 @@ def is_task_done(status_key: str | None, extra_terminal_keys: set[str] | None = 
     return False
 
 
-async def task_done_keys(session: AsyncSession) -> set[str]:
-    """Ключи завершающих статусов задач из StatusSet: все бегущие по полю key
-    («done»-синонимы) плюс любые активные записи вида task с цветом b-green."""
-    from app.models.core import StatusSet
-    rows = (await session.scalars(
-        select(StatusSet).where(StatusSet.kind == EntityKind.TASK))).all()
-    keys = {r.key.strip().lower() for r in rows
-            if r.is_active and (r.color == "b-green"
-                                or r.key.strip().lower() in _TASK_DONE_KEYS
-                                or str(r.label or "").strip().lower() in _TASK_DONE_LABELS)}
-    return keys | _TASK_DONE_KEYS
+async def task_done_keys(session: AsyncSession,
+                         dept_id: int | None = None) -> set[str]:
+    """Ключи завершающих статусов задач из StatusSet.
+
+    Учитывается ЭФФЕКТИВНЫЙ справочник подразделения-владельца задачи
+    (refdata.effective_statuses): глобальные шаблоны + собственные записи
+    пространства с переопределениями/выключениями. Раньше использовался
+    плоский запрос по всем записям вида task — при кастомных справочниках
+    («готово», «исполнена» и т.п.) хук автосокрытия этапа не срабатывал.
+    Если подразделение отключило модуль tasks (effective_statuses вернул
+    пустой список) — остаётся детерминированный набор ключей.
+    """
+    base = set(_TASK_DONE_KEYS)
+    try:
+        from app.core import refdata
+        rows = await refdata.effective_statuses(session, EntityKind.TASK, dept_id)
+    except Exception:  # справочник не должен ломать основной путь
+        from app.core.security import log as _log
+        _log.exception("wf: не удалось прочитать справочник статусов задач")
+        return base
+    for r in rows:
+        if not r.is_active:
+            continue
+        if (r.color == "b-green"
+                or str(r.key or "").strip().lower() in _TASK_DONE_KEYS
+                or str(r.label or "").strip().lower() in _TASK_DONE_LABELS):
+            base.add(str(r.key).strip().lower())
+    return base
 
 
 def _is_closed(s: dict) -> bool:
