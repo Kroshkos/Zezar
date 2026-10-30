@@ -129,8 +129,7 @@ function moduleBlockHTML(P,m){
   }
   if(k==='doc'){
     h+='<div style="margin-top:8px;font-size:12.5px;color:var(--muted)">'
-      +(m.doc_type?'📑 '+esc(m.doc_type)+' · ':'')+(m.number?'№ '+esc(m.number)+' · ':'')
-      +(m.issued_at?'выдан '+pfmt(m.issued_at):'')+'</div>';
+      +(m.doc_type?'📑 '+esc(m.doc_type):'')+'</div>';
     if(m.file_ref)h+='<div style="margin-top:6px"><a class="lchip" href="'+esc(m.file_ref)+'" target="_blank" rel="noopener">📎 файл</a></div>';
     // маршрут (wf) документа — тот же холст, что у проектов/ПО
     if(m.stage_total)h+='<div style="margin-top:6px;font-size:12.5px">Этапы маршрута: '+m.stage_done+'/'+m.stage_total
