@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {# Страница «Задачи»: полная копия вёрстки renderTasks() из sipm_lite_v3.html #}
 {% block actions %}
+<button class="btn" onclick="taskCardsModal()">🖨 Карточки</button>
 <button class="btn primary" onclick="taskFormModal()">＋ Задача</button>
 {% endblock %}
 
@@ -29,6 +30,24 @@
   <div class="empty" id="tempty" hidden>✅<p>Ничего не найдено</p></div>
 </div>
 
+{# Печатные карточки задач: подзадачи отдельными карточками не выводятся —
+   печатаются в содержании родительской задачи (наименование · дедлайн ·
+   статус), см. printTaskCards()/taskCardsModal() в static/js/tasks.js #}
+<div class="card pad no-print" id="tcWide" hidden style="margin-top:16px">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <b>🖨 Карточки задач</b>
+    <button class="btn sm" onclick="taskCardsModal(true)">↻ Обновить</button>
+    <button class="btn primary" onclick="printTaskCards()">🖨 Печать</button>
+    <span id="tcInfo" style="color:var(--muted);font-size:12.5px"></span>
+    <button class="btn ghost" style="margin-left:auto" onclick="document.getElementById('tcWide').hidden=true">✕ Закрыть</button>
+  </div>
+  <div class="sub" style="color:var(--muted);font-size:12.5px;margin-bottom:10px">
+    Подзадачи отдельных карточек не имеют — они печатаются в содержании родительской задачи
+    (наименование · дедлайн · статус выполнения). Этапы проектов печатаются в карточке проекта.
+  </div>
+  <div id="tcBody"></div>
+</div>
+
 <script id="taskData" type="application/json">
 {{ {'tasks': tasks, 'statuses': statuses, 'priorities': priorities,
     'departments': departments, 'people': people, 'me': me} | tojson }}
@@ -39,5 +58,5 @@
 <script src="/static/js/wf_canvas.js"></script>
 <script src="/static/js/profile.js"></script>
 <script src="/static/js/links.js"></script>
-<script src="/static/js/tasks.js"></script>
+<script src="/static/js/tasks.js?v=20261031a"></script>
 {% endblock %}

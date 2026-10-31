@@ -482,9 +482,18 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
             raise HTTPException(404, "Проект не найден")
         if not await access.resolve_permission(session, ctx, parent):
             raise HTTPException(403, "Нет доступа к выбранному проекту")
+    # Иерархия задач: смена родителя при редактировании (см. _check_parent).
+    # Ключ присутствует в body — значит поле меняем (в т.ч. сбрасываем на null).
+    if "parent_task_uid" in body:
+        parent_uid = (body.get("parent_task_uid") or "").strip() or None
+        if parent_uid == uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        if parent_uid:
+            await _check_parent(session, ctx, parent_uid, self_uid=uid)
+        body["parent_task_uid"] = parent_uid
     payload = await _load_payload(session, ent.id)
     if payload:
-        for f in ("group_key", "project_entity_uid"):
+        for f in ("group_key", "project_entity_uid", "parent_task_uid"):
             if f in body:
                 setattr(payload, f, body[f])
         if "checklist" in body:
