@@ -110,3 +110,73 @@ async function tgUnbind(btn){
     toast('Telegram отвязан');openSettings();
   });
 }
+
+/* ---------- Общие фильтры списков сущностей: дедлайны + подразделение ----------
+   Логика один-в-один повторяет app/core/filters.py (match_deadline). Границы
+   «сегодня/неделя/месяц» берутся из контекста страницы (window.FILT — серверное
+   «сегодня»), а не из часового пояса браузера, чтобы список после перезагрузки
+   (серверная фильтрация) и в интерактиве (JS) совпадали.
+
+   Использование на странице модуля:
+     const list = applyListFilters(D.tasks, {search:q, status:Set, priority:Set});
+   где элементы имеют поля due_date/status_key/department_id; опционально
+   search_cb(it,q) — предикат текстового поиска. Состояние фильтров живёт в
+   window.FLS (единое для всех страниц), флаги дедлайнов — множество. */
+window.FLS = window.FLS || {dept:null, dl:new Set()};
+
+function isoNow(){ return (window.FILT||{}).today || new Date().toISOString().slice(0,10); }
+
+window.dlMatch = function(due, statusKey){
+  const S=window.FLS, F=window.FILT||{};
+  if(!S.dl.size) return true;
+  if(!due) return false;
+  const t=isoNow(), wk=F.week_range||[t,t], mo=F.month_range||[t,t];
+  const done=new Set(F.done_keys||[]);
+  if(S.dl.has('today') && due===t) return true;
+  if(S.dl.has('week') && due>=wk[0] && due<=wk[1]) return true;
+  if(S.dl.has('month') && due>=mo[0] && due<=mo[1]) return true;
+  if(S.dl.has('overdue') && due<t && !done.has(statusKey||'')) return true;
+  return false;
+};
+
+/* Переключатель фильтра дедлайна (onchange у checkbox в блоке .dfbox). */
+window.tglDF = function(el){
+  const k=el.dataset.df;
+  if(el.checked){window.FLS.dl.add(k)}else{window.FLS.dl.delete(k)}
+  onFilterChange();
+};
+window.setDeptF = function(sel){
+  window.FLS.dept = sel.value ? +sel.value : null;
+  onFilterChange();
+};
+window.clearDF = function(root){
+  root.querySelectorAll('.dfbox input[type=checkbox]').forEach(c=>{c.checked=false});
+  window.FLS.dl.clear();
+  const s=root.querySelector('.deptfilter select');
+  if(s){s.value='';window.FLS.dept=null}
+  onFilterChange();
+};
+/* Синхронизация адреса (?dept=&df_*=1) и перерисовка списка страницы. */
+function onFilterChange(){
+  const url=new URL(location.href);
+  ['today','week','month','overdue'].forEach(k=>{
+    if(window.FLS.dl.has(k))url.searchParams.set('df_'+k,'1');else url.searchParams.delete('df_'+k);
+  });
+  if(window.FLS.dept)url.searchParams.set('dept',window.FLS.dept);else url.searchParams.delete('dept');
+  history.replaceState(null,'',url);           // состояние фильтров — в адресе
+  (window.renderList||(()=>{}))();
+}
+
+/* Полная клиентская фильтрация: поиск + статусы/приоритеты + дедлайны + dept. */
+window.applyListFilters = function(items, opt){
+  opt=opt||{};
+  const q=(opt.search||'').toLowerCase();
+  return items.filter(it=>{
+    if(q && opt.search_cb && !opt.search_cb(it,q)) return false;
+    if(opt.status && opt.status.size && !opt.status.has(it.status_key)) return false;
+    if(opt.priority && opt.priority.size && !opt.priority.has(it.priority_key)) return false;
+    if(!dlMatch(it.due_date,it.status_key)) return false;
+    if(window.FLS.dept && it.department_id!==window.FLS.dept) return false;
+    return true;
+  });
+};

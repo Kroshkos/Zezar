@@ -365,6 +365,10 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
 async def tasks_page(request: Request, user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
+    # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
+    # приходят в т.ч. по кликам с дашборда (карточки KPI ссылками).
+    fctx = await filters.page_filters(request, session, "task",
+                                      ctx.department_ids, ctx.is_global)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
@@ -412,7 +416,8 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         request, "tasks.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Задачи", page_sub="Задачи, поручения и автозадачи этапов workflow",
         counts={MODULE_KEY: len(items)},
-        tasks=await _decorate(session, items),
+        tasks=filters.apply_page_filters(await _decorate(session, items), fctx),
+        fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
         departments=depts, people=people, me=user.id,

@@ -1,3 +1,52 @@
+{% macro deadline_filters(fctx, render_fn) %}
+{# Единый блок фильтров страниц сущностей (Задачи/Проекты/Документы/ПО):
+   дедлайны + подразделение. fctx — контекст app/core/filters.page_filters;
+   render_fn — JS-функция перерисовки списка страницы. #}
+<div class="dfbox" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:10px">
+  <span style="font-size:12px;font-weight:800;color:#334155">📅 Дедлайн:</span>
+  <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
+    <input type="checkbox" data-df="month" style="width:auto" {{ 'checked' if 'month' in fctx.deadline_flags }}
+      onchange="tglDF(this)"> в этом месяце</label>
+  <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
+    <input type="checkbox" data-df="week" style="width:auto" {{ 'checked' if 'week' in fctx.deadline_flags }}
+      onchange="tglDF(this)"> на этой неделе</label>
+  <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
+    <input type="checkbox" data-df="today" style="width:auto" {{ 'checked' if 'today' in fctx.deadline_flags }}
+      onchange="tglDF(this)"> сегодня</label>
+  <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
+    <input type="checkbox" data-df="overdue" style="width:auto" {{ 'checked' if 'overdue' in fctx.deadline_flags }}
+      onchange="tglDF(this)"> ⚠ просроченно</label>
+  <span class="deptfilter" style="display:flex;gap:6px;align-items:center;font-size:12.5px">
+    🏢 Подразделение:
+    <select onchange="setDeptF(this)" style="min-width:170px">
+      <option value="">Все подразделения</option>
+      {% for d in fctx.departments %}
+      <option value="{{ d.id }}" {{ 'selected' if fctx.department_id == d.id }}>{{ d.name }}</option>
+      {% endfor %}
+    </select>
+  </span>
+  <button type="button" class="btn sm ghost" onclick="clearDF(document.getElementById('content'))">✕ Сбросить</button>
+</div>
+<script>
+/* Начальное состояние общих фильтров из URL (?dept=&df_*=1) — синхронно до
+   загрузки JS модуля страницы; границы дат и завершающие статусы — с сервера
+   (app/core/filters.py), чтобы JS-фильтрация совпадала с серверной. */
+window.FILT = window.FILT || {};
+Object.assign(window.FILT, {
+  today: {{ fctx.today | tojson }},
+  week_range: {{ fctx.week_range | list | tojson }},
+  month_range: {{ fctx.month_range | list | tojson }},
+  done_keys: {{ fctx.done_keys | list | tojson }}
+});
+(function(){
+  const u = new URL(location.href);
+  window.FLS = {dept: u.searchParams.get('dept') ? +u.searchParams.get('dept') : null, dl: new Set()};
+  ['today','week','month','overdue'].forEach(k => { if (u.searchParams.get('df_' + k)) window.FLS.dl.add(k); });
+  window.renderList = () => { try { {{ render_fn }}(); } catch (e) { /* страница ещё не готова */ } };
+})();
+</script>
+{% endmacro %}
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -18,6 +67,7 @@
       {% endfor %}
     </nav>
     <div class="side-foot">
+      <button onclick="window.open('https://zezar-docs-patfiz.waw0.amvera.tech/#docs','_blank','noopener')" title="Открыть документацию системы в новой вкладке">📚 Документация</button>
       <button onclick="location.href='/integrations'">⚙️ Интеграции</button>
       <button onclick="logout()">🚪 Выход</button>
       <div class="hint">{{ user.display_name }} · {{ {'admin':'Администратор','coordinator':'Координатор','head':'Руководитель','member':'Участник'}[user.role.value] }}</div>
