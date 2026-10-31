@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from app.core.timezone import MSK_TZ, now
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
@@ -458,7 +460,9 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
         raise HTTPException(422, "Нет получателей")
     send_at = body.send_at
     if send_at.tzinfo is not None:
-        send_at = send_at.astimezone(timezone.utc).replace(tzinfo=None)
+        # aware (напр. из браузера с +03:00) -> наивно по Москве: колонки
+        # DateTime платформы хранят локальное время MSK (app/core/timezone.py)
+        send_at = send_at.astimezone(MSK_TZ).replace(tzinfo=None)
     title, text_body = body.title, body.body
     # применение шаблона рассылки (если выбран): подставляем плейсхолдеры {name} {login}
     tpl: NotifyTemplate | None = None
@@ -475,7 +479,7 @@ async def create_broadcast(body: BroadcastIn, user: User = Depends(get_current_u
                      media_json=[m.model_dump() for m in body.media] or None)
     session.add(n)
     await session.flush()
-    if send_at <= datetime.now(timezone.utc).replace(tzinfo=None):
+    if send_at <= now():  # сравнение в наивном времени MSK (см. app/core/timezone.py)
         await notify.enqueue_manual(session, n)
         n.status = "sending"
     await log_event(session, "notify_broadcast", category="admin", user=user,
