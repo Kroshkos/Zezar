@@ -77,12 +77,12 @@
 
 {# ============ Полоса главных чисел ============ #}
 {% set dsel = (dash_selected_dept ~ '') if dash_selected_dept else '' %}
-{% set dq = ('&dept=' ~ dsel) if dsel else '' %}
+{% set dq = ('?dept=' ~ dsel) if dsel else '?' %}
 {# Карточки первой строки кликабельны: ведут на страницу «Задачи» с
    соответствующим фильтром (?df_overdue=1 — просроченные и т.п.).
    Карточка «Готовность реестра» убрана по требованию пользователя. #}
 <div class="dbw-hero">
-  <div class="dbw-stat acc click" onclick="location.href='/tasks/{{ dq }}'" title="Открыть все задачи"><div class="t">🗂️</div><div class="v">{{ totals.all }}</div><div class="l">Всего в реестре</div></div>
+  <div class="dbw-stat acc click" onclick="location.href='/tasks{{ dq }}'" title="Открыть все задачи"><div class="t">🗂️</div><div class="v">{{ totals.all }}</div><div class="l">Всего в реестре</div></div>
   <div class="dbw-stat click" onclick="location.href='/tasks/?{{ dq }}" title="Открыть задачи в работе"><div class="t">⚡</div><div class="v">{{ totals.active }}</div><div class="l">В работе</div></div>
   <div class="dbw-stat warn click" onclick="location.href='/tasks/?df_overdue=1{{ dq }}'" title="Открыть просроченные задачи"><div class="t">⏰</div><div class="v">{{ totals.overdue }}</div><div class="l">Просрочено</div></div>
   <div class="dbw-stat {{ 'warn' if totals.urgent else '' }} click" onclick="location.href='/tasks/?df_month=1{{ dq }}'" title="Открыть задачи с дедлайном в этом месяце"><div class="t">🔥</div><div class="v">{{ totals.urgent }}</div><div class="l">Срочный приоритет</div></div>

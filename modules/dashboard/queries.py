@@ -211,7 +211,9 @@ async def build_dashboard_data(session: AsyncSession, user: User,
 
     # выполнено — статус стал завершающим в этот день (audit action status/done);
     done_keys_extra = term_by_kind["task"] | term_by_kind["project"]
-    done_q = (select(func.date(AuditLog.at), func.count())
+    done_q = (select(func.date(AuditLog.at).label("d"),
+                     Entity.status_key.label("sk"),
+                     func.count().label("cnt"))
               .join(Entity, Entity.id == AuditLog.entity_id)
               .where(filt, dcond,
                      Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
@@ -225,7 +227,8 @@ async def build_dashboard_data(session: AsyncSession, user: User,
             dr[k] = dr.get(k, 0) + c_
 
     # просрочилось — дедлайн задачи пришёлся на этот день и она не завершена;
-    od_q = (select(Entity.due_date, func.count())
+    od_q = (select(Entity.due_date.label("due"), Entity.status_key.label("sk"),
+                   func.count().label("cnt"))
             .where(filt, dcond,
                    Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
                    Entity.due_date.is_not(None),
