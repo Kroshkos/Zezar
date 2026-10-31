@@ -22,6 +22,11 @@ class TaskPayload(TimestampMixin, Base):
         ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True)
     group_key: Mapped[Optional[str]] = mapped_column(String(50))      # taskGroups из демо
     project_entity_uid: Mapped[Optional[str]] = mapped_column(String(36))  # привязка к проекту
+    # Иерархия задач: задача может быть подзадачей другой задачи (родитель —
+    # uid сущности kind=task; хранится uid, а не FK id — по образцу иерархии
+    # проектов ProjectPayload.parent_uid: устойчивость при синхронизации
+    # пространств и отсутствие каскадного удаления родителя).
+    parent_task_uid: Mapped[Optional[str]] = mapped_column(String(36), index=True)
     assignee_names: Mapped[list] = mapped_column(SafeJSON(list), default=list)  # историческое поле демо (ФИО)
     checklist: Mapped[list] = mapped_column(SafeJSON(list), default=list)       # [{text, done}]
     wf_kind: Mapped[Optional[str]] = mapped_column(String(50))        # тип согласования (demo: t.wf)

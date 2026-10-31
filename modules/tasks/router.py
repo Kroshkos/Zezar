@@ -19,7 +19,7 @@ from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
     Department, DepartmentMember, Entity, EntityKind, EntityShare, Permission,
-    Role, User,
+    Role, StatusSet, User,
 )
 from app.models.module_payloads import TaskPayload
 from app.ui import render_page
@@ -48,7 +48,43 @@ class TaskIn(BaseModel):
     department_id: int | None = None          # для админа/координатора: чьё пространство
     project_entity_uid: str | None = None
     group_key: str | None = None
+    parent_task_uid: str | None = None        # родительская задача (иерархия задач)
     share_with: list[int] = []               # межпространственный контекст (проект): dept_id[]
+
+
+async def _parent_titles(session: AsyncSession, payloads: list[TaskPayload]) -> dict[str, str]:
+    """uid -> заголовок для родительских задач (для отображения в списках)."""
+    puids = {p.parent_task_uid for p in payloads if getattr(p, "parent_task_uid", None)}
+    if not puids:
+        return {}
+    rows = (await session.execute(
+        select(Entity.uid, Entity.title).where(Entity.uid.in_(puids)))).all()
+    return {u: t for u, t in rows}
+
+
+async def _check_parent(session, ctx, uid: str, self_uid: str | None) -> None:
+    """Родительская задача существует и доступна; иерархия ациклична.
+
+    self_uid — uid редактируемой задачи (при создании — None): защита от
+    «задача — родитель сама себе» и от циклов произвольной длины
+    (по образцу _cycle_guard в модуле «Проекты»).
+    """
+    parent = await session.scalar(
+        select(Entity).where(Entity.uid == uid, Entity.kind == EntityKind.TASK))
+    if not parent:
+        raise HTTPException(404, "Родительская задача не найдена")
+    if not await access.resolve_permission(session, ctx, parent):
+        raise HTTPException(403, "Нет доступа к родительской задаче")
+    cur: str | None = uid
+    seen = {self_uid} if self_uid else set()
+    while cur:
+        if cur in seen:
+            raise HTTPException(
+                422, "Задача не может быть подзадачей самой себя (или своей подзадачи)")
+        seen.add(cur)
+        p = await session.scalar(select(TaskPayload).join(
+            Entity, Entity.id == TaskPayload.entity_id).where(Entity.uid == cur))
+        cur = p.parent_task_uid if p else None
 
 
 def _executors(ent: Entity) -> list[dict]:
@@ -57,7 +93,9 @@ def _executors(ent: Entity) -> list[dict]:
 
 
 def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None,
-               resp_names: list[str], cross_dept: bool = False) -> dict:
+               resp_names: list[str], cross_dept: bool = False,
+               parent_title: str | None = None,
+               subtasks: list[dict] | None = None) -> dict:
     execs = _executors(ent)
     return {
         "uid": ent.uid, "title": ent.title, "description": ent.description or "",
@@ -68,6 +106,11 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "cross_dept": cross_dept,
         "project_entity_uid": payload.project_entity_uid if payload else None,
         "group_key": payload.group_key if payload else None,
+        # иерархия задач: родитель (uid/заголовок) и подзадачи — для формы,
+        # таблицы и печати карточек (см. static/js/tasks.js printTaskCards)
+        "parent_task_uid": payload.parent_task_uid if payload else None,
+        "parent_task_title": parent_title or "",
+        "subtasks": subtasks or [],
         "checklist": (payload.checklist if payload else []) or [],
         "responsibles": resp_names,
         "executors": execs,
@@ -90,6 +133,142 @@ async def _resp_names(session: AsyncSession, ent: Entity) -> list[str]:
             u = await session.get(User, r.user_id)
             if u:
                 out.append(u.display_name)
+    return out
+
+
+async def _task_status_labels(session: AsyncSession) -> dict[tuple, str]:
+    """Метки статусов задач: (department_id|None, key) -> label.
+
+    Справка подразделения важнее глобального шаблона (department_id=None) —
+    как _pick() в печатных карточках совещаний.
+    """
+    out: dict[tuple, str] = {}
+    for s in (await session.scalars(
+            select(StatusSet).where(StatusSet.is_active == True))).all():  # noqa: E712
+        k = s.kind.value if hasattr(s.kind, "value") else str(s.kind)
+        if k == "task":
+            out[(s.department_id, s.key)] = s.label
+    return out
+
+
+def _subtask_row(cent: Entity, labels: dict[tuple, str]) -> dict:
+    """Строка подзадачи для содержания родительской карточки:
+    наименование · дедлайн · статус выполнения."""
+    skey = cent.status_key or ""
+    own = labels.get((cent.owner_department_id, skey))
+    glob = labels.get((None, skey))
+    return {
+        "uid": cent.uid, "title": cent.title,
+        "due_date": cent.due_date or "",
+        "status_key": skey,
+        "status_label": own or glob or skey or "—",
+    }
+
+
+async def _decorate(session: AsyncSession, items: list[dict]) -> list[dict]:
+    """Обогатить список задач данными иерархии (см. TaskIn.parent_task_uid):
+
+    - parent_task_title — заголовок родительской задачи;
+    - subtasks — [{uid,title,due_date,status_key,status_label}] прямых подзадач
+      (в порядке срока). В подзадачи попадают ВСЕ потомки из БД (в т.ч. те, что
+      не видны текущему пользователю) — сами они отдельными строками списка не
+      идут, но должны печататься в содержании родительской карточки.
+    """
+    payloads = (await session.scalars(select(TaskPayload))).all()
+    cents = {e.id: e for e in (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.TASK))).all()}
+    labels = await _task_status_labels(session)
+    ptitles = await _parent_titles(session, payloads)
+    subs_by_parent: dict[str, list[dict]] = {}
+    for p in payloads:
+        pu = getattr(p, "parent_task_uid", None)
+        cent = cents.get(p.entity_id)
+        if not pu or cent is None:
+            continue
+        subs_by_parent.setdefault(pu, []).append(_subtask_row(cent, labels))
+    for v in subs_by_parent.values():
+        v.sort(key=lambda x: (x["due_date"] or "9999", x["title"]))
+    for it in items:
+        it["parent_task_title"] = ptitles.get(it.get("parent_task_uid") or "", "")
+        it["subtasks"] = subs_by_parent.get(it["uid"], [])
+    return items
+
+
+async def _visible_task_entities(session: AsyncSession, ctx) -> list[Entity]:
+    """Задачи в поле зрения пользователя (тот же инвариант изоляции пространств,
+    что в list_tasks/tasks_page: без шеринга — только своё подразделение;
+    админ/координатор — всё)."""
+    ents = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx))
+        .options(selectinload(Entity.shares)))).all()
+    out = []
+    for ent in ents:
+        perm = await access.resolve_permission(session, ctx, ent)
+        if perm is None:
+            continue
+        cross = bool(ent.shares)
+        if not ctx.is_global and not cross \
+                and ent.owner_department_id not in ctx.department_ids:
+            continue
+        out.append(ent)
+    return out
+
+
+async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]:
+    """Карточки задач для печати (см. static/js/tasks.js printTaskCards).
+
+    Правила иерархии:
+    - задача-этап проекта (project_entity_uid) не имеет своей карточки — она
+      часть карточки проекта (как в печатных карточках «Совещаний»);
+    - подзадача (parent_task_uid) отдельно НЕ печатается — она выводится
+      списком «наименование · дедлайн · статус» в содержании родительской
+      карточки (поле subtasks);
+    - родительская карточка содержит подзадачи независимо от того, видит ли
+      их печатающий пользователь в своём списке (они исключены из отдельных
+      карточек именно поэтому).
+    """
+    ctx = await access.build_context(session, user)
+    ents = await _visible_task_entities(session, ctx)
+    ids = [e.id for e in ents] or [-1]
+    payloads = (await session.scalars(
+        select(TaskPayload).where(TaskPayload.entity_id.in_(ids)))).all()
+    tp = {p.entity_id: p for p in payloads}
+    labels = await _task_status_labels(session)
+
+    async def _descendants(parent_uid: str) -> list[dict]:
+        """Прямые подзадачи задачи parent_uid (по payload'ам всей БД — см.
+        докстринг функции)."""
+        rows = (await session.execute(
+            select(Entity).join(TaskPayload, TaskPayload.entity_id == Entity.id)
+            .where(TaskPayload.parent_task_uid == parent_uid,
+                   Entity.kind == EntityKind.TASK))).unique().all()
+        subs = [_subtask_row(e, labels) for (e,) in rows]
+        subs.sort(key=lambda x: (x["due_date"] or "9999", x["title"]))
+        return subs
+
+    out: list[dict] = []
+    for ent in ents:
+        p = tp.get(ent.id)
+        if p is not None and p.project_entity_uid:
+            continue                      # этап проекта — карточка у проекта
+        if p is not None and getattr(p, "parent_task_uid", None):
+            continue                      # подзадача — только в составе родителя
+        skey = ent.status_key or ""
+        executors = [e.get("name", "") for e in _executors(ent)
+                     if isinstance(e, dict) and e.get("name")]
+        out.append({
+            "uid": ent.uid, "title": ent.title,
+            "description": ent.description or "",
+            "due_date": ent.due_date or "",
+            "priority_key": ent.priority_key or "",
+            "status_key": skey,
+            "status_label": labels.get((ent.owner_department_id, skey))
+                            or labels.get((None, skey)) or skey or "—",
+            "department_id": ent.owner_department_id,
+            "responsibles": await _resp_names(session, ent),
+            "executors": executors,
+            "subtasks": await _descendants(ent.uid),
+        })
     return out
 
 
@@ -147,7 +326,7 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         request, "tasks.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Задачи", page_sub="Задачи, поручения и автозадачи этапов workflow",
         counts={MODULE_KEY: len(items)},
-        tasks=items,
+        tasks=await _decorate(session, items),
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
         departments=depts, people=people, me=user.id,
@@ -178,7 +357,20 @@ async def list_tasks(user: User = Depends(get_current_user),
             continue
         out.append(_task_dict(ent, await _load_payload(session, ent.id), perm,
                               await _resp_names(session, ent), cross_dept=cross))
-    return out
+    return await _decorate(session, out)
+
+
+# ---------------- Печать карточек задач ----------------
+
+@router.get("/cards/api-list")
+async def task_cards_api_list(user: User = Depends(get_current_user),
+                              session: AsyncSession = Depends(session_dep)):
+    """Карточки задач для печати (кнопка «🖨 Карточки» на странице модуля).
+
+    Подзадачи отдельных карточек не имеют — печатаются в содержании
+    родительской задачи (наименование · дедлайн · статус), см.
+    _printable_task_cards()."""
+    return {"cards": await _printable_task_cards(session, user)}
 
 
 async def _pick_department(session: AsyncSession, user: User, body: TaskIn) -> tuple[int, list[int]]:
@@ -231,6 +423,13 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
         )
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # Иерархия задач: проверка родителя ДО записи payload (см. _check_parent)
+    parent_uid = (body.parent_task_uid or "").strip() or None
+    if parent_uid:
+        if parent_uid == ent.uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        await _check_parent(session, await access.build_context(session, user),
+                            parent_uid, self_uid=None)
     # ЯВНЫЙ SELECT: не читать ORM-коллекцию ent.shares — после add() pending-объектов
     # любое последующее flush-событие (autoflush) может откатить непрочитанную
     # коллекцию; только запрос к БД даёт достоверный факт шеринга.
@@ -239,6 +438,7 @@ async def create_task(body: TaskIn, user: User = Depends(get_current_user),
         select(EntityShare.id).where(EntityShare.entity_id == ent.id)))
     session.add(TaskPayload(entity_id=ent.id, group_key=body.group_key,
                             project_entity_uid=body.project_entity_uid,
+                            parent_task_uid=parent_uid,
                             assignee_names=[], cross_dept=cross))
     await session.flush()  # payload с cross_dept записан до commit — перечитаем для верификации
     saved = await session.get(TaskPayload, ent.id)
@@ -282,9 +482,18 @@ async def patch_task(uid: str, body: dict, user: User = Depends(get_current_user
             raise HTTPException(404, "Проект не найден")
         if not await access.resolve_permission(session, ctx, parent):
             raise HTTPException(403, "Нет доступа к выбранному проекту")
+    # Иерархия задач: смена родителя при редактировании (см. _check_parent).
+    # Ключ присутствует в body — значит поле меняем (в т.ч. сбрасываем на null).
+    if "parent_task_uid" in body:
+        parent_uid = (body.get("parent_task_uid") or "").strip() or None
+        if parent_uid == uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        if parent_uid:
+            await _check_parent(session, ctx, parent_uid, self_uid=uid)
+        body["parent_task_uid"] = parent_uid
     payload = await _load_payload(session, ent.id)
     if payload:
-        for f in ("group_key", "project_entity_uid"):
+        for f in ("group_key", "project_entity_uid", "parent_task_uid"):
             if f in body:
                 setattr(payload, f, body[f])
         if "checklist" in body:
