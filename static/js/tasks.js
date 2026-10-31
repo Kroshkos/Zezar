@@ -123,22 +123,24 @@ function taskFormModal(uid){
     if(t){
       await api('/api/tasks/'+t.uid,{method:'PATCH',body:JSON.stringify(pl)});
       Object.assign(t,pl);
+      t.is_subtask=!!pl.parent_task_uid;   // печать: подзадача без своей карточки
       t.parent_task_title=pl.parent_task_uid?((D.tasks.find(x=>x.uid===pl.parent_task_uid)||{}).title||''):'';
       // синхронизируем список подзадач у старого/нового родителя (для формы и таблицы)
       D.tasks.forEach(x=>{if(x.subtasks)x.subtasks=x.subtasks.filter(s=>s.uid!==t.uid)});
       if(pl.parent_task_uid){const p=D.tasks.find(x=>x.uid===pl.parent_task_uid);
-        if(p)(p.subtasks=p.subtasks||[]).push({uid:t.uid,title:t.title,due_date:t.due_date||'',status_label:stOf(t.status_key).label});}
+        if(p)(p.subtasks=p.subtasks||[]).push({uid:t.uid,title:t.title,due_date:t.due_date||'',status_key:t.status_key,status_label:stOf(t.status_key).label});}
       if(pl.executor_user_ids)t.executor_names=pl.executor_user_ids.map(id=>(D.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
       toast('Сохранено · уведомим исполнителей');
     }else{
       const r=await api('/api/tasks',{method:'POST',body:JSON.stringify(pl)});
       const nt=Object.assign({uid:r.uid,can_edit:true,can_share:true,responsibles:[],subtasks:[],
+        is_subtask:!!pl.parent_task_uid,   // печать: подзадача без своей карточки
         parent_task_title:pl.parent_task_uid?((D.tasks.find(x=>x.uid===pl.parent_task_uid)||{}).title||''):'',
         executor_names:(pl.executor_user_ids||[]).map(id=>(D.people.find(p=>p.id===id)||{}).name||'').filter(Boolean),
         department_id:pl.department_id||(D.people[0]&&0)},pl);
       D.tasks.unshift(nt);
       if(pl.parent_task_uid){const p=D.tasks.find(x=>x.uid===pl.parent_task_uid);
-        if(p)(p.subtasks=p.subtasks||[]).push({uid:nt.uid,title:nt.title,due_date:nt.due_date||'',status_label:stOf(nt.status_key).label});}
+        if(p)(p.subtasks=p.subtasks||[]).push({uid:nt.uid,title:nt.title,due_date:nt.due_date||'',status_key:nt.status_key,status_label:stOf(nt.status_key).label});}
       toast('Задача создана');
     }
     closeModal();notifyChanged();renderTaskTable();
@@ -172,6 +174,10 @@ const TC={cards:[],loaded:false};
 const PRI_HEX={"b-red":"#dc2626","b-amber":"#d97706","b-blue":"#2563eb",
                "b-gray":"#64748b","b-green":"#16a34a","b-purple":"#7c3aed",
                "b-cyan":"#0e7490","b-gold":"#92700c"};
+// палитра статусов задач берётся из справочника страницы (D.statuses) —
+// цвета StatusSet, а не приоритетов (см. stOf/prOf выше); для неизвестного
+// ключа — нейтральный серый b-gray.
+const tcStatusColor=k=>PRI_HEX[(D.statuses.find(s=>s.key===k)||{}).color]||PRI_HEX["b-gray"];
 const tcPrintDate=new Date().toLocaleDateString('ru-RU');
 const tcColor=key=>PRI_HEX[key]||'#01696F';
 
@@ -182,8 +188,14 @@ async function taskCardsModal(force){
     try{const d=await api('/api/tasks/cards/api-list');TC.cards=d.cards||[];TC.loaded=true;}
     catch(e){return}                                      // toast с ошибкой уже показан
   }
-  document.getElementById('tcInfo').textContent='Карточек к печати: '+TC.cards.length;
-  document.getElementById('tcBody').innerHTML=TC.cards.map(tcCardHTML).join('')
+  // Резервная фильтрация на клиенте (сервер её тоже делает,
+  // _printable_task_cards): подзадачи отдельных карточек не имеют —
+  // они печатаются только в содержании родительской задачи.
+  const subUids=new Set();
+  TC.cards.forEach(c=>(c.subtasks||[]).forEach(s=>subUids.add(s.uid)));
+  const cards=TC.cards.filter(c=>!c.is_subtask&&!subUids.has(c.uid));
+  document.getElementById('tcInfo').textContent='Карточек к печати: '+cards.length;
+  document.getElementById('tcBody').innerHTML=cards.map(tcCardHTML).join('')
     ||'<div class="empty">✅<p>Нет задач для печати</p></div>';
   wide.hidden=false;
 }
@@ -198,7 +210,7 @@ function tcCardHTML(c){
         +subs.map(s=>'<tr style="border-bottom:1px dotted #cbd5e1">'
           +'<td style="padding:1px 4px 1px 0">'+esc(s.title)+'</td>'
           +'<td style="padding:1px 4px;white-space:nowrap;color:#475569">'+fmt(s.due_date)+'</td>'
-          +'<td style="padding:1px 0;white-space:nowrap;text-align:right"><span class="ptag" style="background:'+pc+'">'+esc(s.status_label)+'</span></td>'
+          +'<td style="padding:1px 0;white-space:nowrap;text-align:right"><span class="ptag" style="background:'+tcStatusColor(s.status_key)+'">'+esc(s.status_label)+'</span></td>'
           +'</tr>').join('')+'</table>'
       :'<div style="color:#94a3b8;padding:2px 0">нет подзадач</div>')
     +'</div>';
