@@ -116,6 +116,8 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "subtasks": subtasks or [],
         "checklist": (payload.checklist if payload else []) or [],
         "responsibles": resp_names,
+        # id ответственных — для серверного фильтра ?mine=1 (см. apply_page_filters)
+        "responsible_ids": [r.user_id for r in ent.responsibles if r.user_id],
         "executors": execs,
         "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,

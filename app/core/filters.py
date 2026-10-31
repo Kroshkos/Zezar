@@ -96,6 +96,11 @@ async def page_filters(request, session, kind: str, dept_ids: list[int] | None,
         v = request.query_params.get(name, "")
         if v not in ("", "0", "false"):
             flags.add(name[3:])          # df_week -> week
+    # служебные флаги со страницы дашборда (KPI-карточки ссылками):
+    #   mine=1  — только задачи, где я ответственный/исполнитель;
+    #   df_active=1 — только незавершённые («в работе»).
+    mine = request.query_params.get("mine", "") not in ("", "0", "false")
+    active_only = request.query_params.get("df_active", "") not in ("", "0", "false")
     dept: int | None = None
     raw = request.query_params.get("dept", "")
     try:
@@ -130,11 +135,17 @@ async def page_filters(request, session, kind: str, dept_ids: list[int] | None,
         qs_parts.append(f"dept={dept}")
     for f in sorted(flags):
         qs_parts.append(f"df_{f}=1")
+    if active_only:
+        qs_parts.append("df_active=1")
+    if mine:
+        qs_parts.append("mine=1")
 
     return {
         "deadline_flags": flags,
         "department_id": dept,
         "departments": departments,
+        "active_only": active_only,
+        "mine": mine,
         "today": date.today().isoformat(),
         "week_range": week_bounds(date.today()),
         "month_range": month_bounds(date.today()),
@@ -143,17 +154,32 @@ async def page_filters(request, session, kind: str, dept_ids: list[int] | None,
     }
 
 
-def apply_page_filters(items: list[dict], fctx: dict) -> list[dict]:
+def apply_page_filters(items: list[dict], fctx: dict, *, me: int | None = None) -> list[dict]:
     """Сервером применяем фильтры к списку строк страницы до рендера.
 
     Подразделение — точное совпадение owner (department_id); дедлайны — по
     общим правилам match_deadline. JS на странице повторяет фильтрацию для
     интерактивной смены фильтров без перезагрузки (см. core.js filtMatch).
+
+    Служебные флаги (приходят с дашборда кликами по KPI-карточкам):
+      active_only (?df_active=1) — оставить только незавершённые статусы;
+      mine        (?mine=1)      — только задачи, где я ответственный или
+                                   исполнитель (нужен id пользователя `me`).
     """
     out = items
     dept = fctx.get("department_id")
     if dept:
         out = [it for it in out if it.get("department_id") == dept]
+    if fctx.get("active_only"):
+        done = set(fctx.get("done_keys") or [])
+        out = [it for it in out if (it.get("status_key") or "") not in done]
+    if fctx.get("mine") and me is not None:
+        def _is_mine(it: dict) -> bool:
+            ids = {r.get("id") for r in (it.get("responsible_ids") or [])}
+            ids |= {e.get("id") for e in (it.get("executors") or [])
+                    if isinstance(e, dict)}
+            return me in ids
+        out = [it for it in out if _is_mine(it)]
     flags = fctx.get("deadline_flags") or set()
     if flags:
         out = apply_deadline_filter(out, flags, today=date.fromisoformat(fctx["today"]),
