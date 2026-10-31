@@ -160,17 +160,25 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
     # Иерархия задач (parent_task_uid): подзадача НЕ имеет своей печатной
     # карточки — она выводится строкой «наименование · дедлайн · статус» на
     # родительской карточке (поле subtasks). Рёбра «родитель -> ребёнок»
-    # собираются по ВСЕМ payload'ам БД: прямой родитель может быть не виден
-    # текущему пользователю (другое подразделение) или быть этапом проекта
-    # (отдельной карточки нет) — строка подзадачи всё равно попадает в
-    # содержание родителя, а сама задача исключается из отдельных карточек.
-    uid_by_eid = {e.id: e.uid for e in all_task_ents}
+    # собираются по ВСЕМ живым задачам БД (join TaskPayload с Entity, а не по
+    # сырым payload'ам: «сирота» от удалённой задачи делала живую задачу с тем
+    # же entity_id мнимой подзадачей — её карточка исчезала из печати): прямой
+    # родитель может быть не виден текущему пользователю (другое подразделение)
+    # или быть этапом проекта (отдельной карточки нет) — строка подзадачи всё
+    # равно попадает в содержание родителя, а сама задача исключается из
+    # отдельных карточек.
+    live_edges = (await session.execute(
+        select(Entity.uid, TaskPayload.parent_task_uid)
+        .join(TaskPayload, TaskPayload.entity_id == Entity.id)
+        .where(Entity.kind == EntityKind.TASK))).all()
+    live_task_uids = set(task_ent_by_uid)
     subs_by_parent: dict[str, list[str]] = {}
-    for t in task_payloads:
-        pu = getattr(t, "parent_task_uid", None) or ""
-        cu = uid_by_eid.get(t.entity_id)
-        if pu and cu:                       # битые ссылки (нет такой задачи) пропускаем
+    child_has_live_parent: set[str] = set()
+    for cu, pu in live_edges:
+        pu = pu or ""
+        if pu and pu in live_task_uids:     # битая ссылка (родитель удалён) — не подзадача
             subs_by_parent.setdefault(pu, []).append(cu)
+            child_has_live_parent.add(cu)
 
     def _subtask_rows(parent_uid: str) -> list[dict]:
         """ВСЁ дерево потомков parent_uid — строки содержания карточки:
