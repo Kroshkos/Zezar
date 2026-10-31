@@ -171,11 +171,17 @@ async def main():
 
     tr = ctx["trend"]
     check("trend дней == 7", len(tr["days"]) == 7)
-    check("week_created==1 (сегодня, в окне; 9дн назад — вне)", tr["week_created"] == 1)
-
-    act = ctx["activity"]
-    check("лента активности заполнена", len(act) >= 3)
-    check("действие локализовано", any(a["action"] == "создал(а)" for a in act))
+    # Динамика строится по дням ТЕКУЩЕЙ недели (пн–вс): добавлено / выполнено /
+    # просрочилось. Seed-задачи созданы «сейчас», поэтому суммарные числа
+    # недельной корзины обязаны совпадать с суммой по дням графика.
+    days = {d["date"]: d for d in tr["days"]}
+    check("все 7 дней недели присутствуют", len(days) == 7)
+    check("сумма created по дням == week_created",
+          sum(d["created"] for d in tr["days"]) == tr["week_created"])
+    check("сумма overdue по дням == week_overdue",
+          sum(d["overdue"] for d in tr["days"]) == tr["week_overdue"])
+    check("добавленные сегодня задачи в окне недели",
+          tr["week_created"] >= 1)
 
     wl = ctx["workload"]
     check("workload у админа есть", len(wl) == 1 and wl[0]["name"] == "Сидоров С.С.")

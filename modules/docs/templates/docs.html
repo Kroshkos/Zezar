@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "base.html" import deadline_filters with context %}
 {# Страница «Документы»: карточная сетка как renderDocs() из sipm_lite_v3.html #}
 {% block actions %}
 <button class="btn primary" onclick="docFormModal()">＋ Новый документ</button>
@@ -12,6 +13,8 @@
       {% for s in statuses %}<button class="badge {{ s.color }}" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglD(this)">{{ s.label }}</button>{% endfor %}
     </span>
   </div>
+  {# Единые фильтры: дедлайны (месяц/неделя/сегодня/просрочено) + подразделение. #}
+  {{ deadline_filters(fctx, 'renderDocCards') }}
 </div>
 
 <div class="cards" id="dcards"></div>

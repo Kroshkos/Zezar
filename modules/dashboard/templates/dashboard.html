@@ -5,6 +5,8 @@
 <style>
 .dbw-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .dbw-stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.dbw-stat.click{cursor:pointer;transition:.15s}
+.dbw-stat.click:hover{transform:translateY(-2px);border-color:#c7d2fe}
 .dbw-stat .v{font-size:30px;font-weight:800;letter-spacing:-1px;line-height:1.05}
 .dbw-stat .l{color:var(--muted);font-size:12px;font-weight:700;margin-top:3px}
 .dbw-stat .t{position:absolute;top:12px;right:14px;font-size:16px;opacity:.9}
@@ -28,6 +30,7 @@
 .tr-bar{width:12px;border-radius:4px 4px 2px 2px;min-height:2px}
 .tr-bar.c{background:linear-gradient(180deg,#818cf8,#4f46e5)}
 .tr-bar.d{background:linear-gradient(180deg,#34d399,#059669)}
+.tr-bar.o{background:linear-gradient(180deg,#fca5a5,#dc2626)}
 .tr-lab{font-size:10px;color:var(--muted);font-weight:700}
 .tr-legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);font-weight:700;margin-top:8px}
 .tr-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
@@ -73,13 +76,21 @@
 </style>
 
 {# ============ Полоса главных чисел ============ #}
+{% set dsel = (dash_selected_dept ~ '') if dash_selected_dept else '' %}
+{# dq — «хвост» фильтра подразделения для ссылок на /tasks/: начинается с '&',
+   потому что во всех ссылках уже есть '?' с первым параметром. #}
+{% set dq = ('&dept=' ~ dsel) if dsel else '' %}
+{# dqh — «хвост» для ссылки без других параметров: dept=N или пусто #}
+{% set dqh = ('dept=' ~ dsel) if dsel else '' %}
+{# Карточки первой строки кликабельны: ведут на страницу «Задачи» с
+   соответствующим фильтром (?df_overdue=1 — просроченные и т.п.).
+   Карточка «Готовность реестра» убрана по требованию пользователя. #}
 <div class="dbw-hero">
-  <div class="dbw-stat acc"><div class="t">🗂️</div><div class="v">{{ totals.all }}</div><div class="l">Всего в реестре</div></div>
-  <div class="dbw-stat"><div class="t">⚡</div><div class="v">{{ totals.active }}</div><div class="l">В работе</div></div>
-  <div class="dbw-stat {{ 'warn' if totals.overdue else 'ok' }}"><div class="t">⏰</div><div class="v">{{ totals.overdue }}</div><div class="l">Просрочено</div></div>
-  <div class="dbw-stat {{ 'warn' if totals.urgent else '' }}"><div class="t">🔥</div><div class="v">{{ totals.urgent }}</div><div class="l">Срочный приоритет</div></div>
-  <div class="dbw-stat ok"><div class="t">✅</div><div class="v">{{ totals.done_pct }}%</div><div class="l">Готовность реестра</div></div>
-  <div class="dbw-stat {{ 'warn' if totals.my_overdue else '' }}"><div class="t">🙋</div><div class="v">{{ totals.my_active }}</div><div class="l">Мои активные задачи{% if totals.my_overdue %} · {{ totals.my_overdue }} проср.{% endif %}</div></div>
+  <div class="dbw-stat acc click" onclick="location.href='/tasks/?{{ dqh }}'" title="Открыть все задачи"><div class="t">🗂️</div><div class="v">{{ totals.all }}</div><div class="l">Всего в реестре</div></div>
+  <div class="dbw-stat click" onclick="location.href='/tasks/?df_active=1{{ dq }}'" title="Открыть задачи в работе"><div class="t">⚡</div><div class="v">{{ totals.active }}</div><div class="l">В работе</div></div>
+  <div class="dbw-stat warn click" onclick="location.href='/tasks/?df_overdue=1{{ dq }}'" title="Открыть просроченные задачи"><div class="t">⏰</div><div class="v">{{ totals.overdue }}</div><div class="l">Просрочено</div></div>
+  <div class="dbw-stat {{ 'warn' if totals.urgent else '' }} click" onclick="location.href='/tasks/?df_month=1{{ dq }}'" title="Открыть задачи с дедлайном в этом месяце"><div class="t">🔥</div><div class="v">{{ totals.urgent }}</div><div class="l">Срочный приоритет</div></div>
+  <div class="dbw-stat {{ 'warn' if totals.my_overdue else '' }} click" onclick="location.href='/tasks/?mine=1{{ dq }}'" title="Открыть мои активные задачи"><div class="t">🙋</div><div class="v">{{ totals.my_active }}</div><div class="l">Мои активные задачи{% if totals.my_overdue %} · {{ totals.my_overdue }} проср.{% endif %}</div></div>
 </div>
 
 {# ============ Карточки модулей ============ #}
@@ -109,16 +120,19 @@
       {% for d in trend.days %}
       <div class="tr-day">
         <div class="tr-bars">
-          <div class="tr-bar c" style="height:{{ (100 * d.created / trend.max)|round }}px" title="Создано: {{ d.created }}"></div>
-          <div class="tr-bar d" style="height:{{ (100 * d.done / trend.max)|round }}px" title="Звершено/смена статуса: {{ d.done }}"></div>
+          <div class="tr-bar c" style="height:{{ (100 * d.created / trend.max)|round }}px" title="{{ d.label }} — добавлено задач: {{ d.created }}"></div>
+          <div class="tr-bar d" style="height:{{ (100 * d.done / trend.max)|round }}px" title="{{ d.label }} — отмечено выполненными: {{ d.done }}"></div>
+          <div class="tr-bar o" style="height:{{ (100 * d.overdue / trend.max)|round }}px" title="{{ d.label }} — просрочилось: {{ d.overdue }}"></div>
         </div>
+        <div class="tr-lab">{{ d.wd }}</div>
         <div class="tr-lab">{{ d.label }}</div>
       </div>
       {% endfor %}
     </div>
     <div class="tr-legend">
-      <span><i class="tr-dot" style="background:#4f46e5"></i>создано — {{ trend.week_created }}</span>
-      <span><i class="tr-dot" style="background:#059669"></i>завершено — {{ trend.week_done }}</span>
+      <span><i class="tr-dot" style="background:#4f46e5"></i>добавлено — {{ trend.week_created }}</span>
+      <span><i class="tr-dot" style="background:#059669"></i>выполнено — {{ trend.week_done }}</span>
+      <span><i class="tr-dot" style="background:#dc2626"></i>просрочено — {{ trend.week_overdue }}</span>
     </div>
   </div>
 
@@ -182,22 +196,11 @@
   </div>
 </div>
 
-{# ============ Активность / Загрузка / Состояние системы ============ #}
+{# ============ Загрузка ответственных ============ #}
+{# Карточки «Последние изменения» и «Состояние системы» убраны по требованию
+   пользователя; лента активности больше не строится и в queries.py. #}
+{% if workload %}
 <div class="dbw-cols">
-  <div class="dbw-card">
-    <h3>🕑 Последние изменения</h3>
-    {% for a in activity %}
-    <div class="ac-item">
-      <div class="ac-time">{{ a.at }}</div>
-      <div>{{ a.icon }} <b>{{ a.user }}</b> {{ a.action }}
-        <a href="/{{ a.module }}/?entity={{ a.uid }}">{{ a.title }}</a></div>
-    </div>
-    {% else %}
-      <div class="dbw-empty">Пока тихо — изменений не было</div>
-    {% endfor %}
-  </div>
-
-  {% if workload %}
   <div class="dbw-card">
     <h3>👥 Загрузка ответственных</h3>
     {% for w in workload %}
@@ -208,33 +211,8 @@
     </div>
     {% endfor %}
   </div>
-  {% endif %}
-
-  <div class="dbw-card">
-    <h3>🛠 Состояние системы</h3>
-    <div class="hl-grid">
-      <div class="hl-cell {{ 'bad' if sync.errors else ('neutral' if sync.pending else 'good') }}">
-        <div class="v">{{ sync.pending }}</div><div class="l">Ждут синхронизации с календарём{% if sync.errors %} · ошибок: {{ sync.errors }}{% endif %}</div></div>
-      <div class="hl-cell {{ 'bad' if sync.queue_errors else ('neutral' if sync.queue_pending else 'good') }}">
-        <div class="v">{{ sync.queue_pending }}</div><div class="l">Уведомлений в очереди{% if sync.queue_errors %} · с ошибками: {{ sync.queue_errors }}{% endif %}</div></div>
-      <div class="hl-cell neutral">
-        <div class="v">{{ tg.bound }} / {{ tg.users_active }}</div><div class="l">Привязано Telegram / активных пользователей</div></div>
-      <div class="hl-cell good">
-        <div class="v">{{ broadcasts.sent_week }}</div><div class="l">Рассылок отправлено за неделю{% if broadcasts.scheduled %} · запланировано: {{ broadcasts.scheduled }}{% endif %}</div></div>
-    </div>
-    {% if broadcasts["items"] %}
-      <div style="margin-top:12px">
-      {% for b in broadcasts["items"] %}
-        <div class="bc-item">
-          <span class="st-pill st-{{ b.status }}">{{ 'Отправлено' if b.status=='sent' else ('Идёт отправка' if b.status=='sending' else 'Запланировано') }}</span>
-          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{{ b.title }}</span>
-          <span style="color:var(--muted);font-size:11px;white-space:nowrap">{{ b.at }}</span>
-        </div>
-      {% endfor %}
-      </div>
-    {% endif %}
-  </div>
 </div>
+{% endif %}
 
 <p class="sub" style="margin-top:6px">Данные изолированы по вашим рабочим пространствам;
 координатор и администратор видят агрегированную сводку по всем.</p>

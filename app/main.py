@@ -760,14 +760,19 @@ if STATIC_DIR.is_dir():
 
     app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# ── Сайт документации и новостей проекта ─────────────────────────────────────
+# ── Внешний сайт документации и новостей проекта ─────────────────────────────
 # Вынесен в отдельный репозиторий https://github.com/Kroshkos/zezar.docs
-# (схема владельца: папки news/*.md и docs/*.md того репозитория подгружаются
-# на сайт как новости и документация; там же amvera.yaml для его деплоя).
-# Здесь оставлен только редирект со старого пути /docs на внешний сайт.
-_DOCS_SITE_URL = "https://github.com/Kroshkos/zezar.docs"  # замените на URL деплоя Amvera
+# (деплой: https://zezar-docs-patfiz.waw0.amvera.tech — ссылка в боковом меню
+# «📚 Документация» открывается в новой вкладке, см. app/templates/base.html).
+# Внутренний путь /docs занят модулем «Документооборот» (mount_pages), поэтому
+# старый редирект со /docs удалён: он перекрывал HTML-страницу модуля редиректом
+# 307 (FastAPI/Starlette RedirectResponse по умолчанию отдаёт 307) и ломал
+# scripts/e2e_test.py. Для совместимости внешних ссылок редирект на сайт
+# документации живёт на свободном пути /docs-site.
+_DOCS_SITE_URL = "https://zezar-docs-patfiz.waw0.amvera.tech/#docs"
 
-@app.get("/docs", include_in_schema=False)
+
+@app.get("/docs-site", include_in_schema=False)
 async def docs_site():
     return RedirectResponse(_DOCS_SITE_URL)
 
