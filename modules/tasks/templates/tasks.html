@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "base.html" import deadline_filters with context %}
 {# Страница «Задачи»: полная копия вёрстки renderTasks() из sipm_lite_v3.html #}
 {% block actions %}
 <button class="btn" onclick="taskCardsModal()">🖨 Карточки</button>
@@ -9,10 +10,11 @@
 <div class="card pad" style="margin-bottom:16px">
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <input id="fq" placeholder="🔍 Поиск по тексту, описанию, исполнителю…" style="flex:1;min-width:220px" oninput="renderTaskTable()">
-    <label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;font-size:12.5px;cursor:pointer">
-      <input type="checkbox" id="fover" style="width:auto" onchange="renderTaskTable()"> ⚠ только просроченные</label>
     <span id="fchips"></span>
   </div>
+  {# Единые фильтры: дедлайны (месяц/неделя/сегодня/просрочено) + подразделение.
+     Старая галочка «только просроченные» заменена на df_overdue (см. app/core/filters.py). #}
+  {{ deadline_filters(fctx, 'renderTaskTable') }}
   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       {% for s in statuses %}<button class="badge {{ s.color }} fchip" data-k="{{ s.key }}" style="border:0;cursor:pointer" onclick="tglF(this)">{{ s.label }}</button>{% endfor %}

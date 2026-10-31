@@ -76,7 +76,20 @@ Object.assign(window.FILT, {
   <main>
     <header class="topbar">
       <div><h1 id="vt">{{ page_title }}</h1><div class="sub" id="vs">{{ page_sub }}</div></div>
-      <div id="ta" style="display:flex;gap:9px;flex-wrap:wrap">{% block actions %}{% endblock %}</div>
+      <div id="ta" style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+        {% if dash_departments is defined and dash_departments is not none %}
+        {# Фильтр дашборда: подразделение или вся система (серверная перезагрузка ?dept=) #}
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;font-weight:700;color:#334155">🏢
+          <select onchange="location.href='/dashboard/?dept='+this.value" style="min-width:190px">
+            <option value="">Вся система</option>
+            {% for d in dash_departments %}
+            <option value="{{ d.id }}" {{ 'selected' if dash_selected_dept == d.id }}>{{ d.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% block actions %}{% endblock %}
+      </div>
     </header>
     <div id="content" class="content anim">{% block content %}{% endblock %}</div>
   </main>

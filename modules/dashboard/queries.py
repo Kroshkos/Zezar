@@ -3,10 +3,9 @@
 Возвращает dict-контекст для шаблона dashboard.html:
   kpi            — карточки по модулям (кол-во, просрочено, % готовности);
   status_dist    — распределение активных задач по статусам (справочник);
-  trend          — динамика «создано/завершено» за TREND_DAYS дней;
+  trend          — динамика «создано/выполнено/просрочено» по дням текущей недели;
   overdue_list   — ближайшие просрочки (top-N) со ссылками на карточки;
   due_soon_list  — что сдаётся в ближайшие 7 дней;
-  activity       — лента последних изменений (audit_log);
   workload       — топ ответственных по активным задачам (глобальные роли);
   sync           — состояние синхронизации с Яндекс.Календарём и очередью TG;
   broadcasts     — сводка рассылок администратора;
@@ -41,7 +40,6 @@ BADGE_HEX = {
 
 TOP_N = 6           # строк в списках «Просрочено» / «На контроле»
 TREND_DAYS = 7      # окно недельного тренда
-ACTIVITY_LIMIT = 8  # строк ленты активности
 
 # Ключи завершающих статусов для «отмечено выполнено» в недельной динамике:
 # детерминированный набор ядра + исторический «completed». Пользовательские
@@ -347,21 +345,8 @@ async def build_dashboard_data(session: AsyncSession, user: User,
         urgent = await session.scalar(uq) or 0
 
     # ================= 6. Лента активности =====================================
-    act_q = (select(AuditLog.at, AuditLog.action, User.display_name,
-                    Entity.uid, Entity.title, Entity.module_key)
-             .join(Entity, Entity.id == AuditLog.entity_id)
-             .outerjoin(User, User.id == AuditLog.user_id)
-             .where(filt, Entity.id.is_not(None))
-             .order_by(AuditLog.id.desc()).limit(ACTIVITY_LIMIT))
-    ACTION_RU = {"create": "создал(а)", "update": "обновил(а)",
-                 "status": "сменил(а) статус", "reassign": "переназначил(а)",
-                 "share": "расшарил(а)", "delete": "удалил(а)",
-                 "done": "завершил(а)"}
-    activity = []
-    for at, action, uname, uid, title, mk in (await session.execute(act_q)).all():
-        activity.append({"at": _fmt_dt(at), "action": ACTION_RU.get(action, action),
-                         "user": uname or "—", "uid": uid, "title": title,
-                         "module": mk, "icon": icons.get(mk, "•")})
+    # Удалена по требованию пользователя (карточка «Последние изменения» больше
+    # не выводится на дашборде).
 
     # ================= 7. Загрузка ответственных (глобальные роли) ============
     workload = []
@@ -464,7 +449,6 @@ async def build_dashboard_data(session: AsyncSession, user: User,
                   "week_overdue": week_overdue, "comp_rate": comp_rate},
         "overdue_list": overdue_list,
         "due_soon_list": due_soon_list,
-        "activity": activity,
         "workload": workload,
         "sync": {"pending": pending_sync, "errors": sync_errors,
                  "queue_pending": queue_pending, "queue_errors": queue_errors},
