@@ -293,9 +293,39 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
         for e in (await session.scalars(
                 select(Entity).where(Entity.id.in_(missing_ids)))).all():
             cent_by_eid[e.id] = e
-    subtask_uids = {cent_by_eid[p.entity_id].uid for p in subtask_payloads
-                    if p.entity_id in cent_by_eid
-                    and p.parent_task_uid in live_uids}
+    # Живые рёбра «потомок -> родитель» (uid, uid) и множество uid-родителей.
+    # По ним ниже отцепляются «битые» подзадачи — задачи, чья ссылка
+    # parent_task_uid ведёт на удалённую задачу: они снова печатаются
+    # отдельными карточками, но не должны оставаться в чужом содержании
+    # (иначе дубль: своя карточка + строка в составе несвязанной задачи).
+    edges: set[tuple[str, str]] = set()
+    parent_uids: set[str] = set()
+    for p in subtask_payloads:
+        cent = cent_by_eid.get(p.entity_id)
+        if cent is not None and p.parent_task_uid in live_uids:
+            edges.add((cent.uid, p.parent_task_uid))
+            parent_uids.add(p.parent_task_uid)
+    subtask_uids = {c for c, _ in edges}
+
+    def _desc_roots_ok(root_uid: str) -> set[str]:
+        """Потомки root_uid (BFS по ребрам) с отсечкой веток, где ребёнок
+        «отцеплен» (его прямая ссылка ведёт не на текущего предка — битая
+        ссылка или перепривязка). Возвращает только корректных потомков;
+        seen — защита от колец в данных."""
+        out: set[str] = set()
+        stack, seen = [root_uid], {root_uid}
+        while stack:
+            cur = stack.pop()
+            for child, par in edges:
+                if par != cur or child in seen:
+                    continue
+                gp = next((q for cc, q in edges if cc == child), None)
+                if gp is not None and gp != cur:
+                    continue          # битая/перепривязанная ссылка — ветка отрезана
+                seen.add(child)
+                out.add(child)
+                stack.append(child)
+        return out
 
     out: list[dict] = []
     for ent in ents:
@@ -573,13 +603,28 @@ async def delete_task(uid: str, user: User = Depends(get_current_user),
         mine = any(r.user_id == user.id for r in ent.responsibles)
         if not (mine and ent.owner_department_id in ctx.department_ids):
             raise HTTPException(403, "Участник удаляет только свои задачи")
-    # Иерархия задач: у прямых подзадачей сбрасываем ссылку на родителя, иначе
-    # они остались бы «подзадачами несуществующей задачи» и потеряли бы и
-    # отдельную карточку, и место в чужом содержании при печати.
-    kids = (await session.scalars(
-        select(TaskPayload).where(TaskPayload.parent_task_uid == ent.uid))).all()
-    for kp in kids:
-        kp.parent_task_uid = None
+    # Иерархия задач: у ВСЕХ потомков (не только прямых детей) сбрасываем
+    # ссылку на родителя, иначе они остались бы «подзадачами несуществующей
+    # задачи» и потеряли бы и отдельную карточку, и место в чужом содержании
+    # при печати. Раньше сбрасывались только прямые дети: при удалении дерева
+    # сверху вниз (сначала корень, затем средний уровень) у внука оставалась
+    # битая ссылка parent_task_uid -> удалённую задачу. Печать трактует такую
+    # ссылку как «не подзадача» (см. live_uids в _printable_task_cards), и
+    # задача печаталась ОТДЕЛЬНОЙ карточкой, хотя её живой предок тоже
+    # печатался — дубль в печати. Обход BFS с seen — защита от колец в данных.
+    detached: set[str] = set()
+    frontier = [ent.uid]
+    while frontier:
+        kids = (await session.scalars(select(TaskPayload).where(
+            TaskPayload.parent_task_uid.in_(frontier)))).all()
+        frontier = []
+        for kp in kids:
+            ke = await session.get(Entity, kp.entity_id)
+            if ke is None or ke.uid in detached:
+                continue
+            detached.add(ke.uid)
+            kp.parent_task_uid = None
+            frontier.append(ke.uid)
     await entity_service.delete_entity(session, user, ent)
     await session.commit()
     return {"ok": True}
