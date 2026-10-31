@@ -107,10 +107,10 @@ if (!window.wfCanvasHTML) {
 
 function renderProjCards(){
   const q=(document.getElementById('pq').value||'').toLowerCase();
-  let list=PRJ.projects.filter(p=>{
-    if(q && !(p.title+' '+(p.customer||'')+' '+(p.code||'')+' '+(p.leader_name||'')).toLowerCase().includes(q))return false;
-    if(PS.size && !PS.has(p.status_key))return false;
-    return true;
+  // Общие фильтры (дедлайны + подразделение) — из core.js: window.FLS/applyListFilters.
+  let list=applyListFilters(PRJ.projects,{
+    search:q, status:PS,
+    search_cb:(p,q)=>(p.title+' '+(p.customer||'')+' '+(p.code||'')+' '+(p.leader_name||'')).toLowerCase().includes(q),
   });
   document.getElementById('pempty').hidden=list.length>0;
   document.getElementById('pcards').innerHTML=list.map(p=>{

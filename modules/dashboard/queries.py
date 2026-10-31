@@ -3,10 +3,9 @@
 Возвращает dict-контекст для шаблона dashboard.html:
   kpi            — карточки по модулям (кол-во, просрочено, % готовности);
   status_dist    — распределение активных задач по статусам (справочник);
-  trend          — динамика «создано/завершено» за TREND_DAYS дней;
+  trend          — динамика «создано/выполнено/просрочено» по дням текущей недели;
   overdue_list   — ближайшие просрочки (top-N) со ссылками на карточки;
   due_soon_list  — что сдаётся в ближайшие 7 дней;
-  activity       — лента последних изменений (audit_log);
   workload       — топ ответственных по активным задачам (глобальные роли);
   sync           — состояние синхронизации с Яндекс.Календарём и очередью TG;
   broadcasts     — сводка рассылок администратора;
@@ -41,11 +40,24 @@ BADGE_HEX = {
 
 TOP_N = 6           # строк в списках «Просрочено» / «На контроле»
 TREND_DAYS = 7      # окно недельного тренда
-ACTIVITY_LIMIT = 8  # строк ленты активности
+
+# Ключи завершающих статусов для «отмечено выполнено» в недельной динамике:
+# детерминированный набор ядра + исторический «completed». Пользовательские
+# b-green статусы справочника добавляются в build_dashboard_data.
+_DONE_KEYS = {"done", "closed", "completed"}
 
 
 def _kind_val(kind) -> str:
     return str(getattr(kind, "value", kind))
+
+
+def _is_done_key(key: str | None, extra: set[str] | None = None) -> bool:
+    k = str(key or "").strip().lower()
+    if not k:
+        return False
+    if k in _DONE_KEYS or k.endswith("_done"):
+        return True
+    return bool(extra) and k in extra
 
 
 def _hex(color: str | None) -> str:
@@ -56,9 +68,44 @@ def _fmt_dt(at: datetime | None) -> str:
     return at.strftime("%d.%m %H:%M") if at else ""
 
 
-async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
+async def build_dashboard_context(session: AsyncSession, user: User,
+                                  department_id: int | None):
+    """AccessContext дашборда с учётом фильтра по подразделению.
+
+    Для админа/координатора выбранное подразделение сужает department_ids
+    (entity_filter для глобальных пользователей не фильтрует по подразделениям,
+    поэтому сужение выполняется отдельно — через dept_cond). Для остальных
+    выбор вне его пространств игнорируется (безопасно по умолчанию)."""
     ctx = await access.build_context(session, user)
+    if department_id and department_id > 0:
+        if ctx.is_global:
+            if await session.get(Department, department_id):
+                ctx.department_ids = [department_id]
+        elif department_id in (ctx.department_ids or []):
+            ctx.department_ids = [department_id]
+    return ctx
+
+
+def dashboard_dept_cond(ctx) -> object:
+    """SQL-условие фильтра «подразделение» для запросов дашборда."""
+    if not ctx.department_ids:
+        return Entity.id.is_not(None)
+    return Entity.owner_department_id.in_(ctx.department_ids)
+
+
+async def build_dashboard_data(session: AsyncSession, user: User,
+                               department_id: int | None = None) -> dict:
+    """Контекст дашборда.
+
+    department_id — фильтр по подразделению (выпадающий список в шапке
+    дашборда): None / 0 — «Вся система» (всё доступное пользователю),
+    иначе — агрегаты считаются только по сущностям выбранного
+    подразделения-владельца (для админа/координатора) или в пределах
+    его собственных пространств (для остальных — выбор и так ограничен
+    своими подразделениями)."""
+    ctx = await build_dashboard_context(session, user, department_id)
     filt = access.entity_filter(ctx)
+    dcond = dashboard_dept_cond(ctx)   # фильтр по подразделению (выбор в шапке)
     today = date.today()
     today_iso = today.isoformat()
     horizon_iso = (today + timedelta(days=7)).isoformat()
@@ -81,7 +128,7 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     rows = (await session.execute(
         select(Entity.module_key, Entity.status_key, Entity.kind, Entity.due_date,
                func.count(Entity.id).label("cnt"))
-        .where(filt)
+        .where(filt, dcond)
         .group_by(Entity.module_key, Entity.status_key, Entity.kind,
                   Entity.due_date))).all()
 
@@ -145,27 +192,70 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
                     "overdue": d["overdue"], "pct": pct})
     kpi.sort(key=lambda x: -x["total"])
 
-    # ================= 3. Недельный тренд (audit_log) =========================
-    since_dt = datetime.combine(today - timedelta(days=TREND_DAYS - 1),
-                                 datetime.min.time())
+    # ================= 3. Динамика текущей недели (пн–вс) ====================
+    # По дням текущей недели: добавлено задач / отмечено выполненными /
+    # просрочилось в соответствующий день (дедлайн наступил и истёк).
+    monday = today - timedelta(days=today.weekday())
+    week_end = monday + timedelta(days=6)
+    since_dt = datetime.combine(monday, datetime.min.time())
+    week_end_iso = week_end.isoformat()
 
-    def _trend_q(actions):
-        return (select(func.date(AuditLog.at), func.count())
-                .join(Entity, Entity.id == AuditLog.entity_id)
-                .where(filt, AuditLog.action.in_(actions),
-                       AuditLog.at >= since_dt)
-                .group_by(func.date(AuditLog.at)))
-    cr = {str(d): c for d, c in (await session.execute(_trend_q(("create",)))).all()}
-    dr = {str(d): c for d, c in (await session.execute(
-        _trend_q(("done", "status")))).all()}
+    WDAY_RU = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+    # добавлено — задачи, созданные в этот день (created_at);
+    added_q = (select(func.date(Entity.created_at), func.count())
+               .where(filt, dcond, Entity.kind == EntityKind.TASK,
+                      Entity.created_at >= since_dt)
+               .group_by(func.date(Entity.created_at)))
+    cr = {str(d): c for d, c in (await session.execute(added_q)).all()}
+
+    # выполнено — статус стал завершающим в этот день (audit action status/done);
+    done_keys_extra = term_by_kind["task"] | term_by_kind["project"]
+    done_q = (select(func.date(AuditLog.at).label("d"),
+                     Entity.status_key.label("sk"),
+                     func.count().label("cnt"))
+              .join(Entity, Entity.id == AuditLog.entity_id)
+              .where(filt, dcond,
+                     Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+                     AuditLog.action.in_(("done", "status")),
+                     AuditLog.at >= since_dt)
+              .group_by(func.date(AuditLog.at), Entity.status_key))
+    dr: dict[str, int] = {}
+    for d_, sk, c_ in (await session.execute(done_q)).all():
+        if _is_done_key(sk, done_keys_extra):
+            k = str(d_)
+            dr[k] = dr.get(k, 0) + c_
+
+    # просрочилось — дедлайн задачи пришёлся на этот день и она не завершена;
+    od_q = (select(Entity.due_date.label("due"), Entity.status_key.label("sk"),
+                   func.count().label("cnt"))
+            .where(filt, dcond,
+                   Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+                   Entity.due_date.is_not(None),
+                   Entity.due_date >= monday.isoformat(),
+                   Entity.due_date <= week_end_iso)
+            .group_by(Entity.due_date, Entity.status_key))
+    od_map: dict[str, int] = {}
+    for due_, sk, c_ in (await session.execute(od_q)).all():
+        kv_sk = str(sk or "")
+        if _is_done_key(kv_sk, done_keys_extra):
+            continue
+        od_map[str(due_)] = od_map.get(str(due_), 0) + c_
+
     trend_days, maxv = [], 1
-    for i in range(TREND_DAYS):
-        day = (today - timedelta(days=TREND_DAYS - 1 - i)).isoformat()
-        c_, d_ = cr.get(day, 0), dr.get(day, 0)
-        maxv = max(maxv, c_, d_)
+    for i in range(7):
+        day = (monday + timedelta(days=i)).isoformat()
+        c_, d_, o_ = cr.get(day, 0), dr.get(day, 0), od_map.get(day, 0)
+        maxv = max(maxv, c_, d_, o_)
         trend_days.append({"date": day, "created": c_, "done": d_,
+                           "overdue": o_, "wd": WDAY_RU[i],
                            "label": f"{day[8:10]}.{day[5:7]}"})
-    week_done = sum(dr.values())
+    week_created = sum(cr.get((monday + timedelta(days=i)).isoformat(), 0)
+                       for i in range(7))
+    week_done = sum(dr.get((monday + timedelta(days=i)).isoformat(), 0)
+                    for i in range(7))
+    week_overdue = sum(od_map.get((monday + timedelta(days=i)).isoformat(), 0)
+                       for i in range(7))
     comp_rate = (min(100, round(100 * week_done / active_all)) if active_all
                  else (100 if week_done else 0))
 
@@ -223,13 +313,13 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
         .join(Department, Department.id == Entity.owner_department_id))
 
     od_q = (base_cols.where(
-        filt, Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+        filt, dcond, Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
         Entity.due_date.is_not(None), Entity.due_date < today_iso)
         .order_by(Entity.due_date.asc()).limit(TOP_N * 3))
     overdue_list = await _list_items(od_q, TOP_N)
 
     ds_q = (base_cols.where(
-        filt, Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+        filt, dcond, Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
         Entity.due_date.is_not(None), Entity.due_date >= today_iso,
         Entity.due_date <= horizon_iso)
         .order_by(Entity.due_date.asc()).limit(TOP_N * 2))
@@ -245,7 +335,7 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     urgent = 0
     if high_keys:
         uq = (select(func.count(Entity.id))
-              .where(filt,
+              .where(filt, dcond,
                      Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
                      Entity.priority_key.in_(sorted(high_keys)),
                      # статус не завершающий для своего вида
@@ -258,21 +348,8 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
         urgent = await session.scalar(uq) or 0
 
     # ================= 6. Лента активности =====================================
-    act_q = (select(AuditLog.at, AuditLog.action, User.display_name,
-                    Entity.uid, Entity.title, Entity.module_key)
-             .join(Entity, Entity.id == AuditLog.entity_id)
-             .outerjoin(User, User.id == AuditLog.user_id)
-             .where(filt, Entity.id.is_not(None))
-             .order_by(AuditLog.id.desc()).limit(ACTIVITY_LIMIT))
-    ACTION_RU = {"create": "создал(а)", "update": "обновил(а)",
-                 "status": "сменил(а) статус", "reassign": "переназначил(а)",
-                 "share": "расшарил(а)", "delete": "удалил(а)",
-                 "done": "завершил(а)"}
-    activity = []
-    for at, action, uname, uid, title, mk in (await session.execute(act_q)).all():
-        activity.append({"at": _fmt_dt(at), "action": ACTION_RU.get(action, action),
-                         "user": uname or "—", "uid": uid, "title": title,
-                         "module": mk, "icon": icons.get(mk, "•")})
+    # Удалена по требованию пользователя (карточка «Последние изменения» больше
+    # не выводится на дашборде).
 
     # ================= 7. Загрузка ответственных (глобальные роли) ============
     workload = []
@@ -281,7 +358,7 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
                        func.count(EntityResponsible.id).label("cnt"))
                 .join(EntityResponsible, EntityResponsible.user_id == User.id)
                 .join(Entity, Entity.id == EntityResponsible.entity_id)
-                .where(filt, Entity.kind == EntityKind.TASK,
+                .where(filt, dcond, Entity.kind == EntityKind.TASK,
                        or_(Entity.status_key.is_(None),
                            Entity.status_key.notin_(sorted(term_by_kind["task"]))))
                 .group_by(User.id, User.display_name, User.color)
@@ -295,10 +372,11 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     # ================= 8. Синхронизация и доставка уведомлений ================
     pending_sync = await session.scalar(
         select(func.count(Entity.id)).where(
-            filt, Entity.sync_state.in_([SyncState.PENDING, SyncState.ERROR]))) or 0
+            filt, dcond,
+            Entity.sync_state.in_([SyncState.PENDING, SyncState.ERROR]))) or 0
     sync_errors = await session.scalar(
         select(func.count(Entity.id)).where(
-            filt, Entity.sync_state == SyncState.ERROR)) or 0
+            filt, dcond, Entity.sync_state == SyncState.ERROR)) or 0
 
     queue_pending = await session.scalar(
         select(func.count(OutboxEvent.id)).where(
@@ -327,7 +405,7 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     my_q = (select(func.count(func.distinct(Entity.id)))
             .select_from(Entity)
             .join(EntityResponsible, EntityResponsible.entity_id == Entity.id)
-            .where(filt, Entity.kind == EntityKind.TASK,
+            .where(filt, dcond, Entity.kind == EntityKind.TASK,
                    EntityResponsible.user_id == user.id,
                    or_(Entity.status_key.is_(None),
                        Entity.status_key.notin_(sorted(term_by_kind["task"])))))
@@ -336,7 +414,8 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     my_od_q = (select(func.count(func.distinct(Entity.id)))
                .select_from(Entity)
                .join(EntityResponsible, EntityResponsible.entity_id == Entity.id)
-               .where(filt, Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
+               .where(filt, dcond,
+                      Entity.kind.in_([EntityKind.TASK, EntityKind.PROJECT]),
                       EntityResponsible.user_id == user.id,
                       Entity.due_date.is_not(None), Entity.due_date < today_iso,
                       or_(Entity.status_key.is_(None),
@@ -350,15 +429,29 @@ async def build_dashboard_data(session: AsyncSession, user: User) -> dict:
     broadcasts_items = [{"title": r.title, "at": _fmt_dt(r.sent_at),
                          "status": r.status} for r in last_bc]
 
+    # ================= 10. Подразделения для фильтра в шапке дашборда ========
+    if ctx.is_global:
+        dept_rows = (await session.scalars(
+            select(Department).where(Department.is_active == True)  # noqa: E712
+            .order_by(Department.name))).all()
+    else:
+        dept_rows = (await session.scalars(
+            select(Department).where(
+                Department.id.in_(ctx.department_ids or [-1]))
+            .order_by(Department.name))).all()
+    dash_departments = [{"id": d.id, "name": d.name} for d in dept_rows]
+    sel_dept = int(department_id) if department_id and int(department_id) > 0 else None
+
     return {
+        "departments": dash_departments,
+        "selected_dept": sel_dept,
         "kpi": kpi,
         "status_dist": status_dist,
         "trend": {"days": trend_days, "max": maxv,
-                  "week_created": sum(cr.values()), "week_done": week_done,
-                  "comp_rate": comp_rate},
+                  "week_created": week_created, "week_done": week_done,
+                  "week_overdue": week_overdue, "comp_rate": comp_rate},
         "overdue_list": overdue_list,
         "due_soon_list": due_soon_list,
-        "activity": activity,
         "workload": workload,
         "sync": {"pending": pending_sync, "errors": sync_errors,
                  "queue_pending": queue_pending, "queue_errors": queue_errors},

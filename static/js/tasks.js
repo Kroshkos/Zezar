@@ -17,30 +17,51 @@ function toggle(set,k,el){if(set.has(k)){set.delete(k);el.style.outline=''}else{
 
 function filtered(){
   const q=(document.getElementById('fq').value||'').toLowerCase();
-  const ov=document.getElementById('fover').checked;
-  return D.tasks.filter(t=>{
-    if(q && !(t.title+' '+t.description+' '+t.responsibles.join(' ')).toLowerCase().includes(q))return false;
-    if(S.status.size && !S.status.has(t.status_key))return false;
-    if(S.priority.size && !S.priority.has(t.priority_key))return false;
-    if(ov && !(t.due_date && t.due_date<todayISO() && t.status_key!=='done'))return false;
-    return true;
+  // Общие фильтры (дедлайны + подразделение) — из core.js: window.FLS/applyListFilters.
+  // Старая галочка «только просроченные» (#fover) заменена на флаг df_overdue.
+  return applyListFilters(D.tasks,{
+    search:q, status:S.status, priority:S.priority,
+    search_cb:(t,q)=>(t.title+' '+t.description+' '+(t.responsibles||[]).join(' ')).toLowerCase().includes(q),
   });
+}
+
+/* Древовидная структура списка: родительские задачи идут первыми, а сразу под
+   ними — строки их подзадач (с отступом). Подзадачи больше НЕ перечисляются
+   текстом в ячейке родителя: показывается только их количество (📋 N). */
+function treeRows(list){
+  const inList = new Set(list.map(t => t.uid));
+  const kids = new Map();          // uid родителя -> строки-подзадачи (из этого же списка)
+  list.forEach(t => {
+    if (t.parent_task_uid && inList.has(t.parent_task_uid)) {
+      if (!kids.has(t.parent_task_uid)) kids.set(t.parent_task_uid, []);
+      kids.get(t.parent_task_uid).push(t);
+    }
+  });
+  const out = []; const seen = new Set();
+  function push(t, depth) {
+    if (seen.has(t.uid)) return;   // защита от циклов в иерархии
+    seen.add(t.uid);
+    out.push({t, depth});
+    (kids.get(t.uid) || []).forEach(s => push(s, depth + 1));
+  }
+  // корни: задачи без родителя либо с невидимым родителем (фильтр/доступ)
+  list.filter(t => !t.parent_task_uid || !inList.has(t.parent_task_uid)).forEach(t => push(t, 0));
+  list.forEach(t => push(t, 0));   // добор оставшихся (циклы) — ничего не теряем
+  return out;
 }
 
 function renderTaskTable(){
   const list=filtered();const tb=document.getElementById('ttb');
   document.getElementById('tempty').hidden=list.length>0;
-  tb.innerHTML=list.map(t=>{
+  tb.innerHTML=treeRows(list).map(({t,depth})=>{
     const st=stOf(t.status_key),pr=prOf(t.priority_key);
     const od=t.due_date&&t.due_date<todayISO()&&t.status_key!=='done';
-    const acc=t.perm==='read'?'<span class="badge b-amber">только чтение</span>':
-              (t.perm!=='full'&&t.shared_to!==false?'':'');
-    // Иерархия задач: подзадачи помечаются в списке; их карточки печатаются
-    // только в составе родительской задачи (см. printTaskCards / api-list).
-    const hier=(t.parent_task_uid?'<div class="sub" style="color:#6b7280">↳ подзадача: '+esc(t.parent_task_title||D.tasks.find(x=>x.uid===t.parent_task_uid)?.title||'родительская задача')+'</div>':'')
-      +(t.subtasks&&t.subtasks.length?'<div class="sub" style="color:#6b7280">📋 подзадачи ('+t.subtasks.length+'): '
-        +t.subtasks.map(s=>esc(s.title)+' · '+fmt(s.due_date)+' · '+esc(s.status_label)).join(' | ')+'</div>':'');
-    return '<tr><td style="min-width:230px"><div class="nm"><a href="#" class="entlink" title="Открыть профиль задачи" onclick="openProfile(\''+t.uid+'\');return false">'+esc(t.title)+'</a></div>'
+    // Иерархия: у родителя — только счётчик подзадач; у подзадачи — метка «↳».
+    const subN=(t.subtasks&&t.subtasks.length)||0;
+    const hier=(depth?'<div class="sub" style="color:#6b7280">↳ подзадача'+(t.parent_task_title?' · '+esc(t.parent_task_title):'')+'</div>':'')
+      +(subN&&!depth?'<div class="sub" style="color:#6b7280">📋 подзадач: '+subN+'</div>':'');
+    const indent=depth? 'padding-left:'+(depth*22)+'px;':'';
+    return '<tr><td style="min-width:230px"><div class="nm" style="'+indent+'"><a href="#" class="entlink" title="Открыть профиль задачи" onclick="openProfile(\''+t.uid+'\');return false">'+(depth?'└ ':'')+esc(t.title)+'</a></div>'
       +'<div class="sub">'+esc(t.description||'')+'</div>'+hier+'</td>'
       +'<td style="font-size:12.5px">'+esc((t.executor_names&&t.executor_names.length?t.executor_names:t.responsibles).join(', ')||'—')+'</td>'
       +'<td><span class="badge '+pr.color+'">'+pr.label+'</span></td>'

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service, refdata
+from app.core import access, entity_service, filters, refdata
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -116,6 +116,8 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "subtasks": subtasks or [],
         "checklist": (payload.checklist if payload else []) or [],
         "responsibles": resp_names,
+        # id ответственных — для серверного фильтра ?mine=1 (см. apply_page_filters)
+        "responsible_ids": [r.user_id for r in ent.responsibles if r.user_id],
         "executors": execs,
         "executor_names": [e["name"] for e in execs] or resp_names,
         "perm": perm.value if perm else None,
@@ -352,6 +354,8 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
                             or labels.get((None, skey)) or skey or "—",
             "department_id": ent.owner_department_id,
             "responsibles": await _resp_names(session, ent),
+            # id ответственных — для клиентского фильтра mine (см. core.js FLS.mine)
+            "responsible_ids": [r.user_id for r in ent.responsibles if r.user_id],
             "executors": executors,
             "subtasks": await _descendants(ent.uid),
         })
@@ -365,6 +369,10 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
 async def tasks_page(request: Request, user: User = Depends(get_current_user),
                      session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
+    # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
+    # приходят в т.ч. по кликам с дашборда (карточки KPI ссылками).
+    fctx = await filters.page_filters(request, session, user.id, "task",
+                                      ctx.department_ids, ctx.is_global)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.TASK, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
@@ -412,7 +420,9 @@ async def tasks_page(request: Request, user: User = Depends(get_current_user),
         request, "tasks.html", module_key=MODULE_KEY, user=user, session=session,
         page_title="Задачи", page_sub="Задачи, поручения и автозадачи этапов workflow",
         counts={MODULE_KEY: len(items)},
-        tasks=await _decorate(session, items),
+        tasks=filters.apply_page_filters(await _decorate(session, items), fctx,
+                                         me=user.id),
+        fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
         departments=depts, people=people, me=user.id,

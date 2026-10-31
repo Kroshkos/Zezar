@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core import access, entity_service, wf_service
+from app.core import access, entity_service, filters, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -293,6 +293,10 @@ async def _cycle_guard(session: AsyncSession, uid: str | None,
 async def projects_page(request: Request, user: User = Depends(get_current_user),
                         session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
+    # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
+    # приходят в т.ч. по кликам с карточек дашборда.
+    fctx = await filters.page_filters(request, session, user.id, "project",
+                                      ctx.department_ids, ctx.is_global)
     pairs = await _visible_entities(session, ctx, EntityKind.PROJECT)
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
     ptitles = await _parent_titles(session, list(payloads.values()))
@@ -342,7 +346,10 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
         page_title="Проектная работа",
         page_sub="Межпространственные проекты: этапы, вехи, ответственные от каждого подразделения",
         counts={MODULE_KEY: len(items)},
-        projects=items,
+        # Единые фильтры страниц сущностей (дедлайны + подразделение) — см.
+        # app/core/filters.py; JS-повтор на странице — core.js applyListFilters.
+        projects=filters.apply_page_filters(items, fctx, me=user.id),
+        fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],
         wf_templates=[{"id": t.id, "name": t.name, "steps": t.steps or []} for t in wf_templates],

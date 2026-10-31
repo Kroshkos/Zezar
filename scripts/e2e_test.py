@@ -22,7 +22,7 @@ import httpx  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.db.engine import SessionLocal  # noqa: E402
-from app.models.core import Entity, OutboxEvent, User  # noqa: E402
+from app.models.core import Entity, OutboxEvent, RefType as _RT, User  # noqa: E402
 from integrations.workers import _outbox_once  # noqa: E402
 
 EMAIL_TO_LOGIN = {'admin@caesar.local': 'ivanov', 'coord@caesar.local': 'petrova', 'head-it@caesar.local': 'sidorov', 'member-it@caesar.local': 'kuznetsov', 'member-strat@caesar.local': 'smirnova', 'head-hr@caesar.local': 'morozova', 'member-hr@caesar.local': 'gavrilov'}
@@ -273,6 +273,11 @@ async def main() -> None:
                 assert mk in hm, f"модуль {mk} не в реестре: {hm}"
 
             # 15. «Документооборот»: HTML + payload (doc_type/number) + изоляция пространств
+            # Справочник видов документов: создание документа проверяет doc_type
+            # по RefType (см. docs/_check_ref_type), поэтому заводим запись ДО POST.
+            async with SessionLocal() as _s:
+                _s.add(_RT(kind="doc_type", label="Приказ", department_id=None))
+                await _s.commit()
             r = await c.get("/docs", headers=cookie)
             assert r.status_code == 200 and "Новый документ" in r.text, r.status_code
             r = await c.post("/api/docs", headers=cookie, json={
@@ -303,11 +308,10 @@ async def main() -> None:
 
             # 16. остальные модули: страница рендерится, CRUD работает через ядро (RBAC/шэры)
             # регрессия бага RefType.key: страницы docs/softs/schols падали с 500,
-            # когда в справочнике ref_types есть хотя бы одна запись типа
-            from app.models.core import RefType as _RT
+            # когда в справочнике ref_types есть хотя бы одна запись типа.
+            # doc_type «Приказ» уже заведён в блоке 15 — не дублируем (уникальность).
             async with SessionLocal() as _s:
                 _s.add_all([
-                    _RT(kind="doc_type", label="Приказ", department_id=None),
                     _RT(kind="soft_type", label="Веб-сервис", department_id=None),
                     _RT(kind="schol_type", label="Академическая", department_id=None),
                 ])
