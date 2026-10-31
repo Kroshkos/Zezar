@@ -107,8 +107,11 @@ def _task_dict(ent: Entity, payload: TaskPayload | None, perm: Permission | None
         "project_entity_uid": payload.project_entity_uid if payload else None,
         "group_key": payload.group_key if payload else None,
         # иерархия задач: родитель (uid/заголовок) и подзадачи — для формы,
-        # таблицы и печати карточек (см. static/js/tasks.js printTaskCards)
+        # таблицы и печати карточек (см. static/js/tasks.js printTaskCards).
+        # is_subtask — исключает задачу из печати отдельной карточкой даже
+        # если её родитель не попал в видимый список (см. _printable_task_cards).
         "parent_task_uid": payload.parent_task_uid if payload else None,
+        "is_subtask": bool(payload and payload.parent_task_uid),
         "parent_task_title": parent_title or "",
         "subtasks": subtasks or [],
         "checklist": (payload.checklist if payload else []) or [],
@@ -236,22 +239,59 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
     labels = await _task_status_labels(session)
 
     async def _descendants(parent_uid: str) -> list[dict]:
-        """Прямые подзадачи задачи parent_uid (по payload'ам всей БД — см.
-        докстринг функции)."""
-        rows = (await session.execute(
-            select(Entity).join(TaskPayload, TaskPayload.entity_id == Entity.id)
-            .where(TaskPayload.parent_task_uid == parent_uid,
-                   Entity.kind == EntityKind.TASK))).unique().all()
-        subs = [_subtask_row(e, labels) for (e,) in rows]
-        subs.sort(key=lambda x: (x["due_date"] or "9999", x["title"]))
+        """Подзадачи задачи parent_uid — ВСЁ дерево потомков (по payload'ам
+        всей БД — см. докстринг функции).
+
+        Обход с защитой от циклов (seen): если данные уже содержат кольцо
+        (например, родитель удалён и «висячая» подзадача ссылается на другую
+        из своего же кольца), дерево не зациклится. Потомки второго уровня
+        включаются в содержание корневой карточки с пометкой «↳» — иначе они
+        не попали бы ни в одну печать (их прямые родители-подзадачи отдельных
+        карточек не имеют).
+        """
+        subs: list[dict] = []
+        seen = {parent_uid}
+
+        async def walk(pu: str, depth: int) -> None:
+            rows = (await session.execute(
+                select(Entity).join(TaskPayload, TaskPayload.entity_id == Entity.id)
+                .where(TaskPayload.parent_task_uid == pu,
+                       Entity.kind == EntityKind.TASK))).unique().all()
+            kids = sorted([e for (e,) in rows],
+                          key=lambda e: (e.due_date or "9999", e.title))
+            for e in kids:
+                if e.uid in seen:
+                    continue
+                seen.add(e.uid)
+                row = _subtask_row(e, labels)
+                if depth:
+                    row["title"] = "\u21b3 " + row["title"]   # вложенная подзадача
+                subs.append(row)
+                await walk(e.uid, depth + 1)
+
+        await walk(parent_uid, 0)
         return subs
+
+    # uid всех живых задач: если ссылка на родителя ведёт на удалённую задачу,
+    # она не делает текущую задачу подзадачей (см. delete_task: при удалении
+    # родителя child-ссылки не сбрасываются).
+    live_uids = {e.uid for e in (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.TASK))).all()}
+    # uid всех задач, являющихся подзадачами (потомками): такие задачи НЕ
+    # печатаются отдельными карточками даже если их родитель недоступен
+    # печатающему пользователю (иначе нарушается правило «подзадачи печатаются
+    # только в составе родительской задачи»).
+    subtask_uids = {p.parent_task_uid for p in
+                    (await session.scalars(select(TaskPayload))).all()
+                    if getattr(p, "parent_task_uid", None)
+                    and p.parent_task_uid in live_uids}
 
     out: list[dict] = []
     for ent in ents:
         p = tp.get(ent.id)
         if p is not None and p.project_entity_uid:
             continue                      # этап проекта — карточка у проекта
-        if p is not None and getattr(p, "parent_task_uid", None):
+        if ent.uid in subtask_uids:
             continue                      # подзадача — только в составе родителя
         skey = ent.status_key or ""
         executors = [e.get("name", "") for e in _executors(ent)
@@ -517,6 +557,13 @@ async def delete_task(uid: str, user: User = Depends(get_current_user),
         mine = any(r.user_id == user.id for r in ent.responsibles)
         if not (mine and ent.owner_department_id in ctx.department_ids):
             raise HTTPException(403, "Участник удаляет только свои задачи")
+    # Иерархия задач: у прямых подзадачей сбрасываем ссылку на родителя, иначе
+    # они остались бы «подзадачами несуществующей задачи» и потеряли бы и
+    # отдельную карточку, и место в чужом содержании при печати.
+    kids = (await session.scalars(
+        select(TaskPayload).where(TaskPayload.parent_task_uid == ent.uid))).all()
+    for kp in kids:
+        kp.parent_task_uid = None
     await entity_service.delete_entity(session, user, ent)
     await session.commit()
     return {"ok": True}
