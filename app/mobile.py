@@ -42,7 +42,9 @@ router = APIRouter(
 
 # ======================= Вспомогательные =======================
 
-def _entity_brief(ent: Entity, perm, resp_names: list[str]) -> dict:
+def _entity_brief(ent: Entity, perm, resp_names: list[str], *,
+                  parent_task_uid: str | None = None,
+                  subtasks: list[dict] | None = None) -> dict:
     return {
         "uid": ent.uid,
         "kind": str(getattr(ent.kind, "value", ent.kind)),
@@ -58,9 +60,59 @@ def _entity_brief(ent: Entity, perm, resp_names: list[str]) -> dict:
         "executors": (ent.extra_json or {}).get("executors") or [],
         "perm": perm.value if perm else None,
         "can_edit": access.can_write(perm),
+        # Иерархия задач (печать): подзадача не имеет собственной карточки —
+        # клиент обязан рисовать её строкой «наименование · дедлайн · статус»
+        # в составе родителя (изоморфно /api/tasks/cards/api-list).
+        "parent_task_uid": parent_task_uid,
+        "is_subtask": bool(parent_task_uid),
+        "subtasks": subtasks or [],
         "created_at": ent.created_at.isoformat() if ent.created_at else None,
         "updated_at": ent.updated_at.isoformat() if ent.updated_at else None,
     }
+
+
+async def _task_hierarchy(session: AsyncSession, ents: list[Entity]) -> tuple[
+        dict[int, str], dict[str, list[dict]]]:
+    """(entity_id -> parent_uid, parent_uid -> [строки подзадач]) для списка задач.
+
+    Строки подзадач — тот же формат, что _subtask_row в modules/tasks/router.py:
+    наименование · дедлайн · статус выполнения.
+    """
+    from app.models.core import StatusSet
+    from app.models.module_payloads import TaskPayload
+
+    ids = [e.id for e in ents] or [-1]
+    payloads = (await session.scalars(
+        select(TaskPayload).where(TaskPayload.entity_id.in_(ids)))).all()
+    parent_by_eid = {p.entity_id: p.parent_task_uid for p in payloads
+                     if getattr(p, "parent_task_uid", None)}
+
+    all_ents = {e.id: e for e in (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.TASK))).all()}
+    labels: dict[tuple, str] = {}
+    for s in (await session.scalars(
+            select(StatusSet).where(StatusSet.is_active == True))).all():  # noqa: E712
+        k = s.kind.value if hasattr(s.kind, "value") else str(s.kind)
+        if k == "task":
+            labels[(s.department_id, s.key)] = s.label
+
+    subs_by_parent: dict[str, list[dict]] = {}
+    for p in (await session.scalars(select(TaskPayload))).all():
+        pu = getattr(p, "parent_task_uid", None)
+        cent = all_ents.get(p.entity_id)
+        if not pu or cent is None:
+            continue
+        skey = cent.status_key or ""
+        subs_by_parent.setdefault(pu, []).append({
+            "uid": cent.uid, "title": cent.title,
+            "due_date": cent.due_date or "",
+            "status_key": skey,
+            "status_label": labels.get((cent.owner_department_id, skey))
+                            or labels.get((None, skey)) or skey or "—",
+        })
+    for v in subs_by_parent.values():
+        v.sort(key=lambda x: (x["due_date"] or "9999", x["title"]))
+    return parent_by_eid, subs_by_parent
 
 
 async def _resp_names(session: AsyncSession, ent: Entity) -> list[str]:
@@ -177,6 +229,8 @@ async def list_entities(
         .order_by(Entity.updated_at.desc()).limit(min(max(limit, 1), 500)))).all()
 
     out = []
+    parents, subs_by_parent = await _task_hierarchy(session, list(ents)) \
+        if any(e.kind == EntityKind.TASK for e in ents) else ({}, {})
     for ent in ents:
         perm = await access.resolve_permission(session, ctx, ent)
         if perm is None:
@@ -186,7 +240,9 @@ async def list_entities(
         if not ctx.is_global and not cross \
                 and ent.owner_department_id not in ctx.department_ids:
             continue  # инвариант изоляции пространств (как в modules/*/router.py)
-        out.append(_entity_brief(ent, perm, await _resp_names(session, ent)))
+        out.append(_entity_brief(ent, perm, await _resp_names(session, ent),
+                                 parent_task_uid=parents.get(ent.id),
+                                 subtasks=subs_by_parent.get(ent.uid, [])))
     return out
 
 
@@ -202,7 +258,13 @@ async def get_entity(uid: str,
     perm = await access.resolve_permission(session, ctx, ent)
     if perm is None:
         raise HTTPException(404, "Сущность не найдена")  # без утечки факта существования
-    return _entity_brief(ent, perm, await _resp_names(session, ent))
+    parents: dict[int, str] = {}
+    subs_by_parent: dict[str, list[dict]] = {}
+    if ent.kind == EntityKind.TASK:
+        parents, subs_by_parent = await _task_hierarchy(session, [ent])
+    return _entity_brief(ent, perm, await _resp_names(session, ent),
+                         parent_task_uid=parents.get(ent.id),
+                         subtasks=subs_by_parent.get(ent.uid, []))
 
 
 # ======================= Создание задачи =======================
@@ -215,6 +277,10 @@ class MobileTaskIn(BaseModel):
     responsible_user_id: int | None = None
     executor_user_ids: list[int] = []
     department_id: int | None = None
+    # Иерархия задач: родительская задача (uid). Подзадача НЕ имеет собственной
+    # печатной карточки — печатается в составе родителя (наименование · дедлайн ·
+    # статус), см. _printable_task_cards в modules/tasks/router.py.
+    parent_task_uid: str | None = None
 
 
 class MobileEntityIn(BaseModel):
@@ -229,6 +295,7 @@ class MobileEntityIn(BaseModel):
     responsible_user_id: int | None = None
     executor_user_ids: list[int] = []
     department_id: int | None = None
+    parent_task_uid: str | None = None
 
 
 def _kind_for_module(module_key: str) -> EntityKind:
@@ -253,13 +320,31 @@ _PAYLOAD_BY_KIND = {
 }
 
 
-async def _ensure_payload(session, kind: EntityKind, ent_id: int) -> None:
+async def _ensure_payload(session, kind: EntityKind, ent_id: int,
+                          parent_task_uid: str | None = None) -> None:
     entry = _PAYLOAD_BY_KIND.get(kind.value)
     if not entry:
         return
     from app.models import module_payloads as mp
     cls = getattr(mp, entry[0])
-    session.add(cls(entity_id=ent_id, **entry[1]))
+    fields = dict(entry[1])
+    # иерархия задач: родитель пишется в TaskPayload — без него веб-печать
+    # не сочтёт задачу подзадачей и напечатает ей отдельную карточку
+    if kind == EntityKind.TASK and parent_task_uid:
+        fields["parent_task_uid"] = parent_task_uid
+    session.add(cls(entity_id=ent_id, **fields))
+
+
+async def _check_parent_task(session, user, parent_uid: str, self_uid: str | None) -> None:
+    """Родительская задача существует, видна и иерархия ациклична.
+
+    Та же логика, что _check_parent в modules/tasks/router.py (веб-контур):
+    мобильное создание/правка с parent_task_uid обязаны проходить те же
+    проверки, иначе «битая» ссылка ломает печать карточек.
+    """
+    from modules.tasks.router import _check_parent
+    ctx = await access.build_context(session, user)
+    await _check_parent(session, ctx, parent_uid, self_uid=self_uid)
 
 
 @router.post("/entities")
@@ -269,7 +354,12 @@ async def create_entity_ep(body: MobileEntityIn,
     """Создать карточку любого модуля (единый путь: entity_service + аудит + outbox)."""
     kind = _kind_for_module(body.module_key)
     ent = await _create_common(session, user, kind=kind, module_key=body.module_key, body=body)
-    await _ensure_payload(session, kind, ent.id)
+    parent_uid = (getattr(body, "parent_task_uid", None) or "").strip() or None
+    if parent_uid:
+        if parent_uid == ent.uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        await _check_parent_task(session, user, parent_uid, self_uid=None)
+    await _ensure_payload(session, kind, ent.id, parent_task_uid=parent_uid)
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
@@ -289,7 +379,12 @@ async def create_task(body: MobileTaskIn,
                       session: AsyncSession = Depends(session_dep)):
     """Создать задачу (обратная совместимость: тоже /entities c module_key=tasks)."""
     ent = await _create_common(session, user, kind=EntityKind.TASK, module_key="tasks", body=body)
-    await _ensure_payload(session, EntityKind.TASK, ent.id)
+    parent_uid = (body.parent_task_uid or "").strip() or None
+    if parent_uid:
+        if parent_uid == ent.uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        await _check_parent_task(session, user, parent_uid, self_uid=None)
+    await _ensure_payload(session, EntityKind.TASK, ent.id, parent_task_uid=parent_uid)
     await session.commit()
     return {"uid": ent.uid, "ok": True}
 
@@ -336,6 +431,9 @@ class MobileEntityPatch(BaseModel):
     due_date: str | None = None
     tags: list[str] | None = None
     responsible_user_id: int | None = None
+    # Иерархия задач (только для задач): uid новой родительской задачи или ""/null
+    # — сброс родителя (задача снова печатается отдельной карточкой).
+    parent_task_uid: str | None = None
 
 
 @router.patch("/entities/{uid}")
@@ -361,9 +459,32 @@ async def patch_entity(uid: str, body: MobileEntityPatch,
                 session, user, ent, ent.owner_department_id, body.responsible_user_id)
         except PermissionError as e:
             raise HTTPException(400, str(e))
+    # Иерархия задач: ключ присутствует в запросе — меняем (в т.ч. сбрасываем
+    # на null). Без этой ветки мобильное приложение создавало/перепривязывало
+    # подзадачи «в никуда»: payload не трогался, и задача продолжала печататься
+    # отдельной карточкой вместо состава родителя.
+    if body.parent_task_uid is not None and ent.kind == EntityKind.TASK:
+        from app.models.module_payloads import TaskPayload
+        parent_uid = (body.parent_task_uid or "").strip() or None
+        if parent_uid == uid:
+            raise HTTPException(422, "Задача не может быть подзадачей самой себя")
+        if parent_uid:
+            await _check_parent_task(session, user, parent_uid, self_uid=uid)
+        payload = await session.scalar(
+            select(TaskPayload).where(TaskPayload.entity_id == ent.id))
+        if payload is None:  # legacy-карточка без payload — создаём
+            payload = TaskPayload(entity_id=ent.id, assignee_names=[])
+            session.add(payload)
+        payload.parent_task_uid = parent_uid
     await session.commit()
     await session.refresh(ent)
-    return _entity_brief(ent, perm, await _resp_names(session, ent))
+    parents: dict[int, str] = {}
+    subs_by_parent: dict[str, list[dict]] = {}
+    if ent.kind == EntityKind.TASK:
+        parents, subs_by_parent = await _task_hierarchy(session, [ent])
+    return _entity_brief(ent, perm, await _resp_names(session, ent),
+                         parent_task_uid=parents.get(ent.id),
+                         subtasks=subs_by_parent.get(ent.uid, []))
 
 
 # ======================= Push-подписки =======================
