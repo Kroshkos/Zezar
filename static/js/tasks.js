@@ -130,6 +130,7 @@ function taskFormModal(uid){
       if(pl.parent_task_uid){const p=D.tasks.find(x=>x.uid===pl.parent_task_uid);
         if(p)(p.subtasks=p.subtasks||[]).push({uid:t.uid,title:t.title,due_date:t.due_date||'',status_key:t.status_key,status_label:stOf(t.status_key).label});}
       if(pl.executor_user_ids)t.executor_names=pl.executor_user_ids.map(id=>(D.people.find(p=>p.id===id)||{}).name||'').filter(Boolean);
+      TC.loaded=false;                     // карточки устарели — при открытии модалки перезагрузим с сервера
       toast('Сохранено · уведомим исполнителей');
     }else{
       const r=await api('/api/tasks',{method:'POST',body:JSON.stringify(pl)});
@@ -141,6 +142,7 @@ function taskFormModal(uid){
       D.tasks.unshift(nt);
       if(pl.parent_task_uid){const p=D.tasks.find(x=>x.uid===pl.parent_task_uid);
         if(p)(p.subtasks=p.subtasks||[]).push({uid:nt.uid,title:nt.title,due_date:nt.due_date||'',status_key:nt.status_key,status_label:stOf(nt.status_key).label});}
+      TC.loaded=false;                     // карточки устарели — перезагрузим при открытии модалки
       toast('Задача создана');
     }
     closeModal();notifyChanged();renderTaskTable();
@@ -184,6 +186,9 @@ const tcColor=key=>PRI_HEX[key]||'#01696F';
 async function taskCardsModal(force){
   const wide=document.getElementById('tcWide');
   if(!wide.hidden&&!force){wide.hidden=true;return}       // повторный клик — закрыть
+  // Список карточек всегда берём с сервера (/api/tasks/cards/api-list,
+  // принудительная перезагрузка force=true): TC.cards мог быть загружен
+  // давно (до создания/перепривязки подзадач) и устареть.
   if(!TC.loaded||force){
     try{const d=await api('/api/tasks/cards/api-list');TC.cards=d.cards||[];TC.loaded=true;}
     catch(e){return}                                      // toast с ошибкой уже показан
