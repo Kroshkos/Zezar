@@ -11,10 +11,10 @@ function tglS(el){const k=el.dataset.k;
 
 function renderSoftCards(){
   const q=(document.getElementById('sq').value||'').toLowerCase();
-  let list=SD.softs.filter(s=>{
-    if(q && !(s.title+' '+(s.soft_type||'')+' '+(s.env||'')).toLowerCase().includes(q))return false;
-    if(SS.size && !SS.has(s.status_key))return false;
-    return true;
+  // Общие фильтры (дедлайны + подразделение) — из core.js: window.FLS/applyListFilters.
+  let list=applyListFilters(SD.softs,{
+    search:q, status:SS,
+    search_cb:(s,q)=>(s.title+' '+(s.soft_type||'')+' '+(s.env||'')).toLowerCase().includes(q),
   });
   document.getElementById('sempty').hidden=list.length>0;
   document.getElementById('scards').innerHTML=list.map(s=>{

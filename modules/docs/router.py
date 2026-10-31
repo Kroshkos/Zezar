@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import access, entity_service, refdata, wf_service
+from app.core import access, entity_service, filters, refdata, wf_service
 from app.core.security import get_current_user
 from app.deps import session_dep
 from app.models.core import (
@@ -373,6 +373,10 @@ async def _project_titles(session: AsyncSession, payloads: list[DocPayload | Non
 async def docs_page(request: Request, user: User = Depends(get_current_user),
                     session: AsyncSession = Depends(session_dep)):
     ctx = await access.build_context(session, user)
+    # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
+    # приходят в т.ч. по кликам с карточек дашборда.
+    fctx = await filters.page_filters(request, session, "doc",
+                                      ctx.department_ids, ctx.is_global)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.DOC, access.entity_filter(ctx))
         .options(selectinload(Entity.shares), selectinload(Entity.responsibles))
@@ -447,7 +451,8 @@ async def docs_page(request: Request, user: User = Depends(get_current_user),
         page_title="Документы",
         page_sub="Реестр документов со статусами; события синхронизируются с Яндекс.Календарём",
         counts={MODULE_KEY: len(cards)},
-        docs=cards,
+        docs=filters.apply_page_filters(cards, fctx),
+        fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         doc_types=[{"label": t.label} for t in doc_types],
         departments=depts, people=people, projects=projects, me=user.id,

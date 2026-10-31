@@ -11,10 +11,10 @@ function tglD(el){const k=el.dataset.k;
 
 function renderDocCards(){
   const q=(document.getElementById('dq').value||'').toLowerCase();
-  let list=DD.docs.filter(d=>{
-    if(q && !(d.title+' '+(d.doc_type||'')).toLowerCase().includes(q))return false;
-    if(DS.size && !DS.has(d.status_key))return false;
-    return true;
+  // Общие фильтры (дедлайны + подразделение) — из core.js: window.FLS/applyListFilters.
+  let list=applyListFilters(DD.docs,{
+    search:q, status:DS,
+    search_cb:(d,q)=>(d.title+' '+(d.doc_type||'')).toLowerCase().includes(q),
   });
   document.getElementById('dempty').hidden=list.length>0;
   document.getElementById('dcards').innerHTML=list.map(d=>{

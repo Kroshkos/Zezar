@@ -29,20 +29,24 @@ function filtered(){
    ними — строки их подзадач (с отступом). Подзадачи больше НЕ перечисляются
    текстом в ячейке родителя: показывается только их количество (📋 N). */
 function treeRows(list){
-  const byUid=new Map(D.tasks.map(t=>[t.uid,t]));
-  const inList=new Set(list.map(t=>t.uid));
-  const kids=new Map();      // uid родителя -> [строки-подзадачи (из фильтра)]
-  list.forEach(t=>{ if(t.parent_task_uid)(kids.get(t.parent_task_uid)||kids.set(t.parent_task_uid,[]).get(t.parent_task_uid)).push(t); });
-  const roots=list.filter(t=>!t.parent_task_uid||!inList.has(t.parent_task_uid)&&!byUid.has(t.parent_task_uid)? !t.parent_task_uid : false);
-  // корень = задача без родителя; сироты (родитель не виден фильтром) тоже выводятся отдельным блоком сверху вниз
-  const out=[];const seen=new Set();
-  function push(t,depth){
-    if(seen.has(t.uid))return;seen.add(t.uid);
-    out.push({t,depth});
-    (kids.get(t.uid)||[]).forEach(s=>push(s,depth+1));
+  const inList = new Set(list.map(t => t.uid));
+  const kids = new Map();          // uid родителя -> строки-подзадачи (из этого же списка)
+  list.forEach(t => {
+    if (t.parent_task_uid && inList.has(t.parent_task_uid)) {
+      if (!kids.has(t.parent_task_uid)) kids.set(t.parent_task_uid, []);
+      kids.get(t.parent_task_uid).push(t);
+    }
+  });
+  const out = []; const seen = new Set();
+  function push(t, depth) {
+    if (seen.has(t.uid)) return;   // защита от циклов в иерархии
+    seen.add(t.uid);
+    out.push({t, depth});
+    (kids.get(t.uid) || []).forEach(s => push(s, depth + 1));
   }
-  list.filter(t=>!t.parent_task_uid).forEach(t=>push(t,0));
-  list.forEach(t=>push(t,0));   // добор «сирот», если их родителей скрыл фильтр
+  // корни: задачи без родителя либо с невидимым родителем (фильтр/доступ)
+  list.filter(t => !t.parent_task_uid || !inList.has(t.parent_task_uid)).forEach(t => push(t, 0));
+  list.forEach(t => push(t, 0));   // добор оставшихся (циклы) — ничего не теряем
   return out;
 }
 
