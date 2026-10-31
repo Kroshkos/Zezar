@@ -321,6 +321,16 @@ a.lchip:hover{border-color:#c7d2fe;background:#eef2ff}
   border:1.2px solid #d3dae6;border-radius:4px;padding:2px 5px;margin:2px 4px 2px 0;background:#fff;max-width:100%}
 .pcard .psub-chip .ptag{font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:3px;color:#fff;white-space:nowrap}
 .pcard .psub-prog{font-size:9.5px;color:#666;white-space:nowrap}
+/* подзадачи (parent_task_uid) — строками на родительской карточке:
+   наименование · дедлайн · статус выполнения (см. meetings_cards.js) */
+.pcard .psub-tbl{width:100%;border-collapse:collapse;margin-top:2px}
+.pcard .psub-tbl td{border-bottom:1px dotted #cbd5e1;padding:1px 4px 1px 0;
+  font-size:10.5px;line-height:1.35;vertical-align:top}
+.pcard .psub-tbl .psub-name{padding-right:6px}
+.pcard .psub-tbl .psub-due{white-space:nowrap;color:#475569;width:1%}
+.pcard .psub-tbl .psub-st{text-align:right;white-space:nowrap;width:1%}
+.pcard .psub-tbl .psub-st .ptag{display:inline-block;font-size:9.5px;font-weight:800;
+  padding:1px 5px;border-radius:3px;color:#fff;white-space:nowrap}
 /* место для рукописных заметок (карточка автономной задачи) */
 .pnotes{flex:1;min-height:0;border:1.4px dashed #9aa3b2;border-radius:4px;margin:2px 0 6px;background:repeating-linear-gradient(#fff,#fff 21px,#e8ecf3 22px)}
 /* Печать раздела «Карточки»: изолированный контейнер-оверлей, который

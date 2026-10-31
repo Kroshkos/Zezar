@@ -150,6 +150,58 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             stages_by_project.setdefault(t.project_entity_uid, []).append(t.entity_id)
     task_ids = {e.id: e for e in ents if e.kind == EntityKind.TASK}
 
+    # Все задачи БД (в т.ч. не видимые текущему пользователю и этапы проектов):
+    # нужны для дерева подзадач — строки потомков печатаются на родительской
+    # карточке независимо от прав доступа к самим потомкам.
+    all_task_ents = (await session.scalars(
+        select(Entity).where(Entity.kind == EntityKind.TASK))).all()
+    task_ent_by_uid = {e.uid: e for e in all_task_ents}
+
+    # Иерархия задач (parent_task_uid): подзадача НЕ имеет своей печатной
+    # карточки — она выводится строкой «наименование · дедлайн · статус» на
+    # родительской карточке (поле subtasks). Рёбра «родитель -> ребёнок»
+    # собираются по ВСЕМ payload'ам БД: прямой родитель может быть не виден
+    # текущему пользователю (другое подразделение) или быть этапом проекта
+    # (отдельной карточки нет) — строка подзадачи всё равно попадает в
+    # содержание родителя, а сама задача исключается из отдельных карточек.
+    uid_by_eid = {e.id: e.uid for e in all_task_ents}
+    subs_by_parent: dict[str, list[str]] = {}
+    for t in task_payloads:
+        pu = getattr(t, "parent_task_uid", None) or ""
+        cu = uid_by_eid.get(t.entity_id)
+        if pu and cu:                       # битые ссылки (нет такой задачи) пропускаем
+            subs_by_parent.setdefault(pu, []).append(cu)
+
+    def _subtask_rows(parent_uid: str) -> list[dict]:
+        """ВСЁ дерево потомков parent_uid — строки содержания карточки:
+        наименование · дедлайн · статус выполнения. Вложенные уровни помечаются
+        «↳»: их прямые родители-подзадачи отдельных карточек не имеют, и без
+        этого они не попали бы ни в одну печать. seen — защита от циклов."""
+        rows: list[dict] = []
+        seen = {parent_uid}
+
+        def walk(pu: str, depth: int) -> None:
+            kids = sorted(subs_by_parent.get(pu, []),
+                          key=lambda u: (task_ent_by_uid[u].due_date or "9999",
+                                         task_ent_by_uid[u].title))
+            for cu in kids:
+                if cu in seen:
+                    continue
+                seen.add(cu)
+                cent = task_ent_by_uid[cu]
+                skey = cent.status_key or ""
+                rows.append({
+                    "uid": cu,
+                    "title": ("\u21b3 " + (cent.title or "")) if depth else (cent.title or ""),
+                    "due_date": cent.due_date or "",
+                    "status_key": skey,
+                    "status_label": labels.get((EntityKind.TASK.value, skey)) or skey or "\u2014",
+                    "status_color": stcolor.get((EntityKind.TASK.value, skey), "b-gray"),
+                })
+                walk(cu, depth + 1)
+        walk(parent_uid, 0)
+        return rows
+
     # Подчинённые сущности проектов (Документы и ПО), привязанные через
     # payload.project_entity_uid: uid проекта -> [(kind, uid, title, status_key,
     # stages)]. Нужны для содержания печатной карточки проекта: статусы
@@ -239,6 +291,14 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             if tp and tp.project_entity_uid:
                 # Этап (автозадача) проекта — часть карточки проекта:
                 # попадает в чек-лист соответствующей сущности, своей карточки нет.
+                continue
+            # Подзадача (parent_task_uid ведёт на живую задачу) — отдельной
+            # карточки НЕ имеет: печатается строкой «наименование · дедлайн ·
+            # статус» на родительской карточке (см. _subtask_rows). Ссылка на
+            # удалённого родителя («битая») задачу подзадачей не делает — иначе
+            # она не попала бы ни в одну печать.
+            par = (getattr(tp, "parent_task_uid", None) or "") if tp else ""
+            if par and par in task_ent_by_uid:
                 continue
             card_type, tag = "task", "Задача"
             stages: list[dict] = []
@@ -336,6 +396,10 @@ async def cards_api(user: User, session: AsyncSession) -> dict:
             # текущая невыполненная задача сущности с workflow — в содержании
             # карточки вместо списка/количества этапов (см. task 4 ручного теста)
             "current_task": current_task,
+            # Подзадачи (parent_task_uid) — строки «наименование · дедлайн ·
+            # статус» в содержании ЭТОЙ карточки; отдельные карточки они не
+            # печатают (см. исключение подзадач выше и static/js/meetings_cards.js).
+            "subtasks": _subtask_rows(ent.uid),
             "department_id": ent.owner_department_id,
             "cross_dept": cross,
             "can_edit": access.can_write(perm),

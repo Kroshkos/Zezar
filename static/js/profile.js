@@ -59,6 +59,7 @@ function profileBodyHTML(P){
   if(lk.grant)chips.push('<span class="lchip">💰 грант: <b>'+esc(lk.grant)+'</b></span>');
   if(lk.priority_indicator)chips.push('<span class="lchip">🚀 Приоритет-2030: <b>'+esc(lk.priority_indicator)+'</b></span>');
   if(lk.tasks)chips.push('<span class="lchip">🎯 задачи: '+esc(lk.tasks)+'</span>');
+  if(lk.parent_task)chips.push('<a href="#" class="lchip" onclick="openProfile(\\''+esc(P.module.parent_task_uid||'')+'\\');return false">↳ подзадача: <b>'+esc(lk.parent_task)+'</b></a>');
   if(chips.length)h+='<div class="link-chips" style="margin-top:12px">'+chips.join('')+'</div>';
 
   // ---- произвольные связи между сущностями (EntityLink, /api/core/links) ----
