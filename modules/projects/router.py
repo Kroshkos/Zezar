@@ -295,7 +295,7 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
     ctx = await access.build_context(session, user)
     # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
     # приходят в т.ч. по кликам с карточек дашборда.
-    fctx = await filters.page_filters(request, session, "project",
+    fctx = await filters.page_filters(request, session, user.id, "project",
                                       ctx.department_ids, ctx.is_global)
     pairs = await _visible_entities(session, ctx, EntityKind.PROJECT)
     payloads = {e.id: await _load_payload(session, e.id) for e, _, _ in pairs}
@@ -348,7 +348,7 @@ async def projects_page(request: Request, user: User = Depends(get_current_user)
         counts={MODULE_KEY: len(items)},
         # Единые фильтры страниц сущностей (дедлайны + подразделение) — см.
         # app/core/filters.py; JS-повтор на странице — core.js applyListFilters.
-        projects=filters.apply_page_filters(items, fctx),
+        projects=filters.apply_page_filters(items, fctx, me=user.id),
         fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         priorities=[{"key": p.key, "label": p.label, "color": p.color} for p in prios],

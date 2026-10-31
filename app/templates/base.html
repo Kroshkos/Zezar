@@ -36,11 +36,13 @@ Object.assign(window.FILT, {
   today: {{ fctx.today | tojson }},
   week_range: {{ fctx.week_range | list | tojson }},
   month_range: {{ fctx.month_range | list | tojson }},
-  done_keys: {{ fctx.done_keys | list | tojson }}
+  done_keys: {{ fctx.done_keys | list | tojson }},
+  me: {{ (fctx.me or 0) | tojson }}
 });
 (function(){
   const u = new URL(location.href);
-  window.FLS = {dept: u.searchParams.get('dept') ? +u.searchParams.get('dept') : null, dl: new Set()};
+  window.FLS = {dept: u.searchParams.get('dept') ? +u.searchParams.get('dept') : null, dl: new Set(),
+                mine: !!u.searchParams.get('mine'), active: !!u.searchParams.get('df_active')};
   ['today','week','month','overdue'].forEach(k => { if (u.searchParams.get('df_' + k)) window.FLS.dl.add(k); });
   window.renderList = () => { try { {{ render_fn }}(); } catch (e) { /* страница ещё не готова */ } };
 })();
@@ -52,7 +54,7 @@ Object.assign(window.FILT, {
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ page_title }} · ЦЕЗАРЬ</title>
-<link rel="stylesheet" href="/static/css/app.css?v=20261029f">
+<link rel="stylesheet" href="/static/css/app.css?v=20261029g">
 </head>
 <body>
 <div class="app" id="app">
@@ -103,7 +105,7 @@ Object.assign(window.FILT, {
 <meta http-equiv="refresh" content="0;url=/change-password?forced=1">
 <script>location.replace('/change-password?forced=1');</script>
 {% endif %}
-<script src="/static/js/core.js?v=20261029d"></script>
+<script src="/static/js/core.js?v=20261029e"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

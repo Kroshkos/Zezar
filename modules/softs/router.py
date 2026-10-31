@@ -368,7 +368,7 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
     ctx = await access.build_context(session, user)
     # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
     # приходят в т.ч. по кликам с карточек дашборда.
-    fctx = await filters.page_filters(request, session, "soft",
+    fctx = await filters.page_filters(request, session, user.id, "soft",
                                       ctx.department_ids, ctx.is_global)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.SOFT, access.entity_filter(ctx))
@@ -445,7 +445,7 @@ async def softs_page(request: Request, user: User = Depends(get_current_user),
         page_title="Программное обеспечение",
         page_sub="Учёт внутренних разработок и систем; сроки синхронизируются с Яндекс.Календарём",
         counts={MODULE_KEY: len(cards)},
-        softs=filters.apply_page_filters(cards, fctx),
+        softs=filters.apply_page_filters(cards, fctx, me=user.id),
         fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         departments=depts, people=people, projects=projects, soft_types=soft_types,

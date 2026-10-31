@@ -375,7 +375,7 @@ async def docs_page(request: Request, user: User = Depends(get_current_user),
     ctx = await access.build_context(session, user)
     # fctx — общие фильтры страницы (?dept=&df_today=&df_week=&df_month=&df_overdue=),
     # приходят в т.ч. по кликам с карточек дашборда.
-    fctx = await filters.page_filters(request, session, "doc",
+    fctx = await filters.page_filters(request, session, user.id, "doc",
                                       ctx.department_ids, ctx.is_global)
     ents = (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.DOC, access.entity_filter(ctx))
@@ -451,7 +451,7 @@ async def docs_page(request: Request, user: User = Depends(get_current_user),
         page_title="Документы",
         page_sub="Реестр документов со статусами; события синхронизируются с Яндекс.Календарём",
         counts={MODULE_KEY: len(cards)},
-        docs=filters.apply_page_filters(cards, fctx),
+        docs=filters.apply_page_filters(cards, fctx, me=user.id),
         fctx=fctx,
         statuses=[{"key": s.key, "label": s.label, "color": s.color} for s in statuses],
         doc_types=[{"label": t.label} for t in doc_types],

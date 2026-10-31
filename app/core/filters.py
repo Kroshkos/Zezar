@@ -73,8 +73,8 @@ def apply_deadline_filter(items: list[dict], flags: set[str], *, today: date,
             if match_deadline(it.get("due_date"), flags, status_key=it.get("status_key"), **kw)]
 
 
-async def page_filters(request, session, kind: str, dept_ids: list[int] | None,
-                       is_global: bool) -> dict:
+async def page_filters(request, session, me: int | None, kind: str,
+                       dept_ids: list[int] | None, is_global: bool) -> dict:
     """Контекст фильтров страницы сущностей (Задачи/Проекты/Документы/ПО).
 
     Разбирает query-параметры GET-страницы и возвращает dict для шаблона:
@@ -141,6 +141,7 @@ async def page_filters(request, session, kind: str, dept_ids: list[int] | None,
         qs_parts.append("mine=1")
 
     return {
+        "me": me,
         "deadline_flags": flags,
         "department_id": dept,
         "departments": departments,
@@ -175,7 +176,8 @@ def apply_page_filters(items: list[dict], fctx: dict, *, me: int | None = None) 
         out = [it for it in out if (it.get("status_key") or "") not in done]
     if fctx.get("mine") and me is not None:
         def _is_mine(it: dict) -> bool:
-            ids = {r.get("id") for r in (it.get("responsible_ids") or [])}
+            # responsible_ids — список int (см. _task_dict), executors — [{id,name}]
+            ids = set(it.get("responsible_ids") or [])
             ids |= {e.get("id") for e in (it.get("executors") or [])
                     if isinstance(e, dict)}
             return me in ids
