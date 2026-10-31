@@ -58,5 +58,8 @@
 <script src="/static/js/wf_canvas.js"></script>
 <script src="/static/js/profile.js"></script>
 <script src="/static/js/links.js"></script>
-<script src="/static/js/tasks.js?v=20261031b"></script>
+{# v-параметр — намеренно «жёсткий» кэш-бастер: при смене логики печати
+   карточек (подзадачи — только в составе родителя) увеличивайте его,
+   иначе браузер может держать старую tasks.js даже с no-cache. #}
+<script src="/static/js/tasks.js?v=20261031c"></script>
 {% endblock %}
