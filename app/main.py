@@ -737,6 +737,15 @@ async def security_headers(request, call_next):
         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
     )
+    # Данные — не кэшировать. Браузер по умолчанию может отдать GET-ответ из
+    # HTTP-кэша (Heuristic Freshness), и после создания/перепривязки подзадачи
+    # пользователь продолжал видеть её устаревшую отдельную карточку при печати
+    # («подзадачи всё равно печатаются отдельно»). Для всех HTML-страниц и JSON-
+    # API принудительно no-store; статика уже закрыта NoCacheStaticFiles ниже.
+    ct = response.headers.get("content-type", "")
+    if ("text/html" in ct or "application/json" in ct
+            or request.url.path.startswith("/api/")):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"

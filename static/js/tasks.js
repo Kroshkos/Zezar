@@ -186,22 +186,48 @@ const tcColor=key=>PRI_HEX[key]||'#01696F';
 async function taskCardsModal(force){
   const wide=document.getElementById('tcWide');
   if(!wide.hidden&&!force){wide.hidden=true;return}       // повторный клик — закрыть
-  // Список карточек всегда берём с сервера (/api/tasks/cards/api-list,
-  // принудительная перезагрузка force=true): TC.cards мог быть загружен
-  // давно (до создания/перепривязки подзадач) и устареть.
+  // Список карточек всегда берём с сервера (см. _printable_task_cards).
+  // cache:'no-store' — fetch по умолчанию может отдать ответ из HTTP-кэша,
+  // и после создания/перепривязки подзадачи пользователь продолжал видеть
+  // её старую отдельную карточку («не работает» именно так).
+  // Сетевой сбой не должен показывать устаревший TC.cards: окно открываем
+  // с явным сообщением об ошибке и предложением «↻ Обновить».
+  let loadErr=null;
   if(!TC.loaded||force){
-    try{const d=await api('/api/tasks/cards/api-list');TC.cards=d.cards||[];TC.loaded=true;}
-    catch(e){return}                                      // toast с ошибкой уже показан
+    try{const d=await api('/api/tasks/cards/api-list',{cache:'no-store'});
+        TC.cards=d.cards||[];
+        // Резервная отметка подзадач на клиенте: если сервер по какой-то
+        // причине отдал карточку задачи с заполненным parent_task_uid,
+        // помечаем её is_subtask — фильтр ниже её исключит.
+        TC.cards.forEach(c=>{if(c.parent_task_uid)c.is_subtask=true});
+        TC.loaded=true;}
+    catch(e){loadErr=e;toast('Не удалось загрузить карточки с сервера',true)}
   }
   // Резервная фильтрация на клиенте (сервер её тоже делает,
   // _printable_task_cards): подзадачи отдельных карточек не имеют —
   // они печатаются только в содержании родительской задачи.
-  const subUids=new Set();
-  TC.cards.forEach(c=>(c.subtasks||[]).forEach(s=>subUids.add(s.uid)));
-  const cards=TC.cards.filter(c=>!c.is_subtask&&!subUids.has(c.uid));
+  // Три независимых признака (любой достаточно), чтобы подзадача точно
+  // не «проскочила» в отдельные карточки:
+  //  1) is_subtask от сервера;
+  //  2) uid встречается в чужом списке subtasks (дерево потомков api-list);
+  //  3) parent_task_uid заполнен и это НЕ «битая» ссылка на удалённую задачу.
+  // Родитель ищется по ВСЕМ задачам страницы (D.tasks — полный список модуля),
+  // а не только по карточкам: родитель-этап проекта отдельной карточки не
+  // имеет, но его подзадачи всё равно печатаются в его составе.
+  const byUid = new Map(TC.cards.map(c => [c.uid, c]));
+  const liveTaskUids = new Set(D.tasks.map(t => t.uid));
+  const subUids = new Set();
+  TC.cards.forEach(c => (c.subtasks || []).forEach(s => subUids.add(s.uid)));
+  const cards = TC.cards.filter(c => {
+    if (c.is_subtask || subUids.has(c.uid)) return false;
+    const pu = c.parent_task_uid;
+    if (pu && (byUid.has(pu) || liveTaskUids.has(pu))) return false;
+    return true;
+  });
   document.getElementById('tcInfo').textContent='Карточек к печати: '+cards.length;
-  document.getElementById('tcBody').innerHTML=cards.map(tcCardHTML).join('')
-    ||'<div class="empty">✅<p>Нет задач для печати</p></div>';
+  document.getElementById('tcBody').innerHTML=(loadErr
+      ?'<div class="empty">⚠️<p>Сервер карточек недоступен — нажмите «↻ Обновить»</p></div>'
+      :cards.map(tcCardHTML).join('')||'<div class="empty">✅<p>Нет задач для печати</p></div>');
   wide.hidden=false;
 }
 
@@ -243,8 +269,26 @@ function printTaskCards(){
   // через @media print (тот же механизм, что в модуле «Совещания»).
   let ov=document.getElementById('printCardsOverlay');
   if(!ov){ov=document.createElement('div');ov.id='printCardsOverlay';document.body.appendChild(ov);}
-  ov.innerHTML='<div class="printpage fmt-a4" style="grid-template-columns:1fr;height:auto;width:200mm">'+body.innerHTML+'</div>';
-  const cleanup=()=>{document.body.classList.remove('printing-cards');ov.classList.remove('on');};
+  // Фиксированная сетка листов: карточки разбиваются по листам A4 landscape
+  // (3 колонки × 2 ряда = 6 на лист), неполные ряды — пустые ячейки-заглушки.
+  // ВАЖНО: без @page{size:A4 landscape} браузер печатает альбомные листы как
+  // портретные с автомасштабированием — карточки уходят за границы бумаги
+  // («печатается мусор / не то»). Тот же приём, что setCardPageSize() в
+  // static/js/meetings_cards.js; очистка стиля — в cleanup().
+  let ps=document.getElementById('taskCardPageStyle');
+  if(!ps){ps=document.createElement('style');ps.id='taskCardPageStyle';document.head.appendChild(ps);}
+  ps.textContent='@media print{@page{size:A4 landscape;margin:5mm}}';
+  const PER=6;
+  const cardsArr=Array.from(body.children);
+  const pages=[];
+  for(let i=0;i<cardsArr.length;i+=PER){
+    const perPage=Math.min(PER,cardsArr.length-i);
+    pages.push('<div class="printpage fmt-a4">'+cardsArr.slice(i,i+perPage).map(n=>n.outerHTML).join('')
+      +Array(PER-perPage).fill('<div></div>').join('')+'</div>');
+  }
+  ov.innerHTML=pages.join('');
+  const cleanup=()=>{document.body.classList.remove('printing-cards');ov.classList.remove('on');
+                     ps.textContent='';};
   window.addEventListener('afterprint',cleanup,{once:true});
   setTimeout(cleanup,60000);
   document.body.classList.add('printing-cards');
