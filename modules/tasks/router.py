@@ -277,13 +277,24 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
     # родителя child-ссылки не сбрасываются).
     live_uids = {e.uid for e in (await session.scalars(
         select(Entity).where(Entity.kind == EntityKind.TASK))).all()}
-    # uid всех задач, являющихся подзадачами (потомками): такие задачи НЕ
-    # печатаются отдельными карточками даже если их родитель недоступен
+    # uid самих задач-подзадач (потомков), а НЕ uid их родителей: такие задачи
+    # НЕ печатаются отдельными карточками даже если их родитель недоступен
     # печатающему пользователю (иначе нарушается правило «подзадачи печатаются
-    # только в составе родительской задачи»).
-    subtask_uids = {p.parent_task_uid for p in
-                    (await session.scalars(select(TaskPayload))).all()
-                    if getattr(p, "parent_task_uid", None)
+    # только в составе родительской задачи»). Ошибочное включение сюда
+    # parent_task_uid вместо cent.uid приводило к обратному: из печати
+    # выпадали родители, а подзадачи печатались отдельными карточками.
+    subtask_payloads = [p for p in
+                        (await session.scalars(select(TaskPayload))).all()
+                        if getattr(p, "parent_task_uid", None)]
+    cent_by_eid = {e.id: e for e in ents}
+    missing_ids = [p.entity_id for p in subtask_payloads
+                   if p.entity_id not in cent_by_eid]
+    if missing_ids:
+        for e in (await session.scalars(
+                select(Entity).where(Entity.id.in_(missing_ids)))).all():
+            cent_by_eid[e.id] = e
+    subtask_uids = {cent_by_eid[p.entity_id].uid for p in subtask_payloads
+                    if p.entity_id in cent_by_eid
                     and p.parent_task_uid in live_uids}
 
     out: list[dict] = []
