@@ -302,8 +302,13 @@ async def _printable_task_cards(session: AsyncSession, user: User) -> list[dict]
         p = tp.get(ent.id)
         if p is not None and p.project_entity_uid:
             continue                      # этап проекта — карточка у проекта
-        if ent.uid in subtask_uids:
-            continue                      # подзадача — только в составе родителя
+        # Подзадача — только в составе родителя. Проверяем И актуальный uid из
+        # БД, и payload-ссылку: при смене parent_task_uid объект Entity в
+        # сессии мог остаться незатронутым, а tp перечитан неверно — двойная
+        # проверка исключает «проскок» подзадачи в отдельные карточки.
+        if ent.uid in subtask_uids or (p is not None
+                                       and (p.parent_task_uid or "") in live_uids):
+            continue
         skey = ent.status_key or ""
         executors = [e.get("name", "") for e in _executors(ent)
                      if isinstance(e, dict) and e.get("name")]

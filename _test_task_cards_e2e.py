@@ -85,6 +85,22 @@ async def main():
             print("OK: отдельные карточки:", sorted(x["title"] for x in cards.values()))
             print("OK: содержание родителя:",
                   [(x["title"], x["due_date"], x["status_label"]) for x in cards[root]["subtasks"]])
+
+            # Контур «не работает» из-за HTTP-кэша: GET без no-store может
+            # отдать устаревший ответ. Проверяем, что сервер шлёт запрет
+            # кэширования для эндпоинта карточек (иначе браузер покажет
+            # устаревший список — подзадачи «всё равно печатаются отдельно»).
+            r = await c.get("/api/tasks/cards/api-list", headers=adm)
+            cc = r.headers.get("cache-control", "")
+            assert "no-store" in cc or "no-cache" in cc, \
+                f"эндпоинт карточек кешируется браузером! Cache-Control: {cc!r}"
+            # и что страница задач тоже не кешируется (HTML с taskData/версией JS)
+            r = await c.get("/tasks/", headers=adm)
+            cc2 = r.headers.get("cache-control", "")
+            assert "no-store" in cc2 or "no-cache" in cc2, \
+                f"страница задач кешируется! Cache-Control: {cc2!r}"
+            assert "v=20261101a" in r.text, "cache-buster tasks.js не обновлён в HTML"
+            print("OK: Cache-Control:", cc, "|", cc2)
             print("ALL CHECKS PASSED")
 
 asyncio.run(main())
