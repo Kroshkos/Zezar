@@ -136,6 +136,20 @@ function cardHTML(c) {
     } else {
       info.push('<b>Текущая задача:</b> —');
     }
+    // Подзадачи (parent_task_uid) — строками «наименование · дедлайн · статус»
+    // в содержании родительской карточки; отдельные карточки они не печатают
+    // (сервер исключает их из выдачи, см. modules/meetings/cards_api.py).
+    const subsT = c.subtasks || [];
+    if (subsT.length) {
+      info.push(`<div class="psubs"><span class="psubs-h">📋 Подзадачи:</span>`
+        + `<table class="psub-tbl">`
+        + subsT.map(s => '<tr>'
+          + `<td class="psub-name">${esc(s.title)}</td>`
+          + `<td class="psub-due">${cfmt(s.due_date)}</td>`
+          + `<td class="psub-st"><span class="ptag" style="background:${ccolor(s.status_color)}">${esc(s.status_label)}</span></td>`
+          + '</tr>').join('')
+        + `</table></div>`);
+    }
     // Статусы подчинённых сущностей проекта (Документы и ПО) — чипами в
     // содержании карточки (задумка: сверху статус проекта, внутри — Docs/Softs).
     const subs = c.sub_entities || [];
@@ -156,7 +170,21 @@ function cardHTML(c) {
     }
     body = `<div class="pinfo">${info.map(i => `<div class="${i.startsWith('<div') ? '' : 'pmeta'}">${i}</div>`).join('')}</div>`;
   } else {
-    body = `<div class="pnotes" title="Место для рукописных заметок"></div>`;
+    // Карточка задачи: подзадачи (parent_task_uid) печатаются здесь же,
+    // строками «наименование · дедлайн · статус» — отдельные карточки они
+    // не имеют (см. modules/meetings/cards_api.py). Зона заметок остаётся.
+    const subsT = c.subtasks || [];
+    const subBlock = subsT.length
+      ? `<div class="psubs"><span class="psubs-h">📋 Подзадачи:</span>`
+        + `<table class="psub-tbl">`
+        + subsT.map(s => '<tr>'
+          + `<td class="psub-name">${esc(s.title)}</td>`
+          + `<td class="psub-due">${cfmt(s.due_date)}</td>`
+          + `<td class="psub-st"><span class="ptag" style="background:${ccolor(s.status_color)}">${esc(s.status_label)}</span></td>`
+          + '</tr>').join('')
+        + `</table></div>`
+      : '';
+    body = subBlock + `<div class="pnotes" title="Место для рукописных заметок"></div>`;
   }
 
   const dname = cdeptName(c.department_id);
