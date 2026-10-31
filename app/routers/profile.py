@@ -65,12 +65,40 @@ async def _entity_labels(session: AsyncSession, uids: list[str]) -> dict[str, st
 
 async def _module_block(session: AsyncSession, ent: Entity, p) -> dict:
     """Специфика модуля для профиля (по образцу карточек прототипа)."""
+    uid = ent.uid
     kind = ent.kind
     if kind == EntityKind.TASK:
-        return {"group_key": p.group_key if p else None,
-                "checklist": (p.checklist if p else []) or [],
-                "wf_kind": (p.wf_kind if p else "") or "",
-                "result_of": (p.result_of if p else "") or ""}
+        block = {"group_key": p.group_key if p else None,
+                 "checklist": (p.checklist if p else []) or [],
+                 "wf_kind": (p.wf_kind if p else "") or "",
+                 "result_of": (p.result_of if p else "") or ""}
+        # Иерархия задач: профиль обязан показывать родителя и подзадачи —
+        # раньше их не было ни в payload-блоке, ни в linked, и пользователь
+        # считал, что «привязка к родителю не сохранилась / карточка
+        # сформирована неправильно». Подзадачи — тот же формат строк, что
+        # в печатных карточках (наименование · дедлайн · статус выполнения).
+        block["parent_task_uid"] = (p.parent_task_uid if p else None)
+        subs: list[dict] = []
+        cents = {e.id: e for e in (await session.scalars(
+            select(Entity).where(Entity.kind == EntityKind.TASK))).all()}
+        labels = {(s.department_id, s.key): s.label
+                  for s in (await session.scalars(
+                      select(StatusSet).where(StatusSet.is_active == True))).all()  # noqa: E712
+                  if (s.kind.value if hasattr(s.kind, "value") else str(s.kind)) == "task"}
+        for cp in (await session.scalars(select(TaskPayload))).all():
+            cu = getattr(cp, "parent_task_uid", None)
+            cent = cents.get(cp.entity_id)
+            if cu != uid or cent is None:
+                continue
+            skey = cent.status_key or ""
+            subs.append({"uid": cent.uid, "title": cent.title,
+                         "due_date": cent.due_date or "",
+                         "status_key": skey,
+                         "status_label": labels.get((cent.owner_department_id, skey))
+                                         or labels.get((None, skey)) or skey or "—"})
+        subs.sort(key=lambda x: (x["due_date"] or "9999", x["title"]))
+        block["subtasks"] = subs
+        return block
     if kind == EntityKind.PROJECT:
         stages = (p.stages if p else []) or []
         done = sum(1 for s in stages if s.get("done") or s.get("state") == "done")
@@ -159,6 +187,12 @@ async def entity_profile(uid: str, user: User = Depends(get_current_user),
         titles = await _entity_labels(session, [project_uid])
         if project_uid in titles:
             linked["project"] = titles[project_uid]
+    # задача-подзадача: показываем родительскую задачу (см. TaskPayload.parent_task_uid)
+    parent_task_uid = getattr(p, "parent_task_uid", None) if p else None
+    if ent.kind == EntityKind.TASK and parent_task_uid:
+        ptitles = await _entity_labels(session, [parent_task_uid])
+        if parent_task_uid in ptitles:
+            linked["parent_task"] = ptitles[parent_task_uid]
     if ent.kind == EntityKind.PROJECT and p:
         need = [x for x in (p.parent_uid, p.grant_entity_uid, p.priority_indicator_uid) if x]
         titles = await _entity_labels(session, need)
