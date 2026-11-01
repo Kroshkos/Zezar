@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from app.core.timezone import today as msk_today
+
 
 def month_bounds(today: date) -> tuple[str, str]:
     """(первое, последнее) число текущего месяца в ISO."""
@@ -147,9 +149,9 @@ async def page_filters(request, session, me: int | None, kind: str,
         "departments": departments,
         "active_only": active_only,
         "mine": mine,
-        "today": date.today().isoformat(),
-        "week_range": week_bounds(date.today()),
-        "month_range": month_bounds(date.today()),
+        "today": msk_today().isoformat(),
+        "week_range": week_bounds(msk_today()),
+        "month_range": month_bounds(msk_today()),
         "done_keys": sorted(done_keys),
         "filter_qs": ("&" + "&".join(qs_parts)) if qs_parts else "",
     }

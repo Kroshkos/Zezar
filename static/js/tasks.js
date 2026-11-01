@@ -5,7 +5,12 @@ const D = JSON.parse(document.getElementById('taskData').textContent);
 const S = {status:new Set(), priority:new Set()};
 const stOf = k => D.statuses.find(s=>s.key===k)||{label:k||'—',color:'b-gray'};
 const prOf = k => D.priorities.find(p=>p.key===k)||{label:k||'—',color:'b-gray'};
-const todayISO = () => new Date().toISOString().slice(0,10);
+// «Сегодня» — по московскому времени с сервера (window.FILT.today задаётся на
+// каждой странице списка из app/core/filters.py). Фолбэк через смещение +03:00,
+// а не через часы браузера/UTC: `new Date().toISOString()` возвращает дату в UTC
+// и вечером (после 21:00 MSK) даёт «завтрашний» день относительно Москвы.
+const todayISO = () => (window.FILT || {}).today
+    || new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
 const fmt = d => d ? d.split('-').reverse().join('.') : '—';
 const deptName = id => (D.departments.find(d=>d.id===id)||{}).name || '';
 
@@ -201,7 +206,15 @@ const PRI_HEX={"b-red":"#dc2626","b-amber":"#d97706","b-blue":"#2563eb",
 // цвета StatusSet, а не приоритетов (см. stOf/prOf выше); для неизвестного
 // ключа — нейтральный серый b-gray.
 const tcStatusColor=k=>PRI_HEX[(D.statuses.find(s=>s.key===k)||{}).color]||PRI_HEX["b-gray"];
-const tcPrintDate=new Date().toLocaleDateString('ru-RU');
+// Дата печати карточек — по Москве (серверное FILT.today; фолбэк — UTC+3),
+// чтобы у пользователей из других поясов не печаталась «чужая» дата.
+const mskDateObj = () => { const t = (window.FILT || {}).today;
+  if (t) { const [y, m, d] = t.split('-'); return { d, m, y }; }
+  const z = new Date(Date.now() + 3 * 3600e3);
+  return { d: String(z.getUTCDate()).padStart(2, '0'),
+           m: String(z.getUTCMonth() + 1).padStart(2, '0'),
+           y: z.getUTCFullYear() }; };
+const tcPrintDate = (() => { const x = mskDateObj(); return `${x.d}.${x.m}.${x.y}`; })();
 const tcColor=key=>PRI_HEX[key]||'#01696F';
 
 async function taskCardsModal(force){

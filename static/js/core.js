@@ -124,7 +124,10 @@ async function tgUnbind(btn){
    window.FLS (единое для всех страниц), флаги дедлайнов — множество. */
 window.FLS = window.FLS || {dept:null, dl:new Set(), mine:false, active:false};
 
-function isoNow(){ return (window.FILT||{}).today || new Date().toISOString().slice(0,10); }
+// «Сегодня» (ISO yyyy-mm-dd) — по Москве: серверный FILT.today; фолбэк через
+// смещение +03:00, а не `toISOString()` в UTC (вечером после 21:00 MSK UTC
+// показывает уже «завтрашнюю» дату).
+function isoNow(){ return (window.FILT||{}).today || new Date(Date.now()+3*3600e3).toISOString().slice(0,10); }
 
 window.dlMatch = function(due, statusKey){
   const S=window.FLS, F=window.FILT||{};

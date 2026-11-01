@@ -22,6 +22,8 @@ import logging
 import time
 from datetime import date, datetime, timedelta, timezone
 
+from app.core.timezone import now as msk_now, today as msk_today
+
 import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,7 +90,7 @@ def _is_overdue(due: str | None, today_iso: str) -> bool:
 async def overdue_entities(session: AsyncSession, user: User, limit: int = 30):
     """Просроченные незавершённые задачи/проекты в видимой области пользователя."""
     ctx = await build_context(session, user)
-    today = date.today().isoformat()
+    today = msk_today().isoformat()
     term_task = await _terminal_keys(session, "task")
     term_proj = await _terminal_keys(session, "project")
     rows = (await session.scalars(
@@ -121,7 +123,7 @@ async def _entity_line(session, e: Entity, resp_names: dict[int, list[str]]) -> 
     days = ""
     try:
         d = date.fromisoformat(e.due_date)
-        delta = (d - date.today()).days
+        delta = (d - msk_today()).days
         days = f" · просрочено на {-delta} дн." if delta < 0 else (f" · через {delta} дн." if delta else " · сегодня")
     except (ValueError, TypeError):
         pass
@@ -591,7 +593,7 @@ async def cmd_report(session: AsyncSession, user: User, args: str) -> str:
 
     kinds_txt = " · ".join(f"{str(k.value if hasattr(k, 'value') else k)}: {c}"
                            for k, c in sorted(by_kind, key=lambda r: -r[1]))
-    week_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+    week_start = msk_now() - timedelta(days=7)
     created_week = await session.scalar(
         select(func.count(Entity.id)).where(cond, Entity.created_at >= week_start))
     lines = [
@@ -974,7 +976,7 @@ async def _audience_count(session, aud: dict) -> int:
 
 async def _do_send(session: AsyncSession, user: User, st: dict) -> str:
     cid = int(user.telegram_chat_id)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = msk_now()
     n = Notification(title=st["title"] or "", body=st["body"],
                      send_at=now, audience_json=st["audience"],
                      status="sending", created_by=user.id,

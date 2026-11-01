@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from app.core.timezone import now
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,7 +108,8 @@ BASE_SCENARIOS = [
 
 
 def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Текущий момент по Москве, naive (колонки DateTime платформы — MSK)."""
+    return now()
 
 
 def scenario_is_base(scn: NotifyScenario) -> bool:
@@ -332,7 +335,7 @@ async def schedule_due_reminders(session: AsyncSession, *, days_ahead: int = 3,
                                  window_days: int = 1) -> int:
     """Воркер-проход: задачи/проекты с due_date в пределах [today, today+days_ahead],
     о которых ещё не напоминали в этом окне. Возвращает число поставленных событий."""
-    today = datetime.now(timezone.utc).date()
+    today = now().date()  # «сегодня» по Москве, а не по часам хоста
     lo = today.isoformat()
     hi = (today + timedelta(days=days_ahead)).isoformat()
     rows = (await session.scalars(

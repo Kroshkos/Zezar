@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Iterable, Optional
 
+from app.core.timezone import today as msk_today
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +55,7 @@ def match_due(deadline: Optional[str], du: str, today: Optional[date] = None) ->
     """Срок исполнения задачи относительно сегодня (как matchDue в демо)."""
     if not deadline:
         return False
-    today = today or date.today()
+    today = today or msk_today()
     t = _iso(today)
     if du == "week":
         return deadline >= t and deadline <= _iso(today + timedelta(days=7))

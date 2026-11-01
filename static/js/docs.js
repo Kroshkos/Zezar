@@ -14,7 +14,7 @@ function renderDocCards(){
   // Общие фильтры (дедлайны + подразделение) — из core.js: window.FLS/applyListFilters.
   let list=applyListFilters(DD.docs,{
     search:q, status:DS,
-    search_cb:(d,q)=>(d.title+' '+(d.doc_type||'')).toLowerCase().includes(q),
+    search_cb:(d,q)=>(d.title+' '+(d.doc_type||'')+' '+(d.number||'')).toLowerCase().includes(q),
   });
   document.getElementById('dempty').hidden=list.length>0;
   document.getElementById('dcards').innerHTML=list.map(d=>{
@@ -22,7 +22,7 @@ function renderDocCards(){
     return '<div class="card pad">'
       +'<div style="display:flex;justify-content:space-between;align-items:center"><span>'
       +'<span class="badge '+st.color+'">'+st.label+'</span></span>'
-      +(d.doc_type?'<span style="color:var(--muted);font-size:12px">📑 '+esc(d.doc_type)+'</span>':'')+'</div>'
+      +(d.doc_type||d.number?'<span style="color:var(--muted);font-size:12px">📑 '+esc([d.number,d.doc_type].filter(Boolean).join(', '))+'</span>':'')+'</div>'
       +'<h3 style="margin:11px 0 5px">'+'<a href="#" class="entlink" title="Открыть профиль" onclick="openProfile(\''+d.uid+'\');return false">'+esc(d.title||'Документ')+'</a></h3>'
       +'<div style="color:var(--muted);font-size:12.5px">📅 Дедлайн: '+dfmt(d.due_date)+'</div>'
       +(d.executor_names&&d.executor_names.length?'<div style="margin-top:7px;font-size:12.5px;color:var(--muted)">👥 '+esc(d.executor_names.join(', '))+'</div>':'')
@@ -90,6 +90,7 @@ function docFormModal(uid){
     +dtList
     +'<div><label>Статус</label><select name="status_key">'+statSel+'</select></div>'
     +'</div><div class="frow">'
+    +'<div><label>Номер документа</label><input name="number" placeholder="напр. 123-ОД" value="'+esc(d&&d.number||'')+'"></div>'
     +'<div><label>Ссылка на файл</label><input name="file_ref" placeholder="https://…" value="'+esc(d&&d.file_ref||'')+'"></div>'
     +(respSel||'<div></div>')
     +'</div><div class="frow">'+deptSel+projSel+'</div>'
@@ -98,7 +99,7 @@ function docFormModal(uid){
   openModal(d?'Редактирование документа':'Новый документ',body,async(fd,f)=>{
     if(!fd.title.trim()){toast('Укажите название документа');return}
     const pl={title:fd.title.trim(),description:fd.description,due_date:fd.due_date||null,
-              status_key:fd.status_key,doc_type:fd.doc_type,file_ref:fd.file_ref};
+              status_key:fd.status_key,doc_type:fd.doc_type,number:fd.number,file_ref:fd.file_ref};
     if(f.project_entity_uid)pl.project_entity_uid=f.project_entity_uid.value||null;
     if(f.responsible_user_id&&f.responsible_user_id.value)pl.responsible_user_id=+f.responsible_user_id.value;
     const sel=f.querySelector('#dexec');

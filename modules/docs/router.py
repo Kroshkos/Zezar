@@ -38,6 +38,7 @@ class DocIn(BaseModel):
     status_key: str | None = None            # draft/signed/in_work/archived/canceled
     due_date: str | None = None              # дедлайн документа (поле ядра -> календарь)
     doc_type: str | None = ""                # вид документа (справочник doc_type)
+    number: str | None = ""                  # номер документа (например, 123-ОД)
     file_ref: str | None = ""                # ссылка на файл
     description: str | None = ""
     department_id: int | None = None         # для админа/координатора: чьё пространство
@@ -70,7 +71,8 @@ def _doc_dict(ent: Entity, p: DocPayload | None, perm: Permission | None,
         "responsible_user_id": responsible_uid,
         "department_id": ent.owner_department_id,
         "cross_dept": cross_dept,
-        "doc_type": p.doc_type if p else "", "file_ref": p.file_ref if p else "",
+        "doc_type": p.doc_type if p else "", "number": (p.number if p else "") or "",
+        "file_ref": p.file_ref if p else "",
         "stages": stages, "stage_done": done, "stage_total": total,
         "progress": round(done / total * 100) if total else 0,
         "project_entity_uid": p.project_entity_uid if p else None,
@@ -558,6 +560,7 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
     stages = wf_service.wf_build_stages(stages_raw if isinstance(stages_raw, list) else [])
     session.add(DocPayload(
         entity_id=ent.id, doc_type=body.doc_type or None,
+        number=(body.number or "").strip() or None,
         file_ref=body.file_ref or None,
         project_entity_uid=body.project_entity_uid or None, stages=stages))
     await session.flush()
@@ -571,7 +574,7 @@ async def create_doc(body: DocIn, user: User = Depends(get_current_user),
     return {"uid": ent.uid, "ok": True}
 
 
-_DOC_FIELDS = {"doc_type", "file_ref", "project_entity_uid"}
+_DOC_FIELDS = {"doc_type", "number", "file_ref", "project_entity_uid"}
 
 
 @router.patch("/{uid}")
