@@ -7,6 +7,9 @@ services:
       - "8000:8000"
     environment:
       PORT: 8000
+      # Системные часы контейнера — Москва (логи, time.strftime); бизнес-логика
+      # приложения использует фиксированное смещение MSK из app/core/timezone.py.
+      TZ: Europe/Moscow
       TRUST_PROXY_HEADERS: "true"
       ENVIRONMENT: production
       DATA_DIR: /data

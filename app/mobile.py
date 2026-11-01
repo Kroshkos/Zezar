@@ -544,15 +544,18 @@ def _iso(dt) -> Optional[str]:
     На legacy-БД (Amvera) колонки создавались ALTER TABLE с NULL-дефолтами, а
     SQLite хранит даты строками без tzinfo — прямой .isoformat() давал клиенту
     время без часового пояса (лента «События» считала «N дн назад» неверно).
-    Naive-значения трактуем как UTC (в БД пишет utcnow)."""
+    Naive-значения трактуем как MSK: app.db.base.utcnow() возвращает московское
+    время (см. app/core/timezone.py), поэтому метке принудительно проставляется
+    смещение +03:00, а не UTC — иначе клиент на хосте в другой стране видел бы
+    события «сдвинутыми» на разницу часовых поясов."""
     if dt is None:
         return None
     try:
         if isinstance(dt, str):
             return dt  # уже сериализовано — отдаём как есть
-        from datetime import timezone as _tz
+        from app.core.timezone import MSK_TZ
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=_tz.utc)
+            dt = dt.replace(tzinfo=MSK_TZ)
         return dt.isoformat()
     except Exception:  # noqa: BLE001 — лучше null, чем 500 на весь список
         return None

@@ -28,8 +28,9 @@ from app.models.core import (
 )
 from app.core.module_registry import registry
 from modules.dashboard.queries import build_dashboard_data
+from app.core.timezone import now as msk_now, today as msk_today
 
-TODAY = date.today()
+TODAY = msk_today()
 
 
 def iso(d: date) -> str:
@@ -104,7 +105,7 @@ async def seed(Session):
             s.add(EntityResponsible(entity_id=e.id, user_id=member.id,
                                     department_id=dept.id, is_primary=True))
 
-        now = datetime.utcnow()
+        now = msk_now()
         s.add_all([
             AuditLog(at=now, user_id=admin.id, action="create", entity_id=ents[0].id),
             AuditLog(at=now - timedelta(days=1), user_id=member.id, action="status", entity_id=ents[1].id),
