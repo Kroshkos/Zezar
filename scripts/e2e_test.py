@@ -493,7 +493,8 @@ async def notify_chain_test() -> None:
             ent = await s.scalar(_select(Entity).where(Entity.due_date.is_not(None)))
             assert ent, "нет сущности со сроком"
             ent.status_key = "new"
-            y = (_dt.date.today() - _dt.timedelta(days=5)).isoformat()
+            from app.core.timezone import today as _msk_today
+            y = (_msk_today() - _dt.timedelta(days=5)).isoformat()
             ent.due_date = y
             # просроченная, но «завершённая» — не должна напоминать
             done_ent = await s.scalar(_select(Entity).where(

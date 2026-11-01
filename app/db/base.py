@@ -19,7 +19,15 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Текущий момент по московскому времени (см. app/core/timezone.py).
+
+    Название сохранено для совместимости; колонки DateTime платформы и все
+    отображаемые метки («время создания/изменения», журнал, уведомления)
+    хранятся в наивном времени MSK, чтобы сервер в другой стране не сдвигал
+    сутки относительно пользователей.
+    """
+    from app.core.timezone import now  # локальный импорт — циклических слоёв нет
+    return now(tz=True)
 
 
 class TimestampMixin:

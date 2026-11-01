@@ -13,6 +13,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from app.core.timezone import now as msk_now  # время платформы — Москва (MSK)
+
 from sqlalchemy import select, text
 
 from app.db.engine import SessionLocal
@@ -60,7 +62,7 @@ async def _outbox_once() -> None:
                 elif ev.topic in ("calendar.sync", "calendar.remove"):
                     await _handle_calendar(session, ev.topic, ev.payload_json or {})
                 ev.status = "done"
-                ev.processed_at = datetime.now(timezone.utc)
+                ev.processed_at = msk_now()
             except Exception as e:  # noqa: BLE001
                 ev.status = "error"
                 ev.last_error = str(e)[:2000]
@@ -319,7 +321,7 @@ async def _handle_tg_manual(session, p: dict) -> None:
             log.info("manual notify #%s: пользователь %s не привязан к Telegram", n.id, u.login)
     n.delivered_count = sent
     n.status = "sent"
-    n.sent_at = datetime.now(timezone.utc)
+    n.sent_at = msk_now()
 
 
 async def _handle_tg_test(session, p: dict) -> None:
@@ -387,7 +389,7 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
-            ent.cal_synced_at = datetime.now(timezone.utc)
+            ent.cal_synced_at = msk_now()
         else:
             any_fail = True
     if any_fail and ent.sync_state != SyncState.SYNCED:
@@ -549,7 +551,7 @@ async def notifier_worker(stop: asyncio.Event) -> None:
                     if n:
                         log.info("notifier: поставлено напоминаний о сроке: %s", n)
                 # 2) scheduled broadcasts
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = msk_now()  # naive MSK — сравнение с send_at (MSK)
                 due = (await session.scalars(
                     select(Notification).where(
                         Notification.status == "scheduled",

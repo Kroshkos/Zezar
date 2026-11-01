@@ -94,8 +94,17 @@ function deptColor(id) {
   if (d && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(d.color || '')) return d.color;
   return DEPT_PALETTE[Math.abs(Number(id) || 0) % DEPT_PALETTE.length];
 }
-// Дата печати (формируется один раз за сессию просмотра/печати)
-const PRINT_DATE = new Date().toLocaleDateString('ru-RU');
+// Дата печати (формируется один раз за сессию просмотра/печати) — по Москве:
+// серверное FILT.today (см. app/core/filters.py), фолбэк — смещение UTC+3,
+// а не локальные часы браузера (у пользователей из других поясов печаталась
+// бы «чужая» дата).
+const PRINT_DATE = (() => {
+  const t = (window.FILT || {}).today;
+  if (t) { const [y, m, d] = t.split('-'); return `${d}.${m}.${y}`; }
+  const z = new Date(Date.now() + 3 * 3600e3);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(z.getUTCDate())}.${p(z.getUTCMonth() + 1)}.${z.getUTCFullYear()}`;
+})();
 
 function cardHTML(c) {
   const dcolor = deptColor(c.department_id);          // полоса — по подразделению

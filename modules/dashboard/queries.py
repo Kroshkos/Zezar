@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+from app.core.timezone import now as msk_now, today as msk_today
+
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,7 +108,7 @@ async def build_dashboard_data(session: AsyncSession, user: User,
     ctx = await build_dashboard_context(session, user, department_id)
     filt = access.entity_filter(ctx)
     dcond = dashboard_dept_cond(ctx)   # фильтр по подразделению (выбор в шапке)
-    today = date.today()
+    today = msk_today()  # «сегодня» по Москве, независимо от часов хоста
     today_iso = today.isoformat()
     horizon_iso = (today + timedelta(days=7)).isoformat()
 
@@ -387,7 +389,7 @@ async def build_dashboard_data(session: AsyncSession, user: User,
             OutboxEvent.topic.like("telegram.%"),
             OutboxEvent.status == "error")) or 0
 
-    now_utc = datetime.utcnow()
+    now_utc = msk_now()  # «сейчас» по Москве (колонки DateTime платформы — MSK)
     broadcasts_scheduled = await session.scalar(
         select(func.count(Notification.id)).where(
             Notification.status == "scheduled")) or 0
