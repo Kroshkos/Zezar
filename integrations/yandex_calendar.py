@@ -290,24 +290,43 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     if r.status_code in (401, 403):
         # Диагностика типичных ошибок ручного ввода — иначе пользователь получает
         # безликое «отклонили учётные данные» и не понимает, что именно не так.
-        try:
-            from app.core.config import get_settings
-            base = caldav_base()
-            real_login = get_settings().yandex_real_login
-        except Exception:  # noqa: BLE001
-            base, real_login = DEFAULT_CAL_BASE, None
-        if real_login and login.lower() == real_login.lower():
-            # Совпадает с логином, которым человек реально входит в Яндекс, — значит
-            # логин верный и отклонён именно app-пароль.
-            if not is_app_password(app_password):
-                log.warning("verify_credentials %s: пароль НЕ в формате app-пароля "
-                            "(12 hex) — вероятно, введён обычный пароль аккаунта", login)
-            else:
-                log.warning("verify_credentials %s: app-пароль корректного формата, "
-                            "но Яндекс его отвергает (%s) — просрочен/отозван или "
-                            "создан не для сервиса «Другие»", login, r.status_code)
-        elif len(login.split("@")[0]) < 3 or not re.fullmatch(r"[A-Za-z0-9._-]+", login):
+        # В отличие от ensure_calendar, здесь повторная PROPFIND-проверка без
+        # доменной части НЕ делается: она молча приняла бы ivan@yandex.ru вместо
+        # ivan и сохранила «правильный» логин, который при отвязке/смене почты
+        # перестал бы совпадать с введённым пользователем.
+        base = caldav_base()
+        if "@" in login:
+            log.warning("verify_credentials: логин %r содержит домен — CalDAV "
+                        "требует логин аккаунта Яндекса без @домена", login)
+        elif len(login) < 3 or not re.fullmatch(r"[A-Za-z0-9._-]+", login):
             log.warning("verify_credentials: логин %r выглядит не как логин Яндекса", login)
+        if not is_app_password(app_password):
+            log.warning("verify_credentials %s: пароль НЕ в формате app-пароля "
+                        "(12 hex) — вероятно, введён обычный пароль аккаунта", login)
+        else:
+            log.warning("verify_credentials %s: app-пароль корректного формата, "
+                        "но Яндекс его отвергает (%s) — просрочен/отозван или "
+                        "создан не для сервиса «Другие»", login, r.status_code)
         if base != DEFAULT_CAL_BASE:
             log.warning("verify_credentials: проверка идёт против нестандартной базы %r", base)
     return r.status_code in (200, 207), r.status_code
+
+
+def credential_hint(login: str, app_password: str, code: int) -> str | None:
+    """Уточнение к сообщению об ошибке аутентификации (для пользователя).
+
+    Возвращает None, если явных признаков ошибки ввода нет. Вызывается из
+    роутера сохранения настроек после неудачной verify_credentials.
+    """
+    if code not in (401, 403):
+        return None
+    apw = (app_password or "").replace(" ", "").strip()
+    if not is_app_password(apw):
+        return ("Введённый пароль не похож на app-пароль Яндекса: он должен "
+                "состоять ровно из 12 символов [0-9a-f]. Скорее всего, скопирован "
+                "обычный пароль от аккаунта — создайте пароль приложений на "
+                "id.yandex.ru → «Пароли приложений» → сервис «Другие».")
+    if "@" in (login or ""):
+        return ("Логин указан с доменной частью («почта»). Для CalDAV нужен логин "
+                "аккаунта Яндекса без @домена: ivan@yandex.ru → ivan.")
+    return None

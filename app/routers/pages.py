@@ -167,9 +167,12 @@ async def save_calendar(body: CalIn, request: Request,
         return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
                                        "(вход в системе к Яндекс.ID не относится)"}, 400)
     # Типичная ошибка при вводе вручную: почта вместо логина (ivan@yandex.ru вместо ivan).
-    # Доменная часть в Basic auth Яндекс почти всегда отвергает с 401 — отсекаем её сами.
+    # Раньше домен молча отсекался — пользователь не узнавал, что вводил почту, а в
+    # профиле сохранялся «не его» логин. Теперь это отдельное понятное сообщение.
     if "@" in login:
-        login = user.yandex_login = login.split("@")[0].strip()
+        return JSONResponse({"detail": f"В поле «Логин CalDAV» указана почта «{login}». "
+                                       "Яндекс требует логин аккаунта без доменной части: "
+                                       f"{login.split('@')[0]}"}, 400)
     apw = body.app_password.replace(" ", "").strip()
     ok, code = await yc.verify_credentials(login, apw)
     if not ok:
@@ -186,6 +189,9 @@ async def save_calendar(body: CalIn, request: Request,
                 404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
                 405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
             }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
+            hint = yc.credential_hint(login, apw, code)
+            if hint:
+                detail += ". " + hint
         return JSONResponse({"detail": detail}, 400)
     user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
     user.yandex_cal_name = body.calendar_name or get_settings().yandex_cal_default_calendar
