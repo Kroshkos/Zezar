@@ -151,6 +151,7 @@ def _window(ent) -> tuple[str, str]:
             return s, e
     # 'YYYY-MM-DD' — валидируем перед подстановкой в ICS: мусорная дата
     # молча превращалась в невалидный DTSTART (Яндекс отклонял PUT с 400).
+    due = ent.due_date
     from datetime import date as _date
     try:
         d = _date.fromisoformat(str(due)[:10])
@@ -190,6 +191,8 @@ def ics_for_entity(ent, responsible_name: str) -> str:
 
 async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
                        responsible_name: str) -> bool:
+    if not cal_enabled():      # YANDEX_CAL_ENABLED=false — сетевых вызовов нет вовсе
+        return False
     apw = decrypt_secret(apw_enc)
     if not apw:
         return False
@@ -205,6 +208,8 @@ async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
 
 
 async def delete_event(email: str, apw_enc: str, cal_path: str, cal_uid: str) -> bool:
+    if not cal_enabled():      # YANDEX_CAL_ENABLED=false — сетевых вызовов нет вовсе
+        return False
     apw = decrypt_secret(apw_enc)
     if not apw:
         return False
@@ -220,7 +225,11 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     Возвращает (ok, http_code): код нужен, чтобы отличить неверный пароль (401/403)
     от сетевых/сервисных ошибок и дать пользователю точную подсказку.
     Примечание: CalDAV Яндекса аутентифицирует по ЛОГИНУ аккаунта, а не по email.
+    При YANDEX_CAL_ENABLED=false сетевой запрос НЕ выполняется вовсе — интеграция
+    отключена на уровне контура сохранения настроек тоже.
     """
+    if not cal_enabled():
+        return False, 0
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.request("PROPFIND", caldav_base() + "/",

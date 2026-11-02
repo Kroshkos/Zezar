@@ -22,6 +22,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_NOTIFY_ENABLED: ${TELEGRAM_NOTIFY_ENABLED:-true}
       YANDEX_CAL_ENABLED: ${YANDEX_CAL_ENABLED:-true}
+      # WebDAV-база Яндекс.Календаря (dav.yandex.ru закрыт — 405); менять не нужно,
+      # если только Яндекс не откроет новый эндпоинт
+      YANDEX_CAL_BASE: ${YANDEX_CAL_BASE:-https://webdav.yandex.ru}
       SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-300}
       WORKERS_ENABLED: "true"
       DEV_LOGIN_ENABLED: "false"

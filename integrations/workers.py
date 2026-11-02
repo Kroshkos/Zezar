@@ -343,6 +343,22 @@ async def _handle_tg_test(session, p: dict) -> None:
 async def _handle_calendar(session, topic: str, p: dict) -> None:
     ent = await session.get(Entity, p.get("entity_id")) if p.get("entity_id") else None
     if ent is None:
+        # сущность удалена из БД — событие календаря могло остаться у
+        # ответственных в Яндекс.Календаре; чистим его по cal_uid из payload
+        # (calendar.remove несёт cal_uid напрямую).
+        if topic == "calendar.remove" and p.get("cal_uid"):
+            resp_rows = (await session.scalars(
+                select(User).where(User.yandex_cal_app_password_enc != None))).all()  # noqa: E711
+            for u in resp_rows:
+                if not _cal_login(u):
+                    continue
+                try:
+                    client_path = await _cal_path(u)
+                    if client_path:
+                        await yc.delete_event(_cal_login(u), u.yandex_cal_app_password_enc,
+                                              client_path, p["cal_uid"])
+                except Exception as e:  # noqa: BLE001
+                    log.warning("cal delete (orphan) user=%s: %s", u.id, e)
         return
     if topic == "calendar.remove":
         # удаляем событие из календарей всех ответственных (им именно оно и показывалось)
@@ -457,6 +473,81 @@ async def _cal_path(u: User) -> str | None:
     except Exception as e:  # noqa: BLE001
         log.warning("ensure_calendar user=%s: %s", u.id, e)
         return None
+
+
+async def cal_diff_worker(stop: asyncio.Event) -> None:
+    """Периодический diff-проход календаря (YANDEX_CAL_ENABLED, SYNC_INTERVAL_SECONDS).
+
+    Догоняющая синхронизация: сущности, зависшие в sync_state=pending/error
+    (например, ответственный привязал app-пароль позже создания карточки,
+    интеграция была выключена на момент событий outbox или upsert упал),
+    ставятся заново в очередь calendar.sync. Идемпотентно: повторный upsert
+    по стабильному cal_uid просто обновляет событие; живые события outbox
+    (неprocessed calendar.sync той же сущности) не дублируются.
+    Событий remove здесь нет намеренно: удалённые сущности исчезают из БД
+    вместе со строкой Entity, их чистит topic calendar.remove через outbox.
+    """
+    interval = max(30, _gs().sync_interval_seconds or 300)
+    while not stop.is_set():
+        try:
+            if yc.cal_enabled():
+                await _cal_diff_once()
+        except Exception as e:  # noqa: BLE001
+            log.exception("cal diff tick failed: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _cal_diff_once() -> None:
+    async with SessionLocal() as session:
+        # только «календарные» сущности: pending/error + корректный due_date
+        # (мусорная дата diff-проходом не гоняется — её отклонит и upsert);
+        # limit — чтобы один проход не блокировал outbox надолго, остальные
+        # дойдут в следующем цикле.
+        ent_ids = list((await session.scalars(
+            select(Entity.id).where(Entity.sync_state.in_(
+                [SyncState.PENDING, SyncState.ERROR]),
+                Entity.due_date.is_not(None), Entity.due_date != "")
+            .order_by(Entity.id).limit(200))).all())
+        if not ent_ids:
+            return
+        # уже ожидающие обработки calendar.sync этой сущности не дублируем
+        # (entity_id лежит в payload_json — колонка SafeJSON, читаем ORM'ом)
+        queued = {int((ev.payload_json or {}).get("entity_id") or 0) for ev in
+                  (await session.scalars(
+                      select(OutboxEvent).where(
+                          OutboxEvent.topic == "calendar.sync",
+                          OutboxEvent.processed_at.is_(None)))).all()}
+        added = 0
+        for eid in ent_ids:
+            if eid in queued:
+                continue
+            ent = await session.get(Entity, eid)
+            if ent is None:
+                continue
+            # без привязанного календаря хотя бы у одного ответственного
+            # событие всё равно некуда положить — держим pending молча,
+            # сетевых вызовов нет (появится пароль -> diff досинхронизирует)
+            bound = False
+            for r in (await session.scalars(
+                    select(EntityResponsible).where(
+                        EntityResponsible.entity_id == eid,
+                        EntityResponsible.user_id != None))):  # noqa: E711
+                u = await session.get(User, r.user_id)
+                if u and u.yandex_cal_app_password_enc and _cal_login(u):
+                    bound = True
+                    break
+            if not bound:
+                continue
+            session.add(OutboxEvent(topic="calendar.sync", payload_json={
+                "entity_id": ent.id, "entity_uid": ent.uid, "reason": "diff",
+            }))
+            added += 1
+        await session.commit()
+        if added:
+            log.info("cal diff: в очередь поставлено событий синхронизации: %s", added)
 
 
 async def tg_poller(stop: asyncio.Event) -> None:

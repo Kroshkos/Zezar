@@ -168,6 +168,9 @@ async def save_calendar(body: CalIn, request: Request,
                                        "(вход в системе к Яндекс.ID не относится)"}, 400)
     ok, code = await yc.verify_credentials(login, body.app_password)
     if not ok:
+        if code == 0 and not yc.cal_enabled():
+            return JSONResponse({"detail": "Интеграция с Яндекс.Календарём отключена "
+                                           "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 400)
         detail = {
             401: "Яндекс отклонил логин или app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток; логин CalDAV — это логин аккаунта Яндекса (без домена)",
             403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",

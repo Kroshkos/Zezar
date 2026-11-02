@@ -689,9 +689,13 @@ async def lifespan(app: FastAPI):
     stop = asyncio.Event()
     if settings.workers_enabled:
         try:
-            from integrations.workers import notifier_worker, outbox_worker, tg_poller
+            from integrations.workers import (cal_diff_worker, notifier_worker,
+                                              outbox_worker, tg_poller)
             tasks.append(asyncio.create_task(outbox_worker(stop)))
             tasks.append(asyncio.create_task(notifier_worker(stop)))
+            # diff-проход календаря: догоняющая синхронизация PENDING/ERROR
+            # (привязка app-пароля позже создания карточки, простои интеграции)
+            tasks.append(asyncio.create_task(cal_diff_worker(stop)))
             if settings.telegram_bot_token:
                 tasks.append(asyncio.create_task(tg_poller(stop)))
         except Exception as e:  # noqa: BLE001
