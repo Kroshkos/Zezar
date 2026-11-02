@@ -91,7 +91,9 @@ class Settings(BaseSettings):
     # Яндекс.Календарь (WebDAV/CalDAV)
     yandex_cal_enabled: bool = True
     yandex_cal_base: str = "https://webdav.yandex.ru"
-    yandex_cal_default_calendar: str = "default"
+    # имя CalDAV-коллекции по умолчанию для пользователей, не задавших своё
+    # в настройках профиля (User.yandex_cal_name)
+    yandex_cal_default_calendar: str = "Цезарь"
 
     # Фоновые задачи
     sync_interval_seconds: int = 300

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
+
+import httpx
 
 from app.core.timezone import now as msk_now  # время платформы — Москва (MSK)
 
@@ -49,6 +51,14 @@ async def _outbox_once() -> None:
                                       OutboxEvent.attempts < 8)
             .order_by(OutboxEvent.id).limit(50))).all()
         for ev in rows:
+            if (ev.topic in ("calendar.sync", "calendar.remove")
+                    and not yc.cal_enabled()):
+                # интеграция с Яндекс.Календарём отключена (YANDEX_CAL_ENABLED=false) —
+                # событие НЕ обрабатываем; но и attempts не наращиваем, иначе за
+                # дни простоя лимит 8 попыток исчерпывается и события молча
+                # выпадают из выборки навсегда (после включения флага календарь
+                # уже никогда не досинхронизируется). Просто пропускаем цикл.
+                continue
             ev.attempts += 1
             try:
                 if ev.topic == "telegram.notify":
@@ -338,6 +348,22 @@ async def _handle_tg_test(session, p: dict) -> None:
 async def _handle_calendar(session, topic: str, p: dict) -> None:
     ent = await session.get(Entity, p.get("entity_id")) if p.get("entity_id") else None
     if ent is None:
+        # сущность удалена из БД — событие календаря могло остаться у
+        # ответственных в Яндекс.Календаре; чистим его по cal_uid из payload
+        # (calendar.remove несёт cal_uid напрямую).
+        if topic == "calendar.remove" and p.get("cal_uid"):
+            resp_rows = (await session.scalars(
+                select(User).where(User.yandex_cal_app_password_enc != None))).all()  # noqa: E711
+            for u in resp_rows:
+                if not _cal_login(u):
+                    continue
+                try:
+                    client_path = await _cal_path(u)
+                    if client_path:
+                        await yc.delete_event(_cal_login(u), u.yandex_cal_app_password_enc,
+                                              client_path, p["cal_uid"])
+                except Exception as e:  # noqa: BLE001
+                    log.warning("cal delete (orphan) user=%s: %s", u.id, e)
         return
     if topic == "calendar.remove":
         # удаляем событие из календарей всех ответственных (им именно оно и показывалось)
@@ -360,14 +386,26 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     if not ent.due_date:
         ent.sync_state = SyncState.SYNCED
         return
+    try:
+        _date.fromisoformat(str(ent.due_date)[:10])   # та же валидация, что и в yc._window
+    except (ValueError, TypeError):
+        # мусорная дата: событие НЕКУДА ставить (upsert упал бы на этом же),
+        # ретраи ничего не исправят — помечаем ERROR с причиной; diff-проход
+        # такие сущности не гоняет, пока срок не починят в карточке
+        ent.sync_state = SyncState.ERROR
+        ent.cal_error = f"некорректный due_date '{ent.due_date}'"
+        log.warning("calendar sync %s: некорректный due_date '%s' — пропущено",
+                    ent.uid, ent.due_date)
+        return
     # нет ни одного привязанного календаря — держим PENDING (не ложный SYNCED),
-    # cron-проход досинхронизирует после привязки app-пароля
-    bound = [r for r in await session.scalars(
+    # diff-проход досинхронизирует после привязки app-пароля
+    bound_ids = [r.user_id for r in (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
-                                        EntityResponsible.user_id != None))  # noqa: E711
-             if (await session.get(User, r.user_id)) is not None
-             and (await session.get(User, r.user_id)).yandex_cal_app_password_enc]
-    if not bound:
+                                        EntityResponsible.user_id != None)))  # noqa: E711
+                 if r.user_id]
+    bound_users = list((await session.scalars(
+        select(User).where(User.id.in_(bound_ids)))) ) if bound_ids else []
+    if not any(u.yandex_cal_app_password_enc and _cal_login(u) for u in bound_users):
         ent.sync_state = SyncState.PENDING
         return
     # пишем событие в календари ответственных (по одному событию на человека — см. ТЗ)
@@ -389,9 +427,12 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
-            ent.cal_synced_at = msk_now()
         else:
             any_fail = True
+    # фиксируем момент последней попытки ВСЕГДА (и при успехе, и при неудаче):
+    # diff-проход троттлится по cal_synced_at — без этого поля падающий upsert
+    # переочерёживался бы каждым циклом diff и раздувал outbox
+    ent.cal_synced_at = msk_now()
     if any_fail and ent.sync_state != SyncState.SYNCED:
         ent.sync_state = SyncState.ERROR
         raise RuntimeError(f"calendar upsert failed for entity {ent.uid}")
@@ -418,7 +459,7 @@ async def _attach_payload(session, ent: Entity):
     return await session.get(model, ent.id)
 
 
-_cal_path_cache: dict[int, str] = {}
+_cal_path_cache: dict[int, tuple[str, str]] = {}   # user_id -> (yandex_cal_name, путь)
 
 
 
@@ -436,22 +477,116 @@ def _cal_login(u: User) -> str | None:
     return None
 
 async def _cal_path(u: User) -> str | None:
-    """Путь CalDAV-коллекции «Цезарь» пользователя (создаётся при первом обращении)."""
-    if u.id in _cal_path_cache:
-        return _cal_path_cache[u.id]
+    """Путь CalDAV-коллекции «Цезарь» пользователя (создаётся при первом обращении).
+
+    В кэше хранится пара (имя календаря, путь): если пользователь переименовал
+    календарь в настройках профиля, старый путь невалиден — кэш по имени
+    сбрасывается и папка пересоздаётся.
+    """
+    cal_name = u.yandex_cal_name or _gs().yandex_cal_default_calendar
+    hit = _cal_path_cache.get(u.id)
+    if hit and hit[0] == cal_name:
+        return hit[1]
     from app.core.security import decrypt_secret
     apw = decrypt_secret(u.yandex_cal_app_password_enc)
     if not apw:
         return None
     try:
-        async with __import__("httpx").AsyncClient(timeout=20) as client:
-            path = await yc.ensure_calendar(client, _cal_login(u) or "", apw,
-                                            u.yandex_cal_name or "Цезарь")
-        _cal_path_cache[u.id] = path
+        async with httpx.AsyncClient(timeout=20) as client:
+            path = await yc.ensure_calendar(client, _cal_login(u) or "", apw, cal_name)
+        _cal_path_cache[u.id] = (cal_name, path)
         return path
     except Exception as e:  # noqa: BLE001
         log.warning("ensure_calendar user=%s: %s", u.id, e)
         return None
+
+
+async def cal_diff_worker(stop: asyncio.Event) -> None:
+    """Периодический diff-проход календаря (YANDEX_CAL_ENABLED, SYNC_INTERVAL_SECONDS).
+
+    Догоняющая синхронизация: сущности, зависшие в sync_state=pending/error
+    (например, ответственный привязал app-пароль позже создания карточки,
+    интеграция была выключена на момент событий outbox или upsert упал),
+    ставятся заново в очередь calendar.sync. Идемпотентно: повторный upsert
+    по стабильному cal_uid просто обновляет событие; живые события outbox
+    (неprocessed calendar.sync той же сущности) не дублируются.
+    Событий remove здесь нет намеренно: удалённые сущности исчезают из БД
+    вместе со строкой Entity, их чистит topic calendar.remove через outbox.
+    """
+    interval = max(30, _gs().sync_interval_seconds or 300)
+    while not stop.is_set():
+        try:
+            if yc.cal_enabled():
+                await _cal_diff_once()
+        except Exception as e:  # noqa: BLE001
+            log.exception("cal diff tick failed: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+
+
+def _diff_interval() -> int:
+    return max(30, _gs().sync_interval_seconds or 300)
+
+
+async def _cal_diff_once() -> None:
+    interval = _diff_interval()
+    async with SessionLocal() as session:
+        # только «календарные» сущности: pending/error + корректный due_date
+        # (мусорная дата diff-проходом не гоняется — её отклонит и upsert);
+        # limit — чтобы один проход не блокировал outbox надолго, остальные
+        # дойдут в следующем цикле.
+        ent_ids = list((await session.scalars(
+            select(Entity.id).where(Entity.sync_state.in_(
+                [SyncState.PENDING, SyncState.ERROR]),
+                Entity.due_date.is_not(None), Entity.due_date != "")
+            .order_by(Entity.id).limit(200))).all())
+        if not ent_ids:
+            return
+        # уже ожидающие обработки calendar.sync этой сущности не дублируем
+        # (entity_id лежит в payload_json — колонка SafeJSON, читаем ORM'ом)
+        queued = {int((ev.payload_json or {}).get("entity_id") or 0) for ev in
+                  (await session.scalars(
+                      select(OutboxEvent).where(
+                          OutboxEvent.topic == "calendar.sync",
+                          OutboxEvent.processed_at.is_(None)))).all()}
+        added = 0
+        now = msk_now()
+        for eid in ent_ids:
+            if eid in queued:
+                continue
+            ent = await session.get(Entity, eid)
+            if ent is None:
+                continue
+            # Троттлинг ретраев: сущности, которые уже пытались синхронизироваться
+            # менее цикла назад (cal_synced_at — время последней попытки/успеха),
+            # в этом проходе не переочерёживаем. Иначе постоянно падающий upsert
+            # (неверный пароль, недоступный WebDAV) генерировал бы новое событие
+            # каждый цикл и раздувал outbox.
+            if ent.cal_synced_at is not None and (now - ent.cal_synced_at).total_seconds() < interval:
+                continue
+            # без привязанного календаря хотя бы у одного ответственного
+            # событие всё равно некуда положить — держим pending молча,
+            # сетевых вызовов нет (появится пароль -> diff досинхронизирует)
+            bound = False
+            for r in (await session.scalars(
+                    select(EntityResponsible).where(
+                        EntityResponsible.entity_id == eid,
+                        EntityResponsible.user_id != None))):  # noqa: E711
+                u = await session.get(User, r.user_id)
+                if u and u.yandex_cal_app_password_enc and _cal_login(u):
+                    bound = True
+                    break
+            if not bound:
+                continue
+            session.add(OutboxEvent(topic="calendar.sync", payload_json={
+                "entity_id": ent.id, "entity_uid": ent.uid, "reason": "diff",
+            }))
+            added += 1
+        await session.commit()
+        if added:
+            log.info("cal diff: в очередь поставлено событий синхронизации: %s", added)
 
 
 async def tg_poller(stop: asyncio.Event) -> None:
