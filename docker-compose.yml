@@ -25,6 +25,8 @@ services:
       # WebDAV-база Яндекс.Календаря (dav.yandex.ru закрыт — 405); менять не нужно,
       # если только Яндекс не откроет новый эндпоинт
       YANDEX_CAL_BASE: ${YANDEX_CAL_BASE:-https://webdav.yandex.ru}
+      # имя CalDAV-папки по умолчанию (пользователь может переопределить в профиле)
+      YANDEX_CAL_DEFAULT_CALENDAR: ${YANDEX_CAL_DEFAULT_CALENDAR:-Цезарь}
       SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-300}
       WORKERS_ENABLED: "true"
       DEV_LOGIN_ENABLED: "false"
