@@ -19,6 +19,21 @@ from app.core.security import decrypt_secret
 
 log = logging.getLogger("caesar.caldav")
 
+
+def cal_enabled() -> bool:
+    """Флаг отключения интеграции (YANDEX_CAL_ENABLED=false).
+
+    Используется воркерами (diff-проход и обработка calendar.* событий) и
+    точкой сохранения настроек профиля — при выключенном флаге сетевые
+    вызовы к Яндексу не выполняются вовсе.
+    """
+    try:
+        from app.core.config import get_settings
+        return bool(get_settings().yandex_cal_enabled)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 # Яндекс закрыл CalDAV-эндпоинт dav.yandex.ru (он возвращает 405 на PROPFIND/MKCOL).
 # Рабочий протокол — WebDAV: https://webdav.yandex.ru (значение из настроек;
 # там же живёт дефолтный календарь в папке /calendar/).
@@ -93,11 +108,13 @@ def _propfind(props: list[str]) -> bytes:
     return body.encode()
 
 
-def _window(ent) -> tuple[str, str]:
+def _window(ent) -> tuple[str, str] | None:
     """Кортеж (DTSTART, DTEND) без префиксов TZID.
 
     Совещания: точное время из payload.start_at/end_at (или date+time_);
     остальные сущности: 09:00–18:00 дня срока (due_date).
+    Возвращает None, если окно построить нельзя (мусорные даты) — событие
+    в календарь не ставится.
     """
     p = getattr(ent, "_cal_payload", None)
     # kind может быть строкой (raw SQL) или Enum — сравниваем значение толерантно
@@ -126,16 +143,40 @@ def _window(ent) -> tuple[str, str]:
                     e = (_dt.strptime(s, "%Y%m%dT%H%M%S") + _td(hours=2)).strftime("%Y%m%dT%H%M%S")
                 except ValueError:
                     e = s[:8] + "T180000"
+            elif e <= s:
+                # валидация: end_at раньше/равен start_at — невалидное окно;
+                # берём стандартные +2 часа от начала
+                log.warning("meeting %s: end_at<=start_at (%s..%s), window -> +2h",
+                            getattr(ent, "uid", "?"), s, e)
+                from datetime import datetime as _dt, timedelta as _td
+                e = (_dt.strptime(s, "%Y%m%dT%H%M%S") + _td(hours=2)).strftime("%Y%m%dT%H%M%S")
             return s, e
-    due = ent.due_date  # 'YYYY-MM-DD'
-    dt = due.replace("-", "")
+    # 'YYYY-MM-DD' — валидируем перед подстановкой в ICS: мусорная дата
+    # молча превращалась в невалидный DTSTART (Яндекс отклонял PUT с 400).
+    due = ent.due_date
+    from datetime import date as _date
+    try:
+        d = _date.fromisoformat(str(due)[:10])
+    except (ValueError, TypeError):
+        # НЕ бросаем исключение: у сущностей без payload (не совещания) из-за
+        # него падал и весь upsert_event, и весь ics_for_entity. Возвращаем None —
+        # вызывающий код (upsert_event) отклонит такую сущность с понятной ошибкой.
+        log.warning("caldav window %s: некорректный due_date '%s' — событие не ставится",
+                    getattr(ent, "uid", "?"), due)
+        return None
+    dt = d.strftime("%Y%m%d")
     return f"{dt}T090000", f"{dt}T180000"
 
 
-def ics_for_entity(ent, responsible_name: str) -> str:
-    """UID стабильный (cal_uid) — повторные записи обновляют событие."""
+def ics_for_entity(ent, responsible_name: str) -> str | None:
+    """UID стабильный (cal_uid) — повторные записи обновляют событие.
+
+    Возвращает None, если календарное окно не строится (некорректные даты)."""
     tzid = "Europe/Moscow"
-    s, e = _window(ent)
+    w = _window(ent)
+    if w is None:
+        return None
+    s, e = w
     dtstamp = s[:8] + "T000000Z"
     summary = f"[{ent.module_key}] {ent.title}"
     desc = f"Статус: {ent.status_key or '—'}; ответственный: {responsible_name}"
@@ -161,12 +202,20 @@ def ics_for_entity(ent, responsible_name: str) -> str:
 
 async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
                        responsible_name: str) -> bool:
+    if not cal_enabled():      # YANDEX_CAL_ENABLED=false — сетевых вызовов нет вовсе
+        return False
     apw = decrypt_secret(apw_enc)
     if not apw:
         return False
+    ics = ics_for_entity(ent, responsible_name)
+    if ics is None:
+        # некорректные даты (см. _window) — PUT с битым DTSTART Яндекс вернул бы 400;
+        # считаем это ошибкой конфигурации карточки, а не сети: без ретраев
+        raise CalDavError(f"некорректный due_date у сущности "
+                          f"{getattr(ent, 'uid', '?')} — событие в календарь не ставится")
     url = cal_path.rstrip("/") + "/" + _q(ent.cal_uid) + ".ics"
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.put(url, content=ics_for_entity(ent, responsible_name).encode(),
+        r = await client.put(url, content=ics.encode(),
                              headers={"Content-Type": "text/calendar; charset=utf-8",
                                       "Authorization": _basic(email, apw)})
     ok = r.status_code in (201, 204)
@@ -176,6 +225,8 @@ async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
 
 
 async def delete_event(email: str, apw_enc: str, cal_path: str, cal_uid: str) -> bool:
+    if not cal_enabled():      # YANDEX_CAL_ENABLED=false — сетевых вызовов нет вовсе
+        return False
     apw = decrypt_secret(apw_enc)
     if not apw:
         return False
@@ -191,7 +242,11 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     Возвращает (ok, http_code): код нужен, чтобы отличить неверный пароль (401/403)
     от сетевых/сервисных ошибок и дать пользователю точную подсказку.
     Примечание: CalDAV Яндекса аутентифицирует по ЛОГИНУ аккаунта, а не по email.
+    При YANDEX_CAL_ENABLED=false сетевой запрос НЕ выполняется вовсе — интеграция
+    отключена на уровне контура сохранения настроек тоже.
     """
+    if not cal_enabled():
+        return False, 0
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.request("PROPFIND", caldav_base() + "/",
