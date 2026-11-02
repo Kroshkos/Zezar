@@ -173,7 +173,10 @@ async def save_calendar(body: CalIn, request: Request,
         return JSONResponse({"detail": f"В поле «Логин CalDAV» указана почта «{login}». "
                                        "Яндекс требует логин аккаунта без доменной части: "
                                        f"{login.split('@')[0]}"}, 400)
-    apw = body.app_password.replace(" ", "").strip()
+    apw = body.app_password.replace(" ", "").replace("\u00a0", "").strip()
+    if not apw:
+        return JSONResponse({"detail": "Поле app-пароля пустое — вставьте пароль "
+                                       "приложений из id.yandex.ru"}, 400)
     ok, code = await yc.verify_credentials(login, apw)
     if not ok:
         if code == 0 and not yc.cal_enabled():
@@ -193,7 +196,11 @@ async def save_calendar(body: CalIn, request: Request,
             if hint:
                 detail += ". " + hint
         return JSONResponse({"detail": detail}, 400)
-    user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
+    # шифруем ТОТ же пароль, который реально прошёл проверку (с удалёнными
+    # пробелами), а не сырой ввод: лишние пробелы при копировании из
+    # id.yandex.ru иначе сохранялись бы в БД и все PUT/DELETE воркера
+    # получали 401, хотя привязка показала «успех»
+    user.yandex_cal_app_password_enc = encrypt_secret(apw)
     user.yandex_cal_name = body.calendar_name or get_settings().yandex_cal_default_calendar
     await session.commit()
     # diff-проход воркера сам поставит все видимые пользователю PENDING-сущности в очередь
