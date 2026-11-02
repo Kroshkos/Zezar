@@ -75,7 +75,19 @@ async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
     if r.status_code in (207, 200):
         return folder_url
     if r.status_code in (401, 403):
-        raise CalDavError(f"WebDAV отклонил учётные данные: HTTP {r.status_code}")
+        # Яндекс не принимает логин с доменной частью — при ручном вводе это частая
+        # ошибка; пробуем ещё раз без @домена прежде чем сдаваться.
+        if "@" in email:
+            local = email.split("@")[0].strip()
+            if local:
+                rr = await client.request("PROPFIND", folder_url,
+                                          headers={"Depth": "0", "Authorization": _basic(local, apw)},
+                                          content=_propfind(["getctag"]))
+                if rr.status_code in (207, 200):
+                    log.info("ensure_calendar: логин %r принят только без доменной части", email)
+                    return folder_url
+        raise CalDavError(f"WebDAV отклонил учётные данные: HTTP {r.status_code} "
+                          f"(проверьте логин аккаунта Яндекса и app-пароль)")
     # создаём папку (405 = уже существует — гонка, ок)
     mk = await client.request("MKCOL", folder_url,
                               headers={"Authorization": _basic(email, apw)})
@@ -221,7 +233,10 @@ async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
     ok = r.status_code in (201, 204)
     if not ok:
         log.warning("CalDAV PUT %s -> %s %s", url, r.status_code, r.text[:200])
-    return ok
+        # поднимаем исключение с причиной — воркер пишет её в ent.cal_error,
+        # иначе на странице «Интеграции» виден только статус ERROR без объяснения
+        raise CalDavError(f"PUT {cal_path} -> HTTP {r.status_code}: {r.text[:160]}")
+    return True
 
 
 async def delete_event(email: str, apw_enc: str, cal_path: str, cal_uid: str) -> bool:

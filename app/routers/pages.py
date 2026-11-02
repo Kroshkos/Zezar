@@ -166,17 +166,26 @@ async def save_calendar(body: CalIn, request: Request,
     if not login:
         return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
                                        "(вход в системе к Яндекс.ID не относится)"}, 400)
-    ok, code = await yc.verify_credentials(login, body.app_password)
+    # Типичная ошибка при вводе вручную: почта вместо логина (ivan@yandex.ru вместо ivan).
+    # Доменная часть в Basic auth Яндекс почти всегда отвергает с 401 — отсекаем её сами.
+    if "@" in login:
+        login = user.yandex_login = login.split("@")[0].strip()
+    apw = body.app_password.replace(" ", "").strip()
+    ok, code = await yc.verify_credentials(login, apw)
     if not ok:
         if code == 0 and not yc.cal_enabled():
             return JSONResponse({"detail": "Интеграция с Яндекс.Календарём отключена "
                                            "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 400)
-        detail = {
-            401: "Яндекс отклонил логин или app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток; логин CalDAV — это логин аккаунта Яндекса (без домена)",
-            403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
-            404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
-            405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
-        }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
+        if code == 0:
+            detail = ("Нет связи с WebDAV Яндекса (сервис недоступен или проблемы с сетью "
+                      "на стороне сервера) — попробуйте позже")
+        else:
+            detail = {
+                401: f"Яндекс отклонил учётные данные для логина «{login}». Чаще всего причина в app-пароле: создайте новый на id.yandex.ru → «Пароли приложений» → сервис «Другие» и введите его без опечаток. Если вводили почту вместо логина — проверьте поле «Логин CalDAV»",
+                403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
+                404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
+                405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
+            }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
         return JSONResponse({"detail": detail}, 400)
     user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
     user.yandex_cal_name = body.calendar_name or get_settings().yandex_cal_default_calendar
