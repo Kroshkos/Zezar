@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -107,6 +108,17 @@ async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
 def _basic(email: str, apw: str) -> str:
     import base64
     return "Basic " + base64.b64encode(f"{email}:{apw}".encode()).decode()
+
+
+def is_app_password(apw: str) -> bool:
+    """App-пароль Яндекса имеет строгий формат: ровно 12 строчных hex-символов.
+
+    Обычные пароли (в т.ч. пароль от аккаунта, скопированный по ошибке вместо
+    пароля приложений) в этот формат не попадают — их Яндекс отвергает с 401
+    ещё до проверки. Позволяет отличить «ввели не то» от «верный логин, но
+    app-пароль просрочен/отозван».
+    """
+    return bool(re.fullmatch(r"[0-9a-f]{12}", (apw or "").strip()))
 
 
 def _q(name: str) -> str:
@@ -275,4 +287,27 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
         # Признак того, что запрос ушёл на закрытый CalDAV-эндпоинт (dav.yandex.ru):
         # проверяем корректный WebDAV-базовый адрес.
         log.error("WebDAV вернул 405 — проверьте YANDEX_CAL_BASE (нужен https://webdav.yandex.ru)")
+    if r.status_code in (401, 403):
+        # Диагностика типичных ошибок ручного ввода — иначе пользователь получает
+        # безликое «отклонили учётные данные» и не понимает, что именно не так.
+        try:
+            from app.core.config import get_settings
+            base = caldav_base()
+            real_login = get_settings().yandex_real_login
+        except Exception:  # noqa: BLE001
+            base, real_login = DEFAULT_CAL_BASE, None
+        if real_login and login.lower() == real_login.lower():
+            # Совпадает с логином, которым человек реально входит в Яндекс, — значит
+            # логин верный и отклонён именно app-пароль.
+            if not is_app_password(app_password):
+                log.warning("verify_credentials %s: пароль НЕ в формате app-пароля "
+                            "(12 hex) — вероятно, введён обычный пароль аккаунта", login)
+            else:
+                log.warning("verify_credentials %s: app-пароль корректного формата, "
+                            "но Яндекс его отвергает (%s) — просрочен/отозван или "
+                            "создан не для сервиса «Другие»", login, r.status_code)
+        elif len(login.split("@")[0]) < 3 or not re.fullmatch(r"[A-Za-z0-9._-]+", login):
+            log.warning("verify_credentials: логин %r выглядит не как логин Яндекса", login)
+        if base != DEFAULT_CAL_BASE:
+            log.warning("verify_credentials: проверка идёт против нестандартной базы %r", base)
     return r.status_code in (200, 207), r.status_code
