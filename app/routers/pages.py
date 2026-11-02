@@ -2,6 +2,7 @@
 Страницы модулей — у самих модулей."""
 from __future__ import annotations
 
+import logging
 import secrets as _secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,6 +20,7 @@ from app.ui import render_page, templates as core_templates
 
 router = APIRouter()
 templates = core_templates
+log = logging.getLogger("caesar.pages")
 
 ERRORS = {"disabled": "Учётная запись заблокирована",
           "bad_credentials": "Неверный логин или пароль",
@@ -160,19 +162,21 @@ async def save_calendar(body: CalIn, request: Request,
     # CalDAV Basic auth: имя пользователя = ЛОГИН аккаунта Яндекса (не email!).
     # После удаления OAuth логин вводится вручную на странице настроек.
     if body.cal_login and body.cal_login.strip():
-        login = user.yandex_login = body.cal_login.strip()
+        raw_login = body.cal_login.strip()
     else:
-        login = user.yandex_login or (user.email.split("@")[0] if user.email else None)
+        raw_login = user.yandex_login or (user.email.split("@")[0] if user.email else "")
+    # Типичная ошибка при вводе вручную: почта вместо логина (ivan@yandex.ru вместо ivan).
+    # Домен отсекаем сами (CalDAV принимает только логин без @домена), но пользователя
+    # предупреждаем — иначе он не понимает, почему вводили почту, а синхронизация
+    # идёт под другим именем.
+    login = yc.normalize_login(raw_login)
     if not login:
         return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
                                        "(вход в системе к Яндекс.ID не относится)"}, 400)
-    # Типичная ошибка при вводе вручную: почта вместо логина (ivan@yandex.ru вместо ivan).
-    # Раньше домен молча отсекался — пользователь не узнавал, что вводил почту, а в
-    # профиле сохранялся «не его» логин. Теперь это отдельное понятное сообщение.
-    if "@" in login:
-        return JSONResponse({"detail": f"В поле «Логин CalDAV» указана почта «{login}». "
-                                       "Яндекс требует логин аккаунта без доменной части: "
-                                       f"{login.split('@')[0]}"}, 400)
+    if login != raw_login:
+        log.info("profile calendar: логин %r нормализован в %r (отсечена доменная часть)",
+                 raw_login, login)
+    user.yandex_login = login
     apw = body.app_password.replace(" ", "").replace("\u00a0", "").strip()
     if not apw:
         return JSONResponse({"detail": "Поле app-пароля пустое — вставьте пароль "
@@ -192,7 +196,7 @@ async def save_calendar(body: CalIn, request: Request,
                 404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
                 405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
             }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
-            hint = yc.credential_hint(login, apw, code)
+            hint = yc.credential_hint(raw_login, apw, code, expect_email=True)
             if hint:
                 detail += ". " + hint
         return JSONResponse({"detail": detail}, 400)
