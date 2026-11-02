@@ -13,6 +13,8 @@ import asyncio
 import logging
 from datetime import date as _date, datetime, timezone
 
+import httpx
+
 from app.core.timezone import now as msk_now  # время платформы — Москва (MSK)
 
 from sqlalchemy import select, text
