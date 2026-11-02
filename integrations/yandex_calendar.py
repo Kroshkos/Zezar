@@ -19,6 +19,21 @@ from app.core.security import decrypt_secret
 
 log = logging.getLogger("caesar.caldav")
 
+
+def cal_enabled() -> bool:
+    """Флаг отключения интеграции (YANDEX_CAL_ENABLED=false).
+
+    Используется воркерами (diff-проход и обработка calendar.* событий) и
+    точкой сохранения настроек профиля — при выключенном флаге сетевые
+    вызовы к Яндексу не выполняются вовсе.
+    """
+    try:
+        from app.core.config import get_settings
+        return bool(get_settings().yandex_cal_enabled)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 # Яндекс закрыл CalDAV-эндпоинт dav.yandex.ru (он возвращает 405 на PROPFIND/MKCOL).
 # Рабочий протокол — WebDAV: https://webdav.yandex.ru (значение из настроек;
 # там же живёт дефолтный календарь в папке /calendar/).
@@ -126,9 +141,23 @@ def _window(ent) -> tuple[str, str]:
                     e = (_dt.strptime(s, "%Y%m%dT%H%M%S") + _td(hours=2)).strftime("%Y%m%dT%H%M%S")
                 except ValueError:
                     e = s[:8] + "T180000"
+            elif e <= s:
+                # валидация: end_at раньше/равен start_at — невалидное окно;
+                # берём стандартные +2 часа от начала
+                log.warning("meeting %s: end_at<=start_at (%s..%s), window -> +2h",
+                            getattr(ent, "uid", "?"), s, e)
+                from datetime import datetime as _dt, timedelta as _td
+                e = (_dt.strptime(s, "%Y%m%dT%H%M%S") + _td(hours=2)).strftime("%Y%m%dT%H%M%S")
             return s, e
-    due = ent.due_date  # 'YYYY-MM-DD'
-    dt = due.replace("-", "")
+    # 'YYYY-MM-DD' — валидируем перед подстановкой в ICS: мусорная дата
+    # молча превращалась в невалидный DTSTART (Яндекс отклонял PUT с 400).
+    from datetime import date as _date
+    try:
+        d = _date.fromisoformat(str(due)[:10])
+    except (ValueError, TypeError):
+        raise CalDavError(f"некорректный due_date '{due}' у сущности "
+                          f"{getattr(ent, 'uid', '?')} — событие в календарь не ставится")
+    dt = d.strftime("%Y%m%d")
     return f"{dt}T090000", f"{dt}T180000"
 
 

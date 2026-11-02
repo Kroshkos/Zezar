@@ -49,6 +49,11 @@ async def _outbox_once() -> None:
                                       OutboxEvent.attempts < 8)
             .order_by(OutboxEvent.id).limit(50))).all()
         for ev in rows:
+            if (ev.topic in ("calendar.sync", "calendar.remove")
+                    and not yc.cal_enabled()):
+                # интеграция с Яндекс.Календарём отключена (YANDEX_CAL_ENABLED=false) —
+                # событие НЕ помечаем processed_at: оно дождётся включения флага
+                continue
             ev.attempts += 1
             try:
                 if ev.topic == "telegram.notify":
