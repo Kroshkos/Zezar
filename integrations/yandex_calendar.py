@@ -108,11 +108,13 @@ def _propfind(props: list[str]) -> bytes:
     return body.encode()
 
 
-def _window(ent) -> tuple[str, str]:
+def _window(ent) -> tuple[str, str] | None:
     """Кортеж (DTSTART, DTEND) без префиксов TZID.
 
     Совещания: точное время из payload.start_at/end_at (или date+time_);
     остальные сущности: 09:00–18:00 дня срока (due_date).
+    Возвращает None, если окно построить нельзя (мусорные даты) — событие
+    в календарь не ставится.
     """
     p = getattr(ent, "_cal_payload", None)
     # kind может быть строкой (raw SQL) или Enum — сравниваем значение толерантно
@@ -156,16 +158,25 @@ def _window(ent) -> tuple[str, str]:
     try:
         d = _date.fromisoformat(str(due)[:10])
     except (ValueError, TypeError):
-        raise CalDavError(f"некорректный due_date '{due}' у сущности "
-                          f"{getattr(ent, 'uid', '?')} — событие в календарь не ставится")
+        # НЕ бросаем исключение: у сущностей без payload (не совещания) из-за
+        # него падал и весь upsert_event, и весь ics_for_entity. Возвращаем None —
+        # вызывающий код (upsert_event) отклонит такую сущность с понятной ошибкой.
+        log.warning("caldav window %s: некорректный due_date '%s' — событие не ставится",
+                    getattr(ent, "uid", "?"), due)
+        return None
     dt = d.strftime("%Y%m%d")
     return f"{dt}T090000", f"{dt}T180000"
 
 
-def ics_for_entity(ent, responsible_name: str) -> str:
-    """UID стабильный (cal_uid) — повторные записи обновляют событие."""
+def ics_for_entity(ent, responsible_name: str) -> str | None:
+    """UID стабильный (cal_uid) — повторные записи обновляют событие.
+
+    Возвращает None, если календарное окно не строится (некорректные даты)."""
     tzid = "Europe/Moscow"
-    s, e = _window(ent)
+    w = _window(ent)
+    if w is None:
+        return None
+    s, e = w
     dtstamp = s[:8] + "T000000Z"
     summary = f"[{ent.module_key}] {ent.title}"
     desc = f"Статус: {ent.status_key or '—'}; ответственный: {responsible_name}"
@@ -196,9 +207,15 @@ async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
     apw = decrypt_secret(apw_enc)
     if not apw:
         return False
+    ics = ics_for_entity(ent, responsible_name)
+    if ics is None:
+        # некорректные даты (см. _window) — PUT с битым DTSTART Яндекс вернул бы 400;
+        # считаем это ошибкой конфигурации карточки, а не сети: без ретраев
+        raise CalDavError(f"некорректный due_date у сущности "
+                          f"{getattr(ent, 'uid', '?')} — событие в календарь не ставится")
     url = cal_path.rstrip("/") + "/" + _q(ent.cal_uid) + ".ics"
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.put(url, content=ics_for_entity(ent, responsible_name).encode(),
+        r = await client.put(url, content=ics.encode(),
                              headers={"Content-Type": "text/calendar; charset=utf-8",
                                       "Authorization": _basic(email, apw)})
     ok = r.status_code in (201, 204)

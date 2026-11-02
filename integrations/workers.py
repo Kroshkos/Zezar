@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
 
 from app.core.timezone import now as msk_now  # время платформы — Москва (MSK)
 
@@ -52,7 +52,10 @@ async def _outbox_once() -> None:
             if (ev.topic in ("calendar.sync", "calendar.remove")
                     and not yc.cal_enabled()):
                 # интеграция с Яндекс.Календарём отключена (YANDEX_CAL_ENABLED=false) —
-                # событие НЕ помечаем processed_at: оно дождётся включения флага
+                # событие НЕ обрабатываем; но и attempts не наращиваем, иначе за
+                # дни простоя лимит 8 попыток исчерпывается и события молча
+                # выпадают из выборки навсегда (после включения флага календарь
+                # уже никогда не досинхронизируется). Просто пропускаем цикл.
                 continue
             ev.attempts += 1
             try:
@@ -381,14 +384,26 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     if not ent.due_date:
         ent.sync_state = SyncState.SYNCED
         return
+    try:
+        _date.fromisoformat(str(ent.due_date)[:10])   # та же валидация, что и в yc._window
+    except (ValueError, TypeError):
+        # мусорная дата: событие НЕКУДА ставить (upsert упал бы на этом же),
+        # ретраи ничего не исправят — помечаем ERROR с причиной; diff-проход
+        # такие сущности не гоняет, пока срок не починят в карточке
+        ent.sync_state = SyncState.ERROR
+        ent.cal_error = f"некорректный due_date '{ent.due_date}'"
+        log.warning("calendar sync %s: некорректный due_date '%s' — пропущено",
+                    ent.uid, ent.due_date)
+        return
     # нет ни одного привязанного календаря — держим PENDING (не ложный SYNCED),
-    # cron-проход досинхронизирует после привязки app-пароля
-    bound = [r for r in await session.scalars(
+    # diff-проход досинхронизирует после привязки app-пароля
+    bound_ids = [r.user_id for r in (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
-                                        EntityResponsible.user_id != None))  # noqa: E711
-             if (await session.get(User, r.user_id)) is not None
-             and (await session.get(User, r.user_id)).yandex_cal_app_password_enc]
-    if not bound:
+                                        EntityResponsible.user_id != None)))  # noqa: E711
+                 if r.user_id]
+    bound_users = list((await session.scalars(
+        select(User).where(User.id.in_(bound_ids)))) ) if bound_ids else []
+    if not any(u.yandex_cal_app_password_enc and _cal_login(u) for u in bound_users):
         ent.sync_state = SyncState.PENDING
         return
     # пишем событие в календари ответственных (по одному событию на человека — см. ТЗ)
@@ -439,7 +454,7 @@ async def _attach_payload(session, ent: Entity):
     return await session.get(model, ent.id)
 
 
-_cal_path_cache: dict[int, str] = {}
+_cal_path_cache: dict[int, tuple[str, str]] = {}   # user_id -> (yandex_cal_name, путь)
 
 
 
@@ -457,18 +472,24 @@ def _cal_login(u: User) -> str | None:
     return None
 
 async def _cal_path(u: User) -> str | None:
-    """Путь CalDAV-коллекции «Цезарь» пользователя (создаётся при первом обращении)."""
-    if u.id in _cal_path_cache:
-        return _cal_path_cache[u.id]
+    """Путь CalDAV-коллекции «Цезарь» пользователя (создаётся при первом обращении).
+
+    В кэше хранится пара (имя календаря, путь): если пользователь переименовал
+    календарь в настройках профиля, старый путь невалиден — кэш по имени
+    сбрасывается и папка пересоздаётся.
+    """
+    cal_name = u.yandex_cal_name or "Цезарь"
+    hit = _cal_path_cache.get(u.id)
+    if hit and hit[0] == cal_name:
+        return hit[1]
     from app.core.security import decrypt_secret
     apw = decrypt_secret(u.yandex_cal_app_password_enc)
     if not apw:
         return None
     try:
-        async with __import__("httpx").AsyncClient(timeout=20) as client:
-            path = await yc.ensure_calendar(client, _cal_login(u) or "", apw,
-                                            u.yandex_cal_name or "Цезарь")
-        _cal_path_cache[u.id] = path
+        async with httpx.AsyncClient(timeout=20) as client:
+            path = await yc.ensure_calendar(client, _cal_login(u) or "", apw, cal_name)
+        _cal_path_cache[u.id] = (cal_name, path)
         return path
     except Exception as e:  # noqa: BLE001
         log.warning("ensure_calendar user=%s: %s", u.id, e)
@@ -500,7 +521,12 @@ async def cal_diff_worker(stop: asyncio.Event) -> None:
             pass
 
 
+def _diff_interval() -> int:
+    return max(30, _gs().sync_interval_seconds or 300)
+
+
 async def _cal_diff_once() -> None:
+    interval = _diff_interval()
     async with SessionLocal() as session:
         # только «календарные» сущности: pending/error + корректный due_date
         # (мусорная дата diff-проходом не гоняется — её отклонит и upsert);
@@ -521,11 +547,19 @@ async def _cal_diff_once() -> None:
                           OutboxEvent.topic == "calendar.sync",
                           OutboxEvent.processed_at.is_(None)))).all()}
         added = 0
+        now = msk_now()
         for eid in ent_ids:
             if eid in queued:
                 continue
             ent = await session.get(Entity, eid)
             if ent is None:
+                continue
+            # Троттлинг ретраев: сущности, которые уже пытались синхронизироваться
+            # менее цикла назад (cal_synced_at — время последней попытки/успеха),
+            # в этом проходе не переочерёживаем. Иначе постоянно падающий upsert
+            # (неверный пароль, недоступный WebDAV) генерировал бы новое событие
+            # каждый цикл и раздувал outbox.
+            if ent.cal_synced_at is not None and (now - ent.cal_synced_at).total_seconds() < interval:
                 continue
             # без привязанного календаря хотя бы у одного ответственного
             # событие всё равно некуда положить — держим pending молча,
