@@ -127,6 +127,10 @@ async def main() -> None:
         assert len(await events_for(ok_id, True)) == 1, "догоняющий diff после интервала не работает"
         print("OK 2: diff-проход — очередь, без дублей, троттлинг, догоняющий ретрай")
 
+        # Заглушка WebDAV-пути: в тесте нет реального Яндекса, ensure_calendar
+        # вернул бы 401 -> _cal_path = None и upsert не вызвался бы вообще.
+        w._cal_path_cache[uid] = ("Цезарь", "/calendar/fake/")
+
         # 2.5 _handle_calendar: мусорный due_date -> ERROR+cal_error БЕЗ сетевых вызовов
         orig_upsert, orig_delete = yc.upsert_event, yc.delete_event
         net_calls = []
@@ -187,14 +191,26 @@ async def main() -> None:
         bad = _mk_ent(dept_id, title="Bad date", due_date="не дата")
         assert yc._window(bad) is None, "_window должен возвращать None для мусора"
         assert yc.ics_for_entity(bad, "Тест") is None, "ics_for_entity -> None"
-        orig_ups = yc.upsert_event
+        # upsert_event с битой датой обязан бросить CalDavError ДО сетевых вызовов:
+        # подменяем httpx.AsyncClient — если до сети дошло, тест падает с RuntimeError
+        import httpx as _httpx
+        orig_client_cls = _httpx.AsyncClient
+
+        class _NoNetClient:
+            def __init__(self, *a, **k):
+                raise RuntimeError("upsert_event полез в сеть при невалидной дате")
+            async def __aenter__(self):
+                raise RuntimeError("network touched")
+            async def __aexit__(self, *a):
+                return False
+        _httpx.AsyncClient = _NoNetClient
         try:
             await yc.upsert_event("login", encrypt_secret("x"), "http://localhost/", bad, "Тест")
             raise AssertionError("upsert_event обязан бросить CalDavError")
         except yc.CalDavError:
             pass
         finally:
-            yc.upsert_event = orig_ups
+            _httpx.AsyncClient = orig_client_cls
         # пустой due_date тоже не должен бросать ValueError из _window
         empty = _mk_ent(dept_id, title="Empty", due_date="")
         assert yc._window(empty) is None

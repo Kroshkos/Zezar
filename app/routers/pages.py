@@ -179,7 +179,7 @@ async def save_calendar(body: CalIn, request: Request,
         }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
         return JSONResponse({"detail": detail}, 400)
     user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
-    user.yandex_cal_name = body.calendar_name or "Цезарь"
+    user.yandex_cal_name = body.calendar_name or get_settings().yandex_cal_default_calendar
     await session.commit()
     # diff-проход воркера сам поставит все видимые пользователю PENDING-сущности в очередь
     return {"ok": True, "calendar": user.yandex_cal_name}
@@ -235,7 +235,7 @@ async def integrations_state(user: User = Depends(get_current_user)):
     return {"telegram_linked": bool(user.telegram_chat_id),
             "telegram_muted": user.telegram_optout == "all",
             "calendar_linked": bool(decrypt_secret(user.yandex_cal_app_password_enc)),
-            "calendar_name": user.yandex_cal_name,
+            "calendar_name": user.yandex_cal_name or get_settings().yandex_cal_default_calendar,
             "email": user.email}
 
 
@@ -260,6 +260,6 @@ async def integrations_page(request: Request,
         "telegram_muted": user.telegram_optout == "all",
         "telegram_bot_username": s.telegram_bot_username or "sipm_liot_bot",
         "calendar_linked": bool(decrypt_secret(user.yandex_cal_app_password_enc)),
-        "calendar_name": user.yandex_cal_name or "Цезарь",
+        "calendar_name": user.yandex_cal_name or s.yandex_cal_default_calendar,
         "public_base_url": s.public_base_url,
     })

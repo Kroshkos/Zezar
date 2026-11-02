@@ -427,9 +427,12 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
                                    u.display_name)
         if ok:
             ent.sync_state = SyncState.SYNCED
-            ent.cal_synced_at = msk_now()
         else:
             any_fail = True
+    # фиксируем момент последней попытки ВСЕГДА (и при успехе, и при неудаче):
+    # diff-проход троттлится по cal_synced_at — без этого поля падающий upsert
+    # переочерёживался бы каждым циклом diff и раздувал outbox
+    ent.cal_synced_at = msk_now()
     if any_fail and ent.sync_state != SyncState.SYNCED:
         ent.sync_state = SyncState.ERROR
         raise RuntimeError(f"calendar upsert failed for entity {ent.uid}")
@@ -480,7 +483,7 @@ async def _cal_path(u: User) -> str | None:
     календарь в настройках профиля, старый путь невалиден — кэш по имени
     сбрасывается и папка пересоздаётся.
     """
-    cal_name = u.yandex_cal_name or "Цезарь"
+    cal_name = u.yandex_cal_name or _gs().yandex_cal_default_calendar
     hit = _cal_path_cache.get(u.id)
     if hit and hit[0] == cal_name:
         return hit[1]

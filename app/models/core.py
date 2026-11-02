@@ -102,7 +102,7 @@ class User(TimestampMixin, Base):
 
     # Яндекс.Календарь (app-пароль пользователя для WebDAV; шифруется на диске)
     yandex_cal_app_password_enc: Mapped[Optional[str]] = mapped_column(Text)
-    yandex_cal_name: Mapped[str] = mapped_column(String(120), default="default")
+    yandex_cal_name: Mapped[str] = mapped_column(String(120), default="Цезарь")
 
     memberships: Mapped[List["DepartmentMember"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
