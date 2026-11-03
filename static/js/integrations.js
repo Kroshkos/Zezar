@@ -43,11 +43,15 @@ function calForm(){
     ev.preventDefault();
     const f = new FormData(ev.target);
     try{
-      await api('/api/profile/calendar',{method:'PUT',body:{
-        app_password:f.get('app_password'), calendar_name:f.get('calendar_name'),
-        cal_login:f.get('cal_login')}});
-      toast('Календарь подключён'); setTimeout(()=>location.reload(),600);
-    }catch(e){}
+    // Бэкенд отвечает 200 и при отказе привязки ({ok:false, detail}) — иначе
+    // браузерная консоль пестрит «Failed to load resource: 400», а текст
+    // ошибки теряется (см. app/routers/pages.py save_calendar).
+    const r = await api('/api/profile/calendar',{method:'PUT',body:{
+      app_password:f.get('app_password'), calendar_name:f.get('calendar_name'),
+      cal_login:f.get('cal_login')}});
+    if(r && r.ok === false){ toast('⚠ '+(r.detail||'Не удалось подключить календарь'),true); return; }
+    toast('Календарь подключён'); setTimeout(()=>location.reload(),600);
+  }catch(e){}
   };
 }
 async function calUnbind(){
