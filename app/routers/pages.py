@@ -2,6 +2,7 @@
 Страницы модулей — у самих модулей."""
 from __future__ import annotations
 
+import logging
 import secrets as _secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,6 +20,7 @@ from app.ui import render_page, templates as core_templates
 
 router = APIRouter()
 templates = core_templates
+log = logging.getLogger("caesar.pages")
 
 ERRORS = {"disabled": "Учётная запись заблокирована",
           "bad_credentials": "Неверный логин или пароль",
@@ -160,25 +162,65 @@ async def save_calendar(body: CalIn, request: Request,
     # CalDAV Basic auth: имя пользователя = ЛОГИН аккаунта Яндекса (не email!).
     # После удаления OAuth логин вводится вручную на странице настроек.
     if body.cal_login and body.cal_login.strip():
-        login = user.yandex_login = body.cal_login.strip()
+        raw_login = body.cal_login.strip()
     else:
-        login = user.yandex_login or (user.email.split("@")[0] if user.email else None)
+        raw_login = user.yandex_login or (user.email.split("@")[0] if user.email else "")
+    # Типичная ошибка при вводе вручную: почта вместо логина (ivan@yandex.ru вместо ivan).
+    # Домен отсекаем сами (CalDAV принимает только логин без @домена), но пользователя
+    # предупреждаем — иначе он не понимает, почему вводили почту, а синхронизация
+    # идёт под другим именем.
+    login = yc.normalize_login(raw_login)
     if not login:
-        return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
-                                       "(вход в системе к Яндекс.ID не относится)"}, 400)
-    ok, code = await yc.verify_credentials(login, body.app_password)
+        # 200 + detail: фронтенд показывает текст ошибки только при HTTP 200
+        # (см. static/js/integrations.js calForm); 4xx он проглатывает, и
+        # пользователь видел лишь «Failed to load resource: 400» в консоли.
+        return JSONResponse({"ok": False,
+                             "detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
+                                       "(вход в системе к Яндекс.ID не относится)"}, 200)
+    if login != raw_login:
+        log.info("profile calendar: логин %r нормализован в %r (отсечена доменная часть)",
+                 raw_login, login)
+    user.yandex_login = login
+    apw = "".join((body.app_password or "").split())   # убираем все пробелы/NBSP
+    if not apw:
+        return JSONResponse({"ok": False,
+                             "detail": "Поле app-пароля пустое — вставьте пароль "
+                                       "приложений из id.yandex.ru"}, 200)
+    ok, code = await yc.verify_credentials(login, apw)
     if not ok:
         if code == 0 and not yc.cal_enabled():
-            return JSONResponse({"detail": "Интеграция с Яндекс.Календарём отключена "
-                                           "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 400)
-        detail = {
-            401: "Яндекс отклонил логин или app-пароль. Проверьте: пароль создан на id.yandex.ru → «Пароли приложений» → сервис «Другие», введён без опечаток; логин CalDAV — это логин аккаунта Яндекса (без домена)",
-            403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
-            404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
-            405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
-        }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
-        return JSONResponse({"detail": detail}, 400)
-    user.yandex_cal_app_password_enc = encrypt_secret(body.app_password)
+            return JSONResponse({"ok": False,
+                                 "detail": "Интеграция с Яндекс.Календарём отключена "
+                                           "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 200)
+        if code == 0:
+            detail = ("Нет связи с WebDAV Яндекса (сервис недоступен или проблемы с сетью "
+                      "на стороне сервера) — попробуйте позже")
+        elif code in (401, 403):
+            # Единственный случай, где уместны ручные подсказки credential_hint.
+            detail = {
+                401: f"Яндекс отклонил учётные данные для логина «{login}». Чаще всего причина в app-пароле: создайте новый на id.yandex.ru → «Пароли приложений» → сервис «Другие» и введите его без опечаток. Если вводили почту вместо логина — проверьте поле «Логин CalDAV»",
+                403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
+            }[code]
+            hint = yc.credential_hint(raw_login, apw, code, expect_email=True)
+            if hint:
+                detail += ". " + hint
+        else:
+            # Прочие коды: НЕ подставляем шаблонное «попробуйте позже» — оно
+            # противоречит факту (например, 409 «calendars are out of sync»
+            # возникает из-за параллельного запроса и повтор тут же не поможет).
+            # Честно показываем код и текст ответа Яндекса (last_error сохраняет
+            # verify_credentials).
+            body_txt = yc.last_error()
+            detail = f"Сервис Яндекс.Календаря вернул HTTP {code}"
+            if body_txt:
+                detail += f". Ответ сервиса: {body_txt}"
+            detail += ". Повторите сохранение; если не поможет — проверьте настройки YANDEX_CAL_BASE"
+        return JSONResponse({"ok": False, "detail": detail}, 200)
+    # шифруем ТОТ же пароль, который реально прошёл проверку (с удалёнными
+    # пробелами), а не сырой ввод: лишние пробелы при копировании из
+    # id.yandex.ru иначе сохранялись бы в БД и все PUT/DELETE воркера
+    # получали 401, хотя привязка показала «успех»
+    user.yandex_cal_app_password_enc = encrypt_secret(apw)
     user.yandex_cal_name = body.calendar_name or get_settings().yandex_cal_default_calendar
     await session.commit()
     # diff-проход воркера сам поставит все видимые пользователю PENDING-сущности в очередь

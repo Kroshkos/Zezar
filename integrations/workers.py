@@ -414,28 +414,46 @@ async def _handle_calendar(session, topic: str, p: dict) -> None:
     resp_rows = (await session.scalars(
         select(EntityResponsible).where(EntityResponsible.entity_id == ent.id,
                                         EntityResponsible.user_id != None))).all()  # noqa: E711
+    users_by_id = {}
+    uid_list = [r.user_id for r in resp_rows if r.user_id]
+    if uid_list:
+        users_by_id = {u.id: u for u in (await session.scalars(
+            select(User).where(User.id.in_(uid_list)))).all()}
     any_fail = False
+    last_err: str | None = None
     for r in resp_rows:
-        u = await session.get(User, r.user_id)
+        u = users_by_id.get(r.user_id)
         if not u or not u.yandex_cal_app_password_enc or not _cal_login(u):
             continue  # пользователь не привязал календарь — ждём, не считаем ошибкой
-        path = await _cal_path(u)
-        if not path:
+        try:
+            path = await _cal_path(u)
+            if not path:
+                any_fail = True
+                last_err = "не удалось определить WebDAV-путь календаря (см. лог воркера)"
+                continue
+            ok = await yc.upsert_event(_cal_login(u), u.yandex_cal_app_password_enc, path, ent,
+                                       u.display_name)
+            if ok:
+                ent.sync_state = SyncState.SYNCED
+            else:
+                any_fail = True
+        except yc.CalDavError as e:
             any_fail = True
-            continue
-        ok = await yc.upsert_event(_cal_login(u), u.yandex_cal_app_password_enc, path, ent,
-                                   u.display_name)
-        if ok:
-            ent.sync_state = SyncState.SYNCED
-        else:
-            any_fail = True
+            last_err = str(e)[:400]
+            log.warning("calendar upsert %s user=%s: %s", ent.uid, u.id, e)
     # фиксируем момент последней попытки ВСЕГДА (и при успехе, и при неудаче):
     # diff-проход троттлится по cal_synced_at — без этого поля падающий upsert
     # переочерёживался бы каждым циклом diff и раздувал outbox
     ent.cal_synced_at = msk_now()
     if any_fail and ent.sync_state != SyncState.SYNCED:
         ent.sync_state = SyncState.ERROR
-        raise RuntimeError(f"calendar upsert failed for entity {ent.uid}")
+        # причина ошибки видна пользователю на странице «Интеграции»
+        if last_err:
+            ent.cal_error = last_err
+        raise RuntimeError(f"calendar upsert failed for entity {ent.uid}"
+                           + (f": {last_err}" if last_err else ""))
+    if ent.sync_state == SyncState.SYNCED:
+        ent.cal_error = None
 
 
 async def _attach_payload(session, ent: Entity):
