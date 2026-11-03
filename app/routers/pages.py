@@ -171,35 +171,51 @@ async def save_calendar(body: CalIn, request: Request,
     # идёт под другим именем.
     login = yc.normalize_login(raw_login)
     if not login:
-        return JSONResponse({"detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
-                                       "(вход в системе к Яндекс.ID не относится)"}, 400)
+        # 200 + detail: фронтенд показывает текст ошибки только при HTTP 200
+        # (см. static/js/integrations.js calForm); 4xx он проглатывает, и
+        # пользователь видел лишь «Failed to load resource: 400» в консоли.
+        return JSONResponse({"ok": False,
+                             "detail": "Укажите логин аккаунта Яндекса в поле «Логин CalDAV» "
+                                       "(вход в системе к Яндекс.ID не относится)"}, 200)
     if login != raw_login:
         log.info("profile calendar: логин %r нормализован в %r (отсечена доменная часть)",
                  raw_login, login)
     user.yandex_login = login
-    apw = body.app_password.replace(" ", "").replace("\u00a0", "").strip()
+    apw = "".join((body.app_password or "").split())   # убираем все пробелы/NBSP
     if not apw:
-        return JSONResponse({"detail": "Поле app-пароля пустое — вставьте пароль "
-                                       "приложений из id.yandex.ru"}, 400)
+        return JSONResponse({"ok": False,
+                             "detail": "Поле app-пароля пустое — вставьте пароль "
+                                       "приложений из id.yandex.ru"}, 200)
     ok, code = await yc.verify_credentials(login, apw)
     if not ok:
         if code == 0 and not yc.cal_enabled():
-            return JSONResponse({"detail": "Интеграция с Яндекс.Календарём отключена "
-                                           "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 400)
+            return JSONResponse({"ok": False,
+                                 "detail": "Интеграция с Яндекс.Календарём отключена "
+                                           "(YANDEX_CAL_ENABLED=false) — привязка невозможна"}, 200)
         if code == 0:
             detail = ("Нет связи с WebDAV Яндекса (сервис недоступен или проблемы с сетью "
                       "на стороне сервера) — попробуйте позже")
-        else:
+        elif code in (401, 403):
+            # Единственный случай, где уместны ручные подсказки credential_hint.
             detail = {
                 401: f"Яндекс отклонил учётные данные для логина «{login}». Чаще всего причина в app-пароле: создайте новый на id.yandex.ru → «Пароли приложений» → сервис «Другие» и введите его без опечаток. Если вводили почту вместо логина — проверьте поле «Логин CalDAV»",
                 403: "App-пароль недействителен (просрочен/отозван) или для него не выбран сервис «Другие». Создайте новый пароль приложений",
-                404: "WebDAV недоступен для этого аккаунта (проверьте, что календарь включён в Яндекс.ID)",
-                405: "Яндекс закрыл старый CalDAV-адрес dav.yandex.ru — интеграция должна использовать webdav.yandex.ru. Обновите сервис и повторите попытку",
-            }.get(code, f"Сервис Яндекс.Календаря вернул HTTP {code} — попробуйте позже")
+            }[code]
             hint = yc.credential_hint(raw_login, apw, code, expect_email=True)
             if hint:
                 detail += ". " + hint
-        return JSONResponse({"detail": detail}, 400)
+        else:
+            # Прочие коды: НЕ подставляем шаблонное «попробуйте позже» — оно
+            # противоречит факту (например, 409 «calendars are out of sync»
+            # возникает из-за параллельного запроса и повтор тут же не поможет).
+            # Честно показываем код и текст ответа Яндекса (last_error сохраняет
+            # verify_credentials).
+            body_txt = yc.last_error()
+            detail = f"Сервис Яндекс.Календаря вернул HTTP {code}"
+            if body_txt:
+                detail += f". Ответ сервиса: {body_txt}"
+            detail += ". Повторите сохранение; если не поможет — проверьте настройки YANDEX_CAL_BASE"
+        return JSONResponse({"ok": False, "detail": detail}, 200)
     # шифруем ТОТ же пароль, который реально прошёл проверку (с удалёнными
     # пробелами), а не сырой ввод: лишние пробелы при копировании из
     # id.yandex.ru иначе сохранялись бы в БД и все PUT/DELETE воркера

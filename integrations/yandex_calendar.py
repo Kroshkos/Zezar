@@ -46,6 +46,39 @@ class CalDavError(Exception):
     pass
 
 
+# Текст последнего ошибочного ответа WebDAV (кроме 401/403 — там подсказки
+# строит credential_hint). Нужен, чтобы роутер сохранения настроек мог показать
+# пользователю настоящую причину (например, 409 «calendars are out of sync»),
+# а не шаблонное «попробуйте позже». Храним в контексте задачи (contextvars),
+# чтобы параллельные запросы разных пользователей не перезаписывали друг друга.
+import contextvars
+_last_error_detail: contextvars.ContextVar[str] = contextvars.ContextVar("cal_last_error", default="")
+
+
+def _set_last_error(text: str) -> None:
+    _last_error_detail.set((text or "")[:300])
+
+
+def _clear_last_error() -> None:
+    _last_error_detail.set("")
+
+
+def last_error() -> str:
+    return _last_error_detail.get()
+
+
+def _save_error_detail(resp: "httpx.Response") -> None:
+    """Сохранить короткий текст ошибки из тела WebDAV-ответа (best effort)."""
+    try:
+        raw = resp.text or ""
+    except Exception:  # noqa: BLE001  # тело может быть уже прочитано/закрыто
+        raw = ""
+    # из XML/Dav-error вытаскиваем только человекочитаемые фразы (<summary>/<error>)
+    txt = re.sub(r"<[^>]+>", " ", raw)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    _set_last_error(txt[:200])
+
+
 def caldav_base() -> str:
     try:
         from app.core.config import get_settings
@@ -132,8 +165,14 @@ def is_app_password(apw: str) -> bool:
 
 
 def looks_like_account_password(apw: str) -> bool:
-    """Похож ли ввод на обычный пароль аккаунта (не на пароль приложений)."""
-    apw = (apw or "").replace("\u00a0", "").strip()
+    """Похож ли ввод на обычный пароль аккаунта (не на пароль приложений).
+
+    App-пароль Яндекса — одна строка ровно из 12 символов. При копировании из
+    интерфейса id.yandex.ru иногда прилипают пробелы/NBSP — убираем ВСЕ пробельные
+    символы перед сравнением длины, иначе «abc123 def456» ошибочно считался бы
+    обычным паролем.
+    """
+    apw = "".join((apw or "").split())   # все whitespace incl. \u00a0
     if not apw:
         return True           # пустой ввод — точно не app-пароль
     return len(apw) != 12     # пароль приложений всегда ровно 12 символов
@@ -291,6 +330,7 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     отключена на уровне контура сохранения настроек тоже.
     """
     if not cal_enabled():
+        _clear_last_error()
         return False, 0
     login = normalize_login(login)   # CalDAV Basic auth — логин без @домена
     try:
@@ -301,11 +341,16 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
                                      content=_propfind(["getctag"]))
     except httpx.HTTPError as e:
         log.warning("verify_credentials network error: %s", e)
+        _set_last_error(f"сеть: {e}")
         return False, 0
     if r.status_code == 405:
         # Признак того, что запрос ушёл на закрытый CalDAV-эндпоинт (dav.yandex.ru):
         # проверяем корректный WebDAV-базовый адрес.
         log.error("WebDAV вернул 405 — проверьте YANDEX_CAL_BASE (нужен https://webdav.yandex.ru)")
+    if r.status_code not in (200, 207):
+        _save_error_detail(r)   # текст ответа нужен роутеру для нетипичных кодов (409 и т.п.)
+    else:
+        _clear_last_error()
     if r.status_code in (401, 403):
         # Диагностика типичных ошибок ручного ввода — иначе пользователь получает
         # безликое «отклонили учётные данные» и не понимает, что именно не так.
