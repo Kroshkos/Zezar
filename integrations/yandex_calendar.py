@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -58,6 +59,19 @@ def _auth(user_email: str, app_password: str) -> tuple[str, str]:
     return (user_email, app_password)
 
 
+def normalize_login(login: str | None) -> str:
+    """Логин для CalDAV Basic auth: trim + отсечение доменной части.
+
+    Яндекс аутентифицирует по ЛОГИНУ аккаунта без @домена; при ручном вводе
+    почта вместо логина — самая частая ошибка. Все точки обращения к WebDAV
+    проходят через эту функцию, чтобы поведение было одинаковым и предсказуемым.
+    """
+    login = (login or "").strip()
+    if "@" in login:
+        login = login.split("@")[0].strip()
+    return login
+
+
 async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
                           cal_name: str = "Цезарь") -> str:
     """Возвращает URL WebDAV-папки для .ics-файлов, создаёт её если нет.
@@ -65,24 +79,29 @@ async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
     Папка лежит внутри «календарной» области (/calendar/), чтобы события
     попадали именно в Яндекс.Календарь, а не в обычный диск.
     """
+    login = normalize_login(email)   # CalDAV требует логин без @домена
     base = caldav_base() + "/"
     cal_root = base + "calendar/"
     folder_url = cal_root + _q(cal_name) + "/"
     # уже существует?
     r = await client.request("PROPFIND", folder_url,
-                             headers={"Depth": "0", "Authorization": _basic(email, apw)},
+                             headers={"Depth": "0", "Authorization": _basic(login, apw)},
                              content=_propfind(["getctag"]))
     if r.status_code in (207, 200):
         return folder_url
     if r.status_code in (401, 403):
-        raise CalDavError(f"WebDAV отклонил учётные данные: HTTP {r.status_code}")
+        # Здесь уже используется нормализованный логин — повторная проверка
+        # «без домена» не имеет смысла: остаётся только честная ошибка.
+        raise CalDavError(f"WebDAV отклонил учётные данные для логина «{login}»: "
+                          f"HTTP {r.status_code} (проверьте логин аккаунта Яндекса "
+                          f"и app-пароль — сервис «Другие» на id.yandex.ru)")
     # создаём папку (405 = уже существует — гонка, ок)
     mk = await client.request("MKCOL", folder_url,
-                              headers={"Authorization": _basic(email, apw)})
+                              headers={"Authorization": _basic(login, apw)})
     if mk.status_code not in (201, 204, 405):
         # фолбэк: пишем прямо в /calendar/ (дефолтный календарь Яндекса)
         rr = await client.request("PROPFIND", cal_root,
-                                  headers={"Depth": "0", "Authorization": _basic(email, apw)},
+                                  headers={"Depth": "0", "Authorization": _basic(login, apw)},
                                   content=_propfind(["getctag"]))
         if rr.status_code in (207, 200):
             log.warning("MKCOL %s -> %s, fallback to %s", folder_url, mk.status_code, cal_root)
@@ -95,6 +114,29 @@ async def ensure_calendar(client: httpx.AsyncClient, email: str, apw: str,
 def _basic(email: str, apw: str) -> str:
     import base64
     return "Basic " + base64.b64encode(f"{email}:{apw}".encode()).decode()
+
+
+def is_app_password(apw: str) -> bool:
+    """App-пароль Яндекса: 12 символов без пробелов.
+
+    Формат выдаваемых Яндексом паролей приложений — строго [0-9a-f]{12}, но при
+    копировании из интерфейса id.yandex.ru иногда теряются символы или добавляются
+    неразрывные пробелы/кириллические похожие буквы. Требовать ровно hex-алфавит
+    рискованно: реальный рабочий пароль мог быть отвергнут локально ещё до сетевой
+    проверки («ложное отклонение»). Поэтому проверка мягкая: длина и отсутствие
+    пробелов — явный признак «ввели обычный пароль аккаунта»; всё остальное решает
+    сам Яндекс (401/403).
+    """
+    apw = (apw or "").strip()
+    return len(apw) == 12 and " " not in apw
+
+
+def looks_like_account_password(apw: str) -> bool:
+    """Похож ли ввод на обычный пароль аккаунта (не на пароль приложений)."""
+    apw = (apw or "").replace("\u00a0", "").strip()
+    if not apw:
+        return True           # пустой ввод — точно не app-пароль
+    return len(apw) != 12     # пароль приложений всегда ровно 12 символов
 
 
 def _q(name: str) -> str:
@@ -221,7 +263,10 @@ async def upsert_event(email: str, apw_enc: str, cal_path: str, ent,
     ok = r.status_code in (201, 204)
     if not ok:
         log.warning("CalDAV PUT %s -> %s %s", url, r.status_code, r.text[:200])
-    return ok
+        # поднимаем исключение с причиной — воркер пишет её в ent.cal_error,
+        # иначе на странице «Интеграции» виден только статус ERROR без объяснения
+        raise CalDavError(f"PUT {cal_path} -> HTTP {r.status_code}: {r.text[:160]}")
+    return True
 
 
 async def delete_event(email: str, apw_enc: str, cal_path: str, cal_uid: str) -> bool:
@@ -247,6 +292,7 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
     """
     if not cal_enabled():
         return False, 0
+    login = normalize_login(login)   # CalDAV Basic auth — логин без @домена
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.request("PROPFIND", caldav_base() + "/",
@@ -260,4 +306,60 @@ async def verify_credentials(login: str, app_password: str) -> tuple[bool, int]:
         # Признак того, что запрос ушёл на закрытый CalDAV-эндпоинт (dav.yandex.ru):
         # проверяем корректный WebDAV-базовый адрес.
         log.error("WebDAV вернул 405 — проверьте YANDEX_CAL_BASE (нужен https://webdav.yandex.ru)")
+    if r.status_code in (401, 403):
+        # Диагностика типичных ошибок ручного ввода — иначе пользователь получает
+        # безликое «отклонили учётные данные» и не понимает, что именно не так.
+        # Логин уже нормализован (домен отсечён), поэтому проверяем только его
+        # форму; про исходный ввод с доменом судит credential_hint по данным
+        # роутера сохранения.
+        base = caldav_base()
+        if not login:
+            log.warning("verify_credentials: пустой логин после нормализации — "
+                        "CalDAV не может аутентифицировать запрос")
+        elif len(login) < 3 or not re.fullmatch(r"[A-Za-z0-9._-]+", login):
+            log.warning("verify_credentials: логин %r выглядит не как логин Яндекса", login)
+        if looks_like_account_password(app_password):
+            log.warning("verify_credentials %s: ввод НЕ похож на app-пароль "
+                        "(длина != 12 или пробелы) — вероятно, введён обычный "
+                        "пароль аккаунта", login)
+        else:
+            log.warning("verify_credentials %s: app-пароль корректной длины, "
+                        "но Яндекс его отвергает (%s) — просрочен/отозван или "
+                        "создан не для сервиса «Другие»", login, r.status_code)
+        if base != DEFAULT_CAL_BASE:
+            log.warning("verify_credentials: проверка идёт против нестандартной базы %r", base)
     return r.status_code in (200, 207), r.status_code
+
+
+def credential_hint(login: str, app_password: str, code: int,
+                    *, expect_email: bool = False) -> str | None:
+    """Уточнение к сообщению об ошибке аутентификации (для пользователя).
+
+    Вызывается из роутера сохранения настроек после неудачной verify_credentials.
+    ВАЖНО: expect_email=True означает, что в login уже лежит ИСХОДНЫЙ ввод
+    пользователя (до нормализации) — тогда признак «почта вместо логина» ещё
+    видно. При вызове с нормализованным логином доменную часть проверять
+    бессмысленно (@ там не останется), поэтому флаг по умолчанию False.
+    """
+    if code not in (401, 403):
+        return None
+    if looks_like_account_password(app_password):
+        return ("Введённый пароль не похож на app-пароль Яндекса (пароль приложений "
+                "— это одна строка ровно из 12 символов без пробелов). Скорее всего, "
+                "скопирован обычный пароль от аккаунта или ввод обрезал/добавил "
+                "пробелы. Создайте пароль на id.yandex.ru → «Пароли приложений» → "
+                "сервис «Другие» и вставьте его целиком.")
+    ls = (login or "").strip()
+    if not ls:
+        return "Поле «Логин CalDAV» пустое — укажите логин аккаунта Яндекса."
+    if expect_email and "@" in ls:
+        return ("Логин указан с доменной частью («почта»). Для CalDAV нужен логин "
+                "аккаунта Яндекса без @домена: ivan@yandex.ru → ivan.")
+    # Формальных признаков ошибки ввода нет: пароль похож на app-пароль, логин
+    # без домена, но Яндекс всё равно 401/403. Типичные оставшиеся причины —
+    # пароль создан для другого сервиса (не «Другие»), отозван или это старый
+    # пароль; проверить это со стороны приложения невозможно.
+    return ("Если логин и пароль точно верны — создайте НОВЫЙ пароль приложений "
+            "для сервиса «Другие» на id.yandex.ru и сохраните его ещё раз: "
+            "app-пароль выдаётся один раз и не восстанавливается, старые Яндекс "
+            "может отзывать при смене пароля аккаунта.")
